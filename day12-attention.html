@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 12 — Attention &amp; Self-Attention</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .copy-btn:hover { background:#1e293b; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  canvas { background:#020617; border:1px solid #1e293b; border-radius:10px; }
+  .tok { transition:all .2s; cursor:pointer; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 12</div>
+      <h1 class="text-xl font-bold">🔭 Attention — How Transformers Read Everything at Once</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-4xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Click a word — watch it decide who to pay attention to</h2>
+      <p class="text-slate-500 mb-5">Pick a <b class="text-rose-600">query</b> word below. The demo computes a real <b>dot-product score</b> from that word to every word, scales by <span class="font-mono">√d</span>, runs <b>softmax</b>, and the weights (which sum to 1) become the bars. Notice "<b>it</b>" attends strongly back to "<b>cat</b>".</p>
+      <div id="tokens" class="flex flex-wrap items-center justify-center gap-2 mb-5"></div>
+      <div class="flex justify-center"><canvas id="c" width="720" height="240"></canvas></div>
+      <div id="math" class="max-w-2xl mx-auto text-left bg-white border border-slate-200 rounded-xl p-4 mt-4 text-xs font-mono text-slate-700 overflow-auto"></div>
+      <p class="text-xs text-slate-400 mt-4">↑ Attention lets each word look at every other word and decide how much to "pay attention" to it. The weighted sum of all words' <b>values</b> becomes that word's new <b>context vector</b> — the core operation inside every Transformer.</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">How attention works</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="autoS" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Self-attention, in code</h2>
+    <p class="text-slate-500 mb-8">Embed tokens → project to Q, K, V → score with QKᵀ/√d → softmax → weighted sum of V. ~7 steps. This exact block is the heart of GPT and BERT.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Embed the tokens</h3></div>
+        <div class="relative"><pre>// each word id → a vector of length d_model (learned)
+const X = tokens.map(id => embedding[id]);   // shape: [seqLen, d_model]
+const d = X[0].length;                       // model dimension</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Project to Query, Key, Value</h3></div>
+        <div class="relative"><pre>// three learned weight matrices give each token a Q, K and V
+const Q = matmul(X, Wq);   // "what am I looking for?"
+const K = matmul(X, Wk);   // "what do I offer?"
+const V = matmul(X, Wv);   // "what do I pass on if chosen?"</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Score = QKᵀ / √d</h3></div>
+        <div class="relative"><pre>// dot product of every query with every key = similarity grid
+let scores = matmul(Q, transpose(K));        // [seqLen, seqLen]
+scores = scores.map(row => row.map(s => s / Math.sqrt(d)));  // scale</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Softmax each row → attention weights</h3></div>
+        <div class="relative"><pre>function softmax(row){
+  const m = Math.max(...row);                 // for numerical stability
+  const e = row.map(s => Math.exp(s - m));
+  const sum = e.reduce((a,b)=>a+b, 0);
+  return e.map(x => x / sum);                 // weights, each row sums to 1
+}
+const weights = scores.map(softmax);          // [seqLen, seqLen]</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Weighted sum of V → context vectors</h3></div>
+        <div class="relative"><pre>// each token's output = blend of ALL values, mixed by its weights
+const out = weights.map(w =>
+  V[0].map((_, c) => w.reduce((acc, wi, j) => acc + wi * V[j][c], 0))
+);   // out[i] is token i's new, context-aware representation</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Multi-head: run it several times in parallel</h3></div>
+        <div class="relative"><pre>// split d into h heads; each head learns its own Wq/Wk/Wv "view"
+const heads = [];
+for (let i = 0; i < numHeads; i++)
+  heads.push(attention(X, Wq[i], Wk[i], Wv[i]));   // syntax → meaning → ...
+const multi = matmul(concat(heads), Wo);            // combine the views</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">Add positional encoding (order matters)</h3></div>
+        <div class="relative"><pre>// attention alone is order-blind — inject position before it
+X = X.map((vec, pos) => vec.map((v, i) =>
+  v + (i % 2 === 0 ? Math.sin(pos / 10000 ** (i/d))
+                   : Math.cos(pos / 10000 ** ((i-1)/d)))
+));   // now "dog bites man" ≠ "man bites dog"</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 12 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">Stack these attention blocks and you have a Transformer — the architecture behind GPT, BERT and modern LLMs.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== Self-attention demo =====
+// Sentence as tokens, each with a small 4-d Q and K vector (hand-set so the
+// semantics read clearly: "it" keys/queries like "cat"). Real dot-product + softmax.
+const WORDS = ["the","cat","sat","on","the","mat","because","it","was","tired"];
+// 4-dim feature axes ≈ [animal, surface/place, action/state, function-word]
+const Kvec = [
+  [0.1,0.1,0.0,1.0], // the
+  [1.0,0.2,0.1,0.0], // cat   (animal)
+  [0.2,0.1,1.0,0.0], // sat   (action)
+  [0.0,0.3,0.1,0.9], // on
+  [0.1,0.1,0.0,1.0], // the
+  [0.2,1.0,0.1,0.0], // mat   (surface)
+  [0.0,0.0,0.2,0.9], // because
+  [0.9,0.2,0.2,0.2], // it    (refers to the animal)
+  [0.1,0.1,0.6,0.5], // was
+  [0.3,0.1,0.9,0.1]  // tired (state)
+];
+// Queries: mostly aligned with each word's own key, but "it" actively looks
+// for an animal, and "tired" looks for the subject it describes.
+const Qvec = Kvec.map(v => v.slice());
+Qvec[7] = [1.0,0.1,0.1,0.0];   // "it"   queries for animal → matches "cat"
+Qvec[9] = [0.8,0.1,0.4,0.0];   // "tired" queries the animal-ish subject too
+const Vmag = [0.3,1.0,0.7,0.3,0.3,0.9,0.3,0.6,0.5,0.8]; // value magnitude for the context idea
+const D = 4;
+
+let query = 7; // default to "it" so the headline effect shows on load
+const cv = document.getElementById("c"), cx = cv.getContext("2d"), CW = cv.width, CH = cv.height;
+
+function dot(a,b){ let s=0; for(let i=0;i<a.length;i++) s+=a[i]*b[i]; return s; }
+function softmax(arr){ const m=Math.max(...arr); const e=arr.map(x=>Math.exp(x-m)); const sum=e.reduce((a,b)=>a+b,0); return e.map(x=>x/sum); }
+
+function compute(qi){
+  const raw = WORDS.map((_,j)=> dot(Qvec[qi], Kvec[j]));      // dot-product scores
+  const scaled = raw.map(s=> s/Math.sqrt(D));                 // scale by √d
+  const weights = softmax(scaled);                            // softmax → sum to 1
+  return { raw, scaled, weights };
+}
+
+function renderTokens(){
+  const box = document.getElementById("tokens"); box.innerHTML="";
+  WORDS.forEach((w,i)=>{
+    const b = document.createElement("button");
+    b.textContent = w;
+    b.className = "tok px-3 py-2 rounded-lg font-semibold text-sm border " +
+      (i===query ? "bg-rose-600 text-white border-rose-600 shadow"
+                 : "bg-white text-slate-700 border-slate-300 hover:border-rose-400");
+    b.onclick = ()=>{ query=i; draw(); };
+    box.appendChild(b);
+  });
+}
+
+function draw(){
+  renderTokens();
+  const { raw, scaled, weights } = compute(query);
+  cx.clearRect(0,0,CW,CH); cx.fillStyle="#020617"; cx.fillRect(0,0,CW,CH);
+  const padL=20, padR=20, padT=40, padB=60, n=WORDS.length;
+  const slotW = (CW-padL-padR)/n, baseY = CH-padB, maxBarH = baseY-padT;
+  const maxW = Math.max(...weights);
+  // title
+  cx.fillStyle="#fb7185"; cx.font="13px sans-serif"; cx.textAlign="left";
+  cx.fillText('query word:  "'+WORDS[query]+'"   — attention weights (softmax, sum = 1.00)', padL, 22);
+  weights.forEach((wt,i)=>{
+    const x = padL + i*slotW + slotW/2;
+    const h = Math.max(2, wt/Math.max(maxW,1e-6) * maxBarH);
+    const top = (i===query);
+    const strong = (wt === maxW);
+    cx.fillStyle = strong ? "#fb7185" : "#475569";
+    cx.fillRect(x-slotW*0.32, baseY-h, slotW*0.64, h);
+    // weight number on top of the bar
+    cx.fillStyle = strong ? "#fda4af" : "#94a3b8"; cx.font="11px monospace"; cx.textAlign="center";
+    cx.fillText(wt.toFixed(2), x, baseY-h-6);
+    // word label
+    cx.fillStyle = (i===query) ? "#fff" : "#cbd5e1"; cx.font = (i===query?"bold ":"")+"12px sans-serif";
+    cx.fillText(WORDS[i], x, baseY+18);
+    if(i===query){ cx.fillStyle="#fb7185"; cx.font="9px sans-serif"; cx.fillText("(query)", x, baseY+32); }
+  });
+  // baseline
+  cx.strokeStyle="#1e293b"; cx.beginPath(); cx.moveTo(padL,baseY); cx.lineTo(CW-padR,baseY); cx.stroke();
+  // numbers panel
+  const fmt = a => a.map(x=>x.toFixed(2).padStart(5)).join("  ");
+  let best=0; weights.forEach((w,i)=>{ if(w>weights[best]) best=i; });
+  document.getElementById("math").innerHTML =
+    '<div class="text-slate-400">words   :  '+WORDS.map(w=>w.padStart(5).slice(0,5)).join("  ")+'</div>'+
+    '<div>Q·K     :  '+fmt(raw)+'</div>'+
+    '<div>÷√d ('+D+')  :  '+fmt(scaled)+'</div>'+
+    '<div class="text-rose-600 font-bold">softmax :  '+fmt(weights)+'   (Σ = '+weights.reduce((a,b)=>a+b,0).toFixed(2)+')</div>'+
+    '<div class="text-slate-500 mt-2">→ context("'+WORDS[query]+'") = Σ weightᵢ · valueᵢ  ·  strongest link: <b class="text-rose-600">"'+WORDS[best]+'"</b> ('+weights[best].toFixed(2)+')</div>';
+}
+draw();
+
+const STEPS = [
+  { title:"1. The sequence problem", why:"Recurrent networks read a sentence one word at a time, squeezing everything into a single state that they pass along. Information from the start fades by the end, and because each step waits for the previous one, you can't process the words in parallel. Long-range links ('it' → a noun ten words back) are exactly what they lose. We needed a way for any word to reach any other word directly, all at once.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">RNN: word ➜ word ➜ word ➜ … (slow, forgets the far-away)</div>`, code:`// RNN: one step at a time, single fading memory
+for (const w of words) h = step(h, w);  // can't see ahead, can't parallelize` },
+  { title:"2. The attention idea", why:"Attention throws out the single-file line. Every word is allowed to look at every other word in the sentence simultaneously and decide, with a number, how relevant each one is to it. Instead of one hand-me-down memory, each word builds its own custom summary of the whole sentence. There's no recurrence, so all of this happens in parallel on a GPU.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">every word ⇄ every word, at the same time → weighted look-up</div>`, code:`// each position attends to ALL positions at once
+context[i] = weightedSum(allWords, weights_from_word_i);` },
+  { title:"3. Query, Key, Value", why:"Each word is turned into three vectors. The QUERY says 'what am I looking for?'. The KEY says 'what do I have to offer?'. The VALUE says 'what information do I pass on if I'm chosen?'. It's exactly like a search engine: your query is matched against every page's keys, and the best matches hand back their content (values). All three come from the same word but through different learned weight matrices.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">each word → Q (asking) · K (offering) · V (content)</div>`, code:`const Q = X · Wq;  // what I'm looking for
+const K = X · Wk;  // what I advertise
+const V = X · Wv;  // what I deliver` },
+  { title:"4. The dot-product score", why:"To measure how relevant word j is to word i, take the dot product of i's query with j's key. The dot product is high when two vectors point the same way, so it acts as a similarity score. Do this for every pair and you get a full grid of scores — how much each word would like to attend to each other word. In the LOOK demo, 'it' scores highest against 'cat' because their vectors line up.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">score(i,j) = Qᵢ · Kⱼ   (big = similar = relevant)</div>`, code:`let scores = Q · transpose(K);   // [seqLen × seqLen] similarity grid` },
+  { title:"5. Scale, then softmax → weights", why:"Big dimensions make the dot products large, which would push softmax into a sharp, hard-to-train spike, so we first divide every score by √d. Then softmax turns each row of scores into positive weights that sum to exactly 1 — a clean probability distribution over 'how much attention to spend on each word'. The LOOK demo shows these three lines: raw Q·K, divided by √d, then the softmaxed weights adding to 1.00.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">scores ÷ √d → softmax → weights (all positive, Σ = 1)</div>`, code:`scores = scores / Math.sqrt(d);   // keep values tame
+const weights = softmax(scores);  // each row sums to 1` },
+  { title:"6. The weighted sum = context vector", why:"Now use those weights to blend the VALUE vectors: multiply each word's value by its weight and add them up. The result is a brand-new vector for the query word that mixes in the most relevant words and mostly ignores the rest. 'it' ends up holding a representation soaked in 'cat'. This context vector — a smart, content-aware average — is the actual output of attention.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">context = Σ (weightⱼ × Valueⱼ) → a blended, relevant summary</div>`, code:`context[i] = sum_j  weights[i][j] * V[j];  // new vector for word i` },
+  { title:"7. Self-attention", why:"When the queries, keys and values all come from the SAME sequence, it's called self-attention: the sentence attends to itself. Every word refreshes its meaning using the other words around it — so 'it' learns it means the cat, and 'bank' learns whether it's a river or money. This is the layer that gets stacked over and over inside a Transformer.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">Q, K, V all from one sentence → words re-describe each other</div>`, code:`// self-attention: source of Q, K, V is the same sequence X
+const out = attention(X, X, X);  // sentence attends to itself` },
+  { title:"8. Multi-head attention", why:"One set of Q/K/V learns one kind of relationship. So we run several attention computations in parallel — each 'head' has its own weight matrices and learns its own view. One head might track grammatical subject, another nearby words, another long-range references. Their outputs are concatenated and mixed, giving the model many simultaneous perspectives on the sentence.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">head 1: syntax · head 2: meaning · head 3: distance → concat</div>`, code:`const heads = headWeights.map(w => attention(X, X, X, w));
+const out = concat(heads) · Wo;   // many views, combined` },
+  { title:"9. Positional encoding", why:"Attention is a set operation — by itself it has no idea which word came first; 'dog bites man' and 'man bites dog' look identical to it. So before attention we add a positional signal to each embedding (a pattern of sines and cosines, or learned vectors) that encodes each token's place in the sequence. Now order is baked into the vectors and the model can use word position.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">embedding + position signal → order is preserved</div>`, code:`X = X.map((v, pos) => v + positionalEncoding(pos));  // inject order` },
+  { title:"10. Why this gave us Transformers & LLMs", why:"Stack these attention blocks (plus small feed-forward layers and normalization) and you get the Transformer. Because it processes a whole sequence in parallel and links any two positions in one step, it trains on enormous text far faster than RNNs ever could — which is what made GPT, BERT and today's large language models possible. Everything you just stepped through is the engine inside them.", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">Q·K → softmax → weighted V, stacked many times = a Transformer.</p></div>`, code:`// Transformer block (simplified)
+x = x + multiHeadAttention(layerNorm(x));
+x = x + feedForward(layerNorm(x));   // repeat ×N → GPT / BERT` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("autoS");
+let cur = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ cur=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,cur-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,cur+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(cur>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(cur+1); },2800); };
+show(0);
+
+function copy(btn) {
+  const pre = btn.parentElement.querySelector("pre");
+  navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500);
+}
+</script>
+</body>
+</html>

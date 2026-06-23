@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 1 — The Perceptron</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .copy-btn:hover { background:#1e293b; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  canvas { background:#020617; border:1px solid #1e293b; border-radius:10px; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back to DeepLearningFromZero" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 1</div>
+      <h1 class="text-xl font-bold">⚫ The Perceptron — One Neuron Learns a Line</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<!-- LOOK -->
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-4xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">A single neuron, learning</h2>
+      <p class="text-slate-500 text-center mb-6">Two groups of dots. Hit <b>Train</b> — the neuron rotates its line until it separates them. This one neuron is the atom every deep network is built from.</p>
+      <div class="grid md:grid-cols-3 gap-5 items-start">
+        <div class="md:col-span-2 flex justify-center">
+          <canvas id="c" width="480" height="360"></canvas>
+        </div>
+        <div class="space-y-3">
+          <div class="bg-white rounded-2xl border border-slate-200 p-4 space-y-2 text-sm">
+            <div class="flex justify-between"><span class="text-slate-500">Epoch</span><span id="epoch" class="font-bold">0</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Accuracy</span><span id="acc" class="font-bold text-rose-600">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">w₁</span><span id="w1" class="font-mono">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">w₂</span><span id="w2" class="font-mono">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">bias b</span><span id="bb" class="font-mono">—</span></div>
+            <div class="pt-2">
+              <label class="text-xs text-slate-500">learning rate: <span id="lrv">0.10</span></label>
+              <input id="lr" type="range" min="0.01" max="1" step="0.01" value="0.1" class="w-full">
+            </div>
+          </div>
+          <div class="flex gap-2">
+            <button id="train" class="flex-1 bg-rose-500 hover:bg-rose-600 text-white font-bold py-2.5 rounded-xl">▶ Train</button>
+            <button id="reset" class="px-4 bg-slate-200 hover:bg-slate-300 rounded-xl font-semibold">Reset</button>
+          </div>
+          <button id="newdata" class="w-full text-sm border border-slate-200 rounded-xl py-2 hover:bg-slate-50">🎲 New data</button>
+        </div>
+      </div>
+      <p class="text-xs text-slate-400 text-center mt-6">↑ Blue = class +1, red = class −1. The rose line is the neuron's decision boundary. Dots with a yellow ring are currently misclassified.</p>
+    </div>
+  </div>
+</section>
+
+<!-- UNDERSTAND -->
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">How one neuron learns</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div>
+        <div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step on the left →</div></div>
+      </div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div>
+        <div id="why" class="text-slate-700">—</div>
+      </div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div>
+        <pre id="code"></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- BUILD -->
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Build it yourself</h2>
+    <p class="text-slate-500 mb-8">~30 lines of plain JavaScript — the 1958 algorithm that started neural networks.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">A neuron = weighted sum + a threshold</h3></div>
+<pre>let w = [Math.random(), Math.random()], b = 0;
+const sum = x =&gt; w[0]*x[0] + w[1]*x[1] + b;
+const predict = x =&gt; sum(x) &gt;= 0 ? 1 : -1;   // step activation</pre>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">The perceptron learning rule</h3></div>
+        <div class="relative">
+<pre>function trainStep(lr) {
+  for (const { x, y } of data) {
+    const pred = predict(x);
+    if (pred !== y) {                 // only fix mistakes
+      w[0] += lr * y * x[0];
+      w[1] += lr * y * x[1];
+      b    += lr * y;
+    }
+  }
+}</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button>
+        </div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Repeat until it stops making mistakes</h3></div>
+<pre>for (let epoch = 0; epoch &lt; 50; epoch++) trainStep(0.1);
+// if the data is linearly separable, this is GUARANTEED to converge.</pre>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Draw the boundary</h3></div>
+<pre>// boundary is where sum(x) = 0  →  w0·x + w1·y + b = 0
+// solve for y:  y = -(w0·x + b) / w1</pre>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center">
+      <h3 class="font-bold text-lg text-rose-900">🎉 Day 1 of DeepLearningFromZero done.</h3>
+      <p class="text-sm text-rose-700 mt-2">One neuron can only draw a straight line. Day 5 (XOR) shows why we stack them into networks.</p>
+    </div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// =========== PERCEPTRON ===========
+const c = document.getElementById("c"), ctx = c.getContext("2d");
+const PAD = 30;
+let data, w, b, epoch, timer = null;
+const px = v => PAD + v * (c.width - 2 * PAD);
+const py = v => (c.height - PAD) - v * (c.height - 2 * PAD);
+
+function genData() {
+  // a random "true" separating line; label points by which side, leave a margin
+  const a = Math.random() * 1.4 - 0.7, t = 0.3 + Math.random() * 0.4;
+  data = [];
+  while (data.length < 40) {
+    const x = [Math.random(), Math.random()];
+    const side = x[1] - (a * x[0] + t);
+    if (Math.abs(side) < 0.08) continue; // margin → linearly separable
+    data.push({ x, y: side > 0 ? 1 : -1 });
+  }
+}
+function reset() {
+  w = [Math.random() * 2 - 1, Math.random() * 2 - 1]; b = Math.random() * 0.4 - 0.2; epoch = 0;
+  if (timer) { clearInterval(timer); timer = null; document.getElementById("train").textContent = "▶ Train"; }
+  draw();
+}
+const sum = x => w[0] * x[0] + w[1] * x[1] + b;
+const predict = x => (sum(x) >= 0 ? 1 : -1);
+function trainStep(lr) {
+  for (const { x, y } of data) {
+    if (predict(x) !== y) { w[0] += lr * y * x[0]; w[1] += lr * y * x[1]; b += lr * y; }
+  }
+  epoch++;
+}
+function accuracy() { return data.filter(d => predict(d.x) === d.y).length / data.length; }
+function draw() {
+  ctx.fillStyle = "#020617"; ctx.fillRect(0, 0, c.width, c.height);
+  // decision boundary: w0*x + w1*y + b = 0  →  y = -(w0*x + b)/w1
+  ctx.strokeStyle = "#f43f5e"; ctx.lineWidth = 3; ctx.beginPath();
+  if (Math.abs(w[1]) > 1e-6) {
+    const y0 = -(w[0] * 0 + b) / w[1], y1 = -(w[0] * 1 + b) / w[1];
+    ctx.moveTo(px(0), py(y0)); ctx.lineTo(px(1), py(y1));
+  } else { const xv = -b / w[0]; ctx.moveTo(px(xv), py(0)); ctx.lineTo(px(xv), py(1)); }
+  ctx.stroke();
+  // points
+  for (const d of data) {
+    const wrong = predict(d.x) !== d.y;
+    if (wrong) { ctx.strokeStyle = "#facc15"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(px(d.x[0]), py(d.x[1]), 7, 0, Math.PI * 2); ctx.stroke(); }
+    ctx.fillStyle = d.y === 1 ? "#38bdf8" : "#fb7185";
+    ctx.beginPath(); ctx.arc(px(d.x[0]), py(d.x[1]), 4.5, 0, Math.PI * 2); ctx.fill();
+  }
+  document.getElementById("epoch").textContent = epoch;
+  document.getElementById("acc").textContent = (accuracy() * 100).toFixed(0) + "%";
+  document.getElementById("w1").textContent = w[0].toFixed(2);
+  document.getElementById("w2").textContent = w[1].toFixed(2);
+  document.getElementById("bb").textContent = b.toFixed(2);
+}
+document.getElementById("lr").oninput = e => document.getElementById("lrv").textContent = (+e.target.value).toFixed(2);
+document.getElementById("train").onclick = function () {
+  if (timer) { clearInterval(timer); timer = null; this.textContent = "▶ Train"; return; }
+  this.textContent = "⏸ Pause";
+  timer = setInterval(() => {
+    trainStep(+document.getElementById("lr").value);
+    draw();
+    if (accuracy() === 1 || epoch >= 200) { clearInterval(timer); timer = null; document.getElementById("train").textContent = accuracy() === 1 ? "✓ Solved" : "▶ Replay"; }
+  }, 120);
+};
+document.getElementById("reset").onclick = reset;
+document.getElementById("newdata").onclick = () => { genData(); reset(); };
+genData(); reset();
+
+// UNDERSTAND
+const STEPS = [
+  { title:"1. A neuron is shockingly simple", why:"Take inputs, multiply each by a weight, add them up with a bias, then apply an activation. That's it. The 1958 Perceptron used a step activation: output +1 if the sum is ≥ 0, else −1. Everything in deep learning is millions of these stacked.", concept:`<div class="bg-slate-100 p-4 rounded text-sm w-full font-mono text-xs space-y-1">
+    <div>inputs x₁, x₂</div>
+    <div>sum = w₁·x₁ + w₂·x₂ + b</div>
+    <div class="text-rose-700">output = sum ≥ 0 ? +1 : −1</div>
+  </div>`, code:`let w = [Math.random(), Math.random()], b = 0;
+const sum = x => w[0]*x[0] + w[1]*x[1] + b;
+const predict = x => sum(x) >= 0 ? 1 : -1;` },
+  { title:"2. The weights ARE a line", why:"w₁·x₁ + w₂·x₂ + b = 0 is the equation of a straight line. On one side the sum is positive (class +1), on the other it's negative (class −1). So a neuron's whole 'knowledge' is the position + tilt of one line — the decision boundary you see in the demo.", concept:`<div class="bg-slate-100 p-4 rounded text-xs font-mono space-y-1 w-full">
+    <div>boundary: w₁·x₁ + w₂·x₂ + b = 0</div>
+    <div class="text-sky-700">sum &gt; 0 → blue side (+1)</div>
+    <div class="text-rose-700">sum &lt; 0 → red side (−1)</div>
+  </div>`, code:`// to draw it, solve for x₂:
+// x₂ = -(w[0]*x₁ + b) / w[1]` },
+  { title:"3. The learning rule: only fix mistakes", why:"For each point, predict. If correct, do nothing. If wrong, nudge the weights TOWARD the correct answer: add (learning_rate × true_label × input) to each weight. Geometrically, this rotates/shifts the line so that point ends up on the right side.", concept:`<div class="bg-slate-100 p-4 rounded text-xs font-mono space-y-1 w-full">
+    <div>if prediction is wrong:</div>
+    <div class="ml-3 text-rose-700">w += lr · y · x</div>
+    <div class="ml-3 text-rose-700">b += lr · y</div>
+    <div class="text-slate-500 mt-1">(y is the true label, +1 or −1)</div>
+  </div>`, code:`for (const { x, y } of data) {
+  if (predict(x) !== y) {
+    w[0] += lr * y * x[0];
+    w[1] += lr * y * x[1];
+    b    += lr * y;
+  }
+}` },
+  { title:"4. Why that rule works", why:"If the true label is +1 but we predicted −1, the sum was too low. Adding y·x (with y=+1) increases the weights in the direction of x, which raises the sum next time — pushing the point across the boundary. The math literally moves the line toward fixing the error.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full space-y-1">
+    <div>predicted −1, truth +1 → sum too small</div>
+    <div class="text-rose-700">add +x to weights → sum goes up next time</div>
+    <div>the boundary rotates toward the point</div>
+  </div>`, code:`// new_sum(x) = old_sum(x) + lr*(x·x + 1)
+// which is LARGER → closer to crossing 0` },
+  { title:"5. Learning rate", why:"How far to nudge per mistake. Small = gentle, smooth convergence. Large = big jumps that can overshoot and wobble. Same knob as everywhere in ML. Crank the slider in the demo and watch the line get twitchy.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full space-y-1">
+    <div class="text-green-700">small lr → smooth rotation</div>
+    <div class="text-rose-700">large lr → line jumps around</div>
+  </div>`, code:`trainStep(0.1);   // 0.1 = calm and reliable` },
+  { title:"6. The convergence guarantee", why:"Rosenblatt proved it in 1958: if the two classes CAN be separated by a straight line, the perceptron will find one in a finite number of steps. Watch the accuracy hit 100% and training stop. That guarantee is why this tiny rule launched the whole field.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full">
+    <div class="text-rose-700 font-bold">If linearly separable → perceptron WILL converge.</div>
+    <div class="text-slate-500 mt-1">accuracy climbs to 100%, then it's done.</div>
+  </div>`, code:`if (accuracy() === 1) stop();  // solved` },
+  { title:"7. The catch: it can only draw ONE line", why:"A single neuron can ONLY separate things a straight line can separate. The famous failure is XOR — no single line splits it. That limitation nearly killed neural nets in the 1970s. The fix (Day 5): stack neurons into layers so they can bend the boundary.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full space-y-1">
+    <div class="text-green-700">AND, OR → one line works ✓</div>
+    <div class="text-rose-700">XOR → no single line works ✗</div>
+    <div class="text-slate-500">→ you need a hidden layer (Day 5)</div>
+  </div>`, code:`// XOR: (0,0)→0 (1,1)→0 (0,1)→1 (1,0)→1
+// no straight line separates these.
+// solution: a multi-layer network.` },
+  { title:"8. From one neuron to deep learning", why:"Swap the step activation for a smooth one (sigmoid/ReLU, Day 2), stack neurons into layers (Day 3), and learn the weights with gradient descent + backprop (Day 4) instead of this hand rule. That's the entire arc from here to transformers.", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">One neuron today. Millions by the end.</p></div>`, code:`// Day 2: activations  ·  Day 3: layers (MLP)
+// Day 4: backprop      ·  Day 14: transformer` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev");
+const nextB = document.getElementById("next-btn");
+const autoB = document.getElementById("auto");
+let cur = 0;
+STEPS.forEach((s, i) => {
+  const bn = document.createElement("button");
+  bn.className = "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm";
+  bn.innerHTML = `<div class="font-semibold">${s.title}</div>`;
+  bn.onclick = () => show(i);
+  stepsEl.appendChild(bn);
+});
+function show(i) {
+  cur = i;
+  const s = STEPS[i];
+  document.getElementById("concept").innerHTML = `<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML = `<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent = s.code;
+  stepsEl.querySelectorAll("button").forEach((bn, idx) => {
+    bn.className = idx === i
+      ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold"
+      : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm";
+  });
+}
+prevB.onclick = () => show(Math.max(0, cur - 1));
+nextB.onclick = () => show(Math.min(STEPS.length - 1, cur + 1));
+let stepTimer = null;
+autoB.onclick = () => {
+  if (stepTimer) { clearInterval(stepTimer); stepTimer = null; autoB.textContent = "▶ Auto-play"; return; }
+  autoB.textContent = "⏸ Pause";
+  show(0);
+  stepTimer = setInterval(() => {
+    if (cur >= STEPS.length - 1) { clearInterval(stepTimer); stepTimer = null; autoB.textContent = "▶ Replay"; return; }
+    show(cur + 1);
+  }, 2800);
+};
+show(0);
+function copy(btn) {
+  const pre = btn.parentElement.querySelector("pre");
+  navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500);
+}
+</script>
+</body>
+</html>

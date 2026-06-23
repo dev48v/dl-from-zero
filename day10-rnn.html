@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 10 — RNNs</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  canvas { background:#020617; border:1px solid #1e293b; border-radius:10px; }
+  .tokbtn.active { background:#fb7185; color:#fff; border-color:#fb7185; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 10</div>
+      <h1 class="text-xl font-bold">🔁 RNNs — a Network With a Memory of the Past</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-4xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Same cell, fed one token at a time — the state remembers</h2>
+      <p class="text-slate-500 mb-5">An RNN reads a sequence step by step. Each step mixes the new input with the <b>hidden state</b> carried from the last step. So the output depends on the whole history, not just the current token. Build a sequence and step through it.</p>
+      <div class="flex flex-wrap justify-center gap-2 mb-3" id="tokens"></div>
+      <div class="flex items-center justify-center gap-2 mb-3">
+        <button id="step" class="bg-rose-500 hover:bg-rose-600 text-white font-semibold px-4 py-2 rounded-lg text-sm">▶ Step</button>
+        <button id="auto" class="bg-rose-400 text-white font-semibold px-4 py-2 rounded-lg text-sm">⏩ Run all</button>
+        <button id="reset" class="border border-slate-200 px-3 py-2 rounded-lg text-sm hover:bg-slate-50">↺ reset</button>
+        <span class="text-sm text-slate-500 ml-2">Reading: <b id="cursor" class="text-rose-600">—</b></span>
+      </div>
+      <div class="flex justify-center"><canvas id="c" width="640" height="200"></canvas></div>
+      <p class="text-xs text-slate-400 mt-4">↑ The line is the hidden state over time. Notice: feed the SAME token after different history and the state lands somewhere different — that's memory. "not" then "good" ends up different from "good" then "not".</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">How an RNN works</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="autoS" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Build it yourself</h2>
+    <p class="text-slate-500 mb-8">One recurrence relation, run in a loop over the sequence. ~10 lines.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">A hidden state carried across steps</h3></div><pre>let h = zeros(hiddenSize);   // the "memory", starts blank</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">The recurrence: new = f(input, old state)</h3></div><pre>for (const x of sequence) {
+  h = tanh(Wx·x + Wh·h + b);   // mix this token with the running memory
+  const y = Wy·h;              // output at this step (if needed)
+}</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Same weights at every timestep</h3></div><pre>// Wx, Wh, Wy are SHARED across all steps (like a kernel across space).
+// the network is one small cell applied over and over down the sequence.</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Train via backprop-through-time</h3></div><pre>// unroll the loop, then backprop through every step.
+// the catch: gradients shrink/explode over long sequences → RNNs forget
+// the distant past. Tomorrow's LSTM fixes exactly that.</pre></li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 10 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">Tomorrow: LSTM &amp; GRU — gates that let a network remember longer.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== RNN over a token sequence (memory demo) =====
+const c=document.getElementById("c"), ctx=c.getContext("2d"), W=c.width, H=c.height;
+// each token nudges the state; "not" flips the effect of the NEXT token (memory of context)
+const TOKENS={ "good":{v:+0.7}, "bad":{v:-0.7}, "very":{v:0,amp:1.6}, "not":{v:0,flip:true}, "okay":{v:+0.1} };
+let seq=["not","good","very","bad"], hist=[], h=0, ptr=0, ctxFlip=1, ctxAmp=1, timer=null;
+function reset(){ if(timer){clearInterval(timer);timer=null;} h=0; ptr=0; ctxFlip=1; ctxAmp=1; hist=[{h:0,tok:"start"}]; document.getElementById("cursor").textContent="—"; draw(); }
+function stepOne(){
+  if(ptr>=seq.length) return false;
+  const t=seq[ptr], k=TOKENS[t];
+  let delta=k.v*ctxFlip*ctxAmp;
+  // tanh recurrence: new state mixes decayed memory + this token's effect
+  h = Math.tanh(0.7*h + delta*1.3);
+  // context modifiers affect the NEXT token (that's the "memory")
+  ctxFlip = k.flip ? -1 : 1;
+  ctxAmp = k.amp ? k.amp : 1;
+  hist.push({h, tok:t});
+  document.getElementById("cursor").textContent=t;
+  ptr++; draw(); return true;
+}
+function draw(){
+  ctx.clearRect(0,0,W,H); ctx.fillStyle="#020617"; ctx.fillRect(0,0,W,H);
+  const padL=40, padR=20, padT=20, padB=40, plotW=W-padL-padR, plotH=H-padT-padB;
+  const x=i=>padL + i/(seq.length)*plotW, y=v=>padT+plotH/2 - v*plotH/2;
+  ctx.strokeStyle="#1e293b"; ctx.beginPath(); ctx.moveTo(padL,y(0)); ctx.lineTo(W-padR,y(0)); ctx.stroke();
+  ctx.fillStyle="#64748b"; ctx.font="10px sans-serif"; ctx.textAlign="right"; ctx.fillText("+1 positive",padL-4,y(1)+3); ctx.fillText("0",padL-4,y(0)+3); ctx.fillText("-1 negative",padL-4,y(-1)+3);
+  // state line
+  ctx.strokeStyle="#fb7185"; ctx.lineWidth=2.5; ctx.beginPath();
+  hist.forEach((p,i)=>{ const X=x(i),Y=y(p.h); i===0?ctx.moveTo(X,Y):ctx.lineTo(X,Y); }); ctx.stroke();
+  // points + token labels
+  hist.forEach((p,i)=>{ const X=x(i),Y=y(p.h); ctx.fillStyle="#fb7185"; ctx.beginPath(); ctx.arc(X,Y,4,0,Math.PI*2); ctx.fill();
+    if(i>0){ ctx.fillStyle="#cbd5e1"; ctx.font="12px sans-serif"; ctx.textAlign="center"; ctx.fillText(p.tok,X,H-14); } });
+  // final readout
+  if(ptr>=seq.length){ const fin=hist[hist.length-1].h; ctx.fillStyle=fin>0.15?"#34d399":fin<-0.15?"#f87171":"#94a3b8"; ctx.font="bold 13px sans-serif"; ctx.textAlign="right"; ctx.fillText("final state: "+fin.toFixed(2)+(fin>0.15?" → positive":fin<-0.15?" → negative":" → neutral"), W-padR, padT+8); }
+}
+document.getElementById("step").onclick=()=>stepOne();
+document.getElementById("auto").onclick=()=>{ if(timer){clearInterval(timer);timer=null;return;} timer=setInterval(()=>{ if(!stepOne()){clearInterval(timer);timer=null;} },650); };
+document.getElementById("reset").onclick=reset;
+const tEl=document.getElementById("tokens");
+function renderTokenPicker(){
+  tEl.innerHTML = `<span class="text-xs text-slate-500 self-center mr-1">Sequence:</span>` + seq.map((t,i)=>`<span class="tok inline-flex items-center gap-1 bg-rose-50 text-rose-700 rounded-lg px-2.5 py-1 text-sm font-medium">${t}<button data-i="${i}" class="rm text-rose-400 hover:text-rose-700">✕</button></span>`).join("");
+  tEl.querySelectorAll(".rm").forEach(b=>b.onclick=()=>{ seq.splice(+b.dataset.i,1); renderTokenPicker(); reset(); });
+}
+const addEl=document.createElement("div"); addEl.className="flex flex-wrap justify-center gap-1.5 mt-2";
+addEl.innerHTML = Object.keys(TOKENS).map(t=>`<button class="add text-xs border border-slate-200 rounded-lg px-2.5 py-1 hover:border-rose-400" data-t="${t}">+ ${t}</button>`).join("");
+function mountAdd(){ tEl.after(addEl); addEl.querySelectorAll(".add").forEach(b=>b.onclick=()=>{ if(seq.length<8){ seq.push(b.dataset.t); renderTokenPicker(); reset(); } }); }
+renderTokenPicker(); mountAdd(); reset();
+
+const STEPS = [
+  { title:"1. Sequences need order + memory", why:"Words in a sentence, prices over days, audio over time — the ORDER matters and each item depends on what came before. A plain feed-forward net (or a CNN) has no memory: feed it 'not good' and it can't know 'not' flips 'good'. Sequences demand a model that carries context forward.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">"not good" ≠ "good not" → order + history matter</div>`, code:`// a plain net sees each token in isolation — no notion of "before"` },
+  { title:"2. A hidden state = the memory", why:"The RNN's trick is a hidden state vector that persists between steps. Before reading a token, it holds a summary of everything seen so far. After reading, it's updated. That running state is the model's memory of the past, compressed into a fixed-size vector.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">hidden state h = a summary of all tokens seen so far</div>`, code:`let h = zeros();  // memory of the sequence, updated each step` },
+  { title:"3. The recurrence: mix new with old", why:"At each step the new state is a function of the current input AND the previous state: h = tanh(Wx·x + Wh·h + b). The Wh·h term is what feeds memory forward; the tanh keeps it bounded. Watch the line move: each token nudges the state from wherever the history left it.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">hₜ = tanh(Wx·xₜ + Wh·hₜ₋₁ + b)</div>`, code:`h = tanh(Wx.mul(x).add(Wh.mul(h)).add(b));` },
+  { title:"4. One shared cell, applied over time", why:"There aren't separate networks per timestep — it's ONE small cell with one set of weights (Wx, Wh, Wy), applied again and again down the sequence. Like a conv kernel shares weights across space, an RNN shares weights across time. So it handles sequences of any length.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">same cell + same weights, looped over every timestep</div>`, code:`for (const x of seq) h = cell(x, h);  // weights reused each step` },
+  { title:"5. Memory in action", why:"In the demo, 'not' sets the state's context so the NEXT token's effect flips — 'not good' ends negative, 'not bad' ends positive. The output at any step reflects the whole path, not just the last token. That history-dependence is the entire point of an RNN.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">same token, different history → different result = memory</div>`, code:`// output(t) depends on x₁…xₜ, not just xₜ` },
+  { title:"6. The flaw: it forgets the distant past", why:"Training unrolls the loop and backprops through every step ('backprop through time'). But over long sequences the gradient shrinks toward zero (or blows up) — so vanilla RNNs struggle to connect things far apart, like the start and end of a long paragraph. The fix is gates: LSTM and GRU, tomorrow.", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">One cell + a hidden state looped over time = memory (but a short one).</p></div>`, code:`// long sequences → vanishing gradients → LSTM/GRU to the rescue` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("autoS");
+let cur = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ cur=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,cur-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,cur+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(cur>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(cur+1); },2800); };
+show(0);
+</script>
+</body>
+</html>

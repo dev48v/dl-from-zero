@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 4 — Backpropagation</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  canvas { background:#020617; border:1px solid #1e293b; border-radius:10px; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 4</div>
+      <h1 class="text-xl font-bold">🔁 Backpropagation — How a Network Actually Learns</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-4xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">Watch a network teach itself XOR</h2>
+      <p class="text-slate-500 text-center mb-6">Yesterday the forward pass <i>guessed</i>. Today it <b>learns</b>: backprop measures the error, sends blame backward, and nudges every weight. Hit Train and watch the loss fall and the boundary bend.</p>
+      <div class="grid md:grid-cols-3 gap-5 items-start">
+        <div class="md:col-span-2 flex justify-center"><canvas id="c" width="480" height="360"></canvas></div>
+        <div class="space-y-3">
+          <div class="bg-white rounded-2xl border border-slate-200 p-4 space-y-2 text-sm">
+            <div class="flex justify-between"><span class="text-slate-500">Epoch</span><span id="epoch" class="font-bold">0</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Loss</span><span id="loss" class="font-bold text-rose-600">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Learning rate</span><span id="lrv" class="font-bold">0.5</span></div>
+            <input id="lr" type="range" min="0.05" max="2" step="0.05" value="0.5" class="w-full accent-rose-600" />
+          </div>
+          <div class="flex gap-2">
+            <button id="train" class="flex-1 bg-rose-500 hover:bg-rose-600 text-white font-bold py-2.5 rounded-xl">▶ Train</button>
+            <button id="reset" class="px-4 bg-slate-200 hover:bg-slate-300 rounded-xl font-semibold">Reset</button>
+          </div>
+          <div class="bg-white rounded-2xl border border-slate-200 p-3 text-xs space-y-1">
+            <div class="font-semibold text-slate-600 mb-1">XOR targets vs prediction</div>
+            <div id="preds" class="font-mono text-slate-500"></div>
+          </div>
+        </div>
+      </div>
+      <p class="text-xs text-slate-400 text-center mt-6">↑ Background = what the net predicts everywhere (blue→1, red→0). XOR is impossible for one straight line — backprop bends two together. 2 → 3 → 1 network.</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">How learning flows backward</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Build it yourself</h2>
+    <p class="text-slate-500 mb-8">Forward pass (Day 3) + four lines of gradients + a weight nudge. That's backprop.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Forward, then measure the loss</h3></div><pre>const out = forward(x);          // Day 3's pass
+const loss = (out - y) ** 2;     // how wrong, squared</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Gradient at the output</h3></div><pre>// error × slope of the sigmoid there
+const dOut = (out - y) * out * (1 - out);</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Send blame backward (chain rule)</h3></div><pre>// each hidden neuron's share = its weight to output × dOut × its own slope
+const dHidden = hidden.map((h, j) =&gt;
+  W2[j] * dOut * h * (1 - h));</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Nudge every weight downhill</h3></div><pre>W2[j] -= lr * dOut * hidden[j];
+W1[j][i] -= lr * dHidden[j] * x[i];   // repeat thousands of times</pre></li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 4 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">Tomorrow: XOR — why a single layer can't solve it.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== BACKPROP on XOR, 2 -> 3 -> 1 sigmoid net =====
+const c = document.getElementById("c"), ctx = c.getContext("2d");
+const PAD = 30;
+const DATA = [ {x:[0,0],y:0}, {x:[0,1],y:1}, {x:[1,0],y:1}, {x:[1,1],y:0} ];
+let W1, b1, W2, b2, epoch, lr = 0.5, timer = null;
+const sig = z => 1/(1+Math.exp(-z));
+const rnd = () => Math.random()*2 - 1;
+const px = v => PAD + v * (c.width - 2*PAD);
+const py = v => (c.height - PAD) - v * (c.height - 2*PAD);
+
+function reset(){
+  W1 = [[rnd(),rnd()],[rnd(),rnd()],[rnd(),rnd()]]; b1 = [rnd(),rnd(),rnd()];
+  W2 = [rnd(),rnd(),rnd()]; b2 = rnd(); epoch = 0;
+  if (timer){ clearInterval(timer); timer=null; document.getElementById("train").textContent="▶ Train"; }
+  draw();
+}
+function forward(x){
+  const h = [0,1,2].map(j => sig(W1[j][0]*x[0] + W1[j][1]*x[1] + b1[j]));
+  const out = sig(W2[0]*h[0] + W2[1]*h[1] + W2[2]*h[2] + b2);
+  return { h, out };
+}
+function trainEpoch(){
+  let loss = 0;
+  for (const {x,y} of DATA){
+    const { h, out } = forward(x);
+    loss += (out - y)**2;
+    const dOut = (out - y) * out * (1 - out);          // output gradient
+    const dH = [0,1,2].map(j => W2[j]*dOut * h[j]*(1-h[j])); // chain rule → hidden
+    for (let j=0;j<3;j++){ W2[j] -= lr*dOut*h[j]; }
+    b2 -= lr*dOut;
+    for (let j=0;j<3;j++){ W1[j][0]-=lr*dH[j]*x[0]; W1[j][1]-=lr*dH[j]*x[1]; b1[j]-=lr*dH[j]; }
+  }
+  epoch++;
+  return loss/DATA.length;
+}
+function draw(){
+  ctx.clearRect(0,0,c.width,c.height);
+  const S = 10;
+  for (let gx=0; gx<c.width; gx+=S) for (let gy=0; gy<c.height; gy+=S){
+    const xv=(gx+S/2-PAD)/(c.width-2*PAD), yv=(c.height-PAD-(gy+S/2))/(c.height-2*PAD);
+    const o = forward([xv,yv]).out;
+    const r = Math.round(80 + (1-o)*150), bl = Math.round(80 + o*160);
+    ctx.fillStyle = `rgb(${r},80,${bl})`; ctx.fillRect(gx,gy,S,S);
+  }
+  for (const {x,y} of DATA){ ctx.fillStyle = y===1 ? "#38bdf8" : "#fb7185"; ctx.strokeStyle="#fff"; ctx.lineWidth=2.5;
+    ctx.beginPath(); ctx.arc(px(x[0]),py(x[1]),9,0,Math.PI*2); ctx.fill(); ctx.stroke(); }
+  document.getElementById("epoch").textContent = epoch;
+  document.getElementById("preds").innerHTML = DATA.map(d => {
+    const o = forward(d.x).out; return `(${d.x[0]},${d.x[1]}) → ${o.toFixed(2)}  <span class="text-slate-400">want ${d.y}</span>`;
+  }).join("<br>");
+}
+document.getElementById("train").onclick = function(){
+  if (timer){ clearInterval(timer); timer=null; this.textContent="▶ Train"; return; }
+  this.textContent="⏸ Pause";
+  timer = setInterval(()=>{ let l; for(let i=0;i<40;i++) l=trainEpoch(); document.getElementById("loss").textContent=l.toFixed(4); draw();
+    if (epoch>=20000){ clearInterval(timer); timer=null; document.getElementById("train").textContent="✓ Done"; } }, 40);
+};
+document.getElementById("reset").onclick = reset;
+document.getElementById("lr").oninput = function(){ lr=+this.value; document.getElementById("lrv").textContent=lr.toFixed(2); };
+reset();
+
+const STEPS = [
+  { title:"1. Forward, then score the wrongness", why:"Learning starts where Day 3 ended. Run the forward pass to get the network's prediction, then compare it to the true answer with a LOSS — here, squared error. A big loss means a big mistake; the whole goal of training is to push this number down.", concept:`<div class="bg-slate-100 p-4 rounded text-xs font-mono w-full">loss = (prediction − target)²</div>`, code:`const out = forward(x);
+const loss = (out - y) ** 2;` },
+  { title:"2. Which way is downhill? The gradient", why:"To shrink the loss we need to know, for each weight, 'if I nudge you up, does the loss go up or down, and how steeply?' That's the GRADIENT (a derivative). At the output it's the error times the slope of the sigmoid at that point — high slope = this neuron has lots of influence right now.", concept:`<div class="bg-slate-100 p-4 rounded text-xs font-mono w-full">dOut = (out − y) · out·(1 − out)</div>`, code:`const dOut = (out - y) * out * (1 - out);` },
+  { title:"3. The chain rule sends blame backward", why:"This is the 'back' in backprop. A hidden neuron didn't touch the loss directly — it acted through the output weight. So its blame = (its weight to the output) × (output's gradient) × (its own slope). The error flows backward through the same connections it flowed forward through. Stack more layers and you just keep chaining.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full"><div class="font-mono">dHiddenⱼ = W2ⱼ · dOut · hⱼ·(1−hⱼ)</div><div class="text-rose-600 mt-1">error flows ← backward</div></div>`, code:`const dHidden = hidden.map((h, j) =>
+  W2[j] * dOut * h * (1 - h));` },
+  { title:"4. Nudge each weight a little downhill", why:"Now every weight has a gradient. Subtract a small fraction of it (the LEARNING RATE) so each weight moves in the direction that lowers the loss. Too small = crawls; too big = overshoots and the loss bounces (slide the rate in the demo to feel it).", concept:`<div class="bg-slate-100 p-4 rounded text-xs font-mono w-full">w ← w − lr · gradient</div>`, code:`W2[j] -= lr * dOut * hidden[j];
+W1[j][i] -= lr * dHidden[j] * x[i];` },
+  { title:"5. Repeat thousands of times", why:"One nudge barely helps. But loop over the data thousands of times and the weights settle into values that solve the task. In the demo the loss slides toward zero and the red/blue regions bend into the XOR checkerboard — something a single straight line can never do.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full"><div>forward → loss → backward → nudge</div><div class="text-rose-600">× thousands → it learns</div></div>`, code:`for (let e = 0; e < 20000; e++)
+  for (const {x,y} of data) trainStep(x, y);` },
+  { title:"6. This is literally how all of it trains", why:"GPT, image models, self-driving vision — all trained by this exact loop: forward pass, loss, backprop the gradients, nudge the weights. The networks are vastly bigger and the math is vectorised on GPUs, but the idea you just watched is the whole engine of deep learning.", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">Backprop = the engine behind every trained model.</p></div>`, code:`// every model you've heard of trains
+// with this same forward/backward loop.` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let cur = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ cur=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,cur-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,cur+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(cur>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(cur+1); },2800); };
+show(0);
+</script>
+</body>
+</html>

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 8 — CNNs / Convolution</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  canvas { background:#020617; border:1px solid #1e293b; border-radius:10px; image-rendering:pixelated; }
+  .kbtn.active { background:#fb7185; color:#fff; border-color:#fb7185; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 8</div>
+      <h1 class="text-xl font-bold">🖼️ CNNs — the Convolution That Sees Images</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-4xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">A tiny 3×3 filter, slid over an image, becomes an edge detector</h2>
+      <p class="text-slate-500 mb-5">A convolution slides one small grid of weights (the kernel) across every patch of the image and writes one number per position. Pick a kernel and watch what it extracts.</p>
+      <div class="flex flex-wrap justify-center gap-2 mb-4" id="kernels"></div>
+      <div class="flex flex-wrap items-center justify-center gap-4">
+        <div><div class="text-xs font-bold uppercase text-slate-500 mb-2">Input</div><canvas id="src" width="180" height="180"></canvas></div>
+        <div class="text-3xl text-rose-400">✻</div>
+        <div><div class="text-xs font-bold uppercase text-slate-500 mb-2">Kernel</div><div id="kmat" class="inline-grid gap-1 bg-white p-2 rounded-lg border border-slate-200" style="grid-template-columns:repeat(3,32px);"></div></div>
+        <div class="text-3xl text-rose-400">=</div>
+        <div><div class="text-xs font-bold uppercase text-rose-600 mb-2">Feature map (output)</div><canvas id="out" width="180" height="180"></canvas></div>
+      </div>
+      <p class="text-xs text-slate-400 mt-5">↑ The same kernel runs over the WHOLE image (weight sharing). An edge kernel lights up where brightness changes; blur averages neighbours. A CNN <i>learns</i> these kernels instead of you picking them.</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">How a CNN works</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Convolve it yourself</h2>
+    <p class="text-slate-500 mb-8">The whole operation is four nested loops. ~15 lines.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">A kernel is a small grid of weights</h3></div><pre>const edge = [[-1,-1,-1],
+              [-1, 8,-1],
+              [-1,-1,-1]];   // sums to 0 → flat areas vanish, edges pop</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Slide it over every pixel</h3></div><pre>for (let y = 1; y < h-1; y++)
+  for (let x = 1; x < w-1; x++) {
+    let sum = 0;
+    for (let ky = -1; ky <= 1; ky++)
+      for (let kx = -1; kx <= 1; kx++)
+        sum += img[y+ky][x+kx] * kernel[ky+1][kx+1];
+    out[y][x] = sum;   // one output number per position
+  }</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Weight sharing = the big idea</h3></div><pre>// the SAME 9 weights are reused at every position.
+// a dense layer would need (w·h)×(w·h) weights; a 3×3 kernel needs 9.
+// → far fewer parameters, and it detects a feature ANYWHERE in the image.</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Stack layers → hierarchy of features</h3></div><pre>// layer 1 kernels learn edges → layer 2 combines edges into shapes
+// → layer 3 into objects. And the network LEARNS the kernel weights
+// by gradient descent, instead of you hand-picking "edge detector".</pre></li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 8 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">Tomorrow: Pooling — shrinking feature maps while keeping what matters.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== CONVOLUTION =====
+const N=30;
+const src=document.getElementById("src"), out=document.getElementById("out");
+const sctx=src.getContext("2d"), octx=out.getContext("2d");
+const KERNELS = {
+  "Edge":     [[-1,-1,-1],[-1,8,-1],[-1,-1,-1]],
+  "Sharpen":  [[0,-1,0],[-1,5,-1],[0,-1,0]],
+  "Blur":     [[1/9,1/9,1/9],[1/9,1/9,1/9],[1/9,1/9,1/9]],
+  "Emboss":   [[-2,-1,0],[-1,1,1],[0,1,2]],
+  "Sobel ↕":  [[-1,-2,-1],[0,0,0],[1,2,1]],
+  "Identity": [[0,0,0],[0,1,0],[0,0,0]],
+};
+// build a grayscale "image": a smiley-ish / shapes pattern
+let img=[];
+function genImg(){
+  img=Array.from({length:N},()=>Array(N).fill(0.15));
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    const cx=N/2,cy=N/2,d=Math.hypot(x-cx,y-cy);
+    if(d<11&&d>8) img[y][x]=0.95;                 // ring
+    if(Math.hypot(x-11,y-12)<2) img[y][x]=0.95;    // eye
+    if(Math.hypot(x-19,y-12)<2) img[y][x]=0.95;    // eye
+    if(y>17&&y<20&&x>10&&x<20&&Math.hypot(x-cx,y-15)>4) img[y][x]=0.95; // smile-ish
+  }
+}
+let kernel=KERNELS["Edge"];
+function drawGrid(ctx,grid){ const cell=src.width/N; for(let y=0;y<N;y++)for(let x=0;x<N;x++){ const v=Math.round(Math.max(0,Math.min(1,grid[y][x]))*255); ctx.fillStyle=`rgb(${v},${v},${v})`; ctx.fillRect(x*cell,y*cell,cell+0.5,cell+0.5); } }
+function convolve(){
+  const o=Array.from({length:N},()=>Array(N).fill(0));
+  for(let y=1;y<N-1;y++)for(let x=1;x<N-1;x++){ let s=0; for(let ky=-1;ky<=1;ky++)for(let kx=-1;kx<=1;kx++) s+=img[y+ky][x+kx]*kernel[ky+1][kx+1]; o[y][x]=s; }
+  return o;
+}
+function render(){
+  drawGrid(sctx,img);
+  drawGrid(octx,convolve());
+  document.getElementById("kmat").innerHTML = kernel.flat().map(v=>{ const r=Math.round(v*100)/100; return `<div class="flex items-center justify-center text-xs font-mono rounded ${v>0?'bg-rose-100 text-rose-700':v<0?'bg-sky-100 text-sky-700':'bg-slate-100 text-slate-400'}" style="width:32px;height:32px;">${r}</div>`; }).join("");
+}
+const kEl=document.getElementById("kernels");
+Object.keys(KERNELS).forEach((k,i)=>{ const b=document.createElement("button"); b.className="kbtn text-xs border border-slate-200 rounded-lg px-3 py-1.5 hover:border-rose-400"+(i===0?" active":""); b.textContent=k; b.onclick=()=>{ kernel=KERNELS[k]; kEl.querySelectorAll(".kbtn").forEach(x=>x.classList.remove("active")); b.classList.add("active"); render(); }; kEl.appendChild(b); });
+genImg(); render();
+
+const STEPS = [
+  { title:"1. Images need a different kind of layer", why:"A dense (fully-connected) layer treats every pixel independently and needs a weight for every pixel-to-neuron pair — millions for a tiny image, and it has to RE-learn a cat in every position. Images have structure: nearby pixels relate, and a feature looks the same wherever it appears. CNNs exploit exactly that.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">dense layer: millions of weights, position-blind → wrong tool for images</div>`, code:`// a 100x100 image into a dense layer = 10,000 inputs × neurons` },
+  { title:"2. A kernel is a tiny feature detector", why:"A convolution kernel is a small grid of weights (often 3×3). Slide it over a patch, multiply element-wise, sum — one number out. Different weight patterns detect different things: an edge, a corner, a blob. It's a little template-matcher for one local feature.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">3×3 patch · kernel → multiply + sum → 1 feature value</div>`, code:`sum = Σ patch[i] * kernel[i];  // one output pixel` },
+  { title:"3. Slide it everywhere = a feature map", why:"Run that same kernel across every position in the image and you get a 'feature map' — a new image showing WHERE that feature occurs. The edge kernel's feature map is bright along edges, dark on flat areas. Pick kernels in the demo to see different maps from the same input.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">kernel slid over all positions → a map of "where is this feature"</div>`, code:`for each (x,y): out[y][x] = convolve(patchAt(x,y), kernel);` },
+  { title:"4. Weight sharing: the killer efficiency", why:"The SAME 9 weights are reused at every position. So instead of millions of independent weights, a kernel has just 9 — and because it's applied everywhere, it detects its feature ANYWHERE in the image (translation invariance). Far fewer parameters, far better generalisation on images.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">9 shared weights detect the feature in every position</div>`, code:`// 9 params total, reused at every (x,y) → tiny + position-invariant` },
+  { title:"5. Many kernels per layer", why:"One convolutional layer has MANY kernels (e.g. 32, 64), each learning to detect a different feature — this edge orientation, that colour blob, a curve. The layer's output is a stack of feature maps, one per kernel. The next layer convolves over THOSE.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">layer = 64 kernels → 64 feature maps stacked</div>`, code:`// conv layer: input image → [map_edge, map_blob, map_curve, ...]` },
+  { title:"6. Stack layers → and LEARN the kernels", why:"Early layers detect edges; deeper layers convolve over edge-maps to find shapes, then parts, then whole objects — the same pixels-→-parts-→-objects hierarchy as Day 4. The twist: you don't hand-write 'edge detector'; the network LEARNS every kernel's weights by gradient descent. That's a CNN.", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">Slide shared little filters → feature maps → stack + learn them = CNN.</p></div>`, code:`// kernels are weights → trained by backprop, not hand-picked` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let cur = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ cur=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,cur-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,cur+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(cur>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(cur+1); },2800); };
+show(0);
+</script>
+</body>
+</html>

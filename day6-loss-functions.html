@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 6 — Loss Functions</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  canvas { background:#020617; border:1px solid #1e293b; border-radius:10px; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 6</div>
+      <h1 class="text-xl font-bold">🎯 Loss Functions — How a Network Measures "Wrong"</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-4xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">The loss is the number training tries to shrink</h2>
+      <p class="text-slate-500 text-center mb-5">Drag the prediction and watch the penalty. The choice of loss decides what "wrong" even means — and quietly shapes what the model learns.</p>
+      <div class="flex justify-center gap-2 mb-4">
+        <button class="mode-btn px-4 py-2 rounded-lg text-sm font-semibold bg-rose-500 text-white" data-mode="reg">Regression: MSE vs MAE</button>
+        <button class="mode-btn px-4 py-2 rounded-lg text-sm font-semibold bg-slate-100" data-mode="cls">Classification: Cross-Entropy</button>
+      </div>
+      <div class="grid md:grid-cols-3 gap-5 items-start">
+        <div class="md:col-span-2 flex justify-center"><canvas id="c" width="480" height="320"></canvas></div>
+        <div class="space-y-3">
+          <div class="bg-white rounded-2xl border border-slate-200 p-4 space-y-2 text-sm">
+            <div class="flex justify-between"><span class="text-slate-500" id="lblTrue">True value</span><span id="trueVal" class="font-bold text-emerald-600">0.60</span></div>
+            <div class="flex justify-between"><span class="text-slate-500" id="lblPred">Prediction</span><span id="predVal" class="font-bold text-rose-600">0.20</span></div>
+            <input id="pred" type="range" min="1" max="99" value="20" class="w-full accent-rose-600" />
+          </div>
+          <div id="lossBox" class="bg-white rounded-2xl border border-slate-200 p-4 space-y-2 text-sm"></div>
+        </div>
+      </div>
+      <p class="text-xs text-slate-400 text-center mt-6" id="caption">↑ MSE (the parabola) punishes big misses far harder than MAE (the V). One outlier can dominate MSE — that's why the loss you pick changes the model you get.</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">How loss functions work</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 The losses, in code</h2>
+    <p class="text-slate-500 mb-8">Each is a one-liner. The art is matching the loss to the task.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">MSE — for regression (predicting numbers)</h3></div><pre>const mse = (pred, y) =&gt; (pred - y) ** 2;
+// squares the error → big misses hurt disproportionately</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">MAE — robust to outliers</h3></div><pre>const mae = (pred, y) =&gt; Math.abs(pred - y);
+// linear penalty → one wild outlier can't dominate</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Cross-entropy — for classification</h3></div><pre>const bce = (p, y) =&gt; -(y*Math.log(p) + (1-y)*Math.log(1-p));
+// punishes CONFIDENT wrong answers brutally (→ ∞ as p→wrong)</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Average over the batch</h3></div><pre>const loss = batch.reduce((s, {pred, y}) =&gt; s + fn(pred, y), 0) / batch.length;</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Its slope is what backprop follows</h3></div><pre>// training minimises this number; ∂loss/∂pred is the gradient.
+// MSE's gradient is 2(pred−y); cross-entropy + sigmoid → (pred−y) too.</pre></li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 6 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">Tomorrow: Optimizers — SGD, momentum, Adam.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== LOSS VISUALIZER =====
+const c=document.getElementById("c"), ctx=c.getContext("2d"), W=c.width, H=c.height, PAD=34;
+let mode="reg", TRUE=0.6, pred=0.2;
+const px = v => PAD + v*(W-2*PAD);
+const py = (loss,maxL) => (H-PAD) - (loss/maxL)*(H-2*PAD);
+const mse = p => (p-TRUE)**2;
+const mae = p => Math.abs(p-TRUE);
+const bce = p => -Math.log(Math.min(0.999,Math.max(0.001,p)));   // true class = 1
+function curve(fn, maxL, color){
+  ctx.strokeStyle=color; ctx.lineWidth=2.5; ctx.beginPath();
+  for (let i=0;i<=100;i++){ const x=i/100, y=Math.min(fn(x),maxL); const X=px(x), Y=py(y,maxL); i===0?ctx.moveTo(X,Y):ctx.lineTo(X,Y); }
+  ctx.stroke();
+}
+function draw(){
+  ctx.clearRect(0,0,W,H); ctx.fillStyle="#020617"; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle="#1e293b"; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(PAD,H-PAD); ctx.lineTo(W-PAD,H-PAD); ctx.moveTo(PAD,PAD); ctx.lineTo(PAD,H-PAD); ctx.stroke();
+  ctx.fillStyle="#64748b"; ctx.font="11px sans-serif"; ctx.textAlign="center"; ctx.fillText("prediction →", W/2, H-8);
+  let maxL, box="";
+  if (mode==="reg"){
+    maxL = 1.0;
+    curve(mae, maxL, "#38bdf8");   // MAE blue
+    curve(mse, maxL, "#fb7185");   // MSE rose
+    // true value marker
+    ctx.strokeStyle="#34d399"; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(px(TRUE),PAD); ctx.lineTo(px(TRUE),H-PAD); ctx.stroke(); ctx.setLineDash([]);
+    // current prediction marker on both curves
+    mark(pred, mse(pred), maxL, "#fb7185"); mark(pred, mae(pred), maxL, "#38bdf8");
+    box = `<div class="flex justify-between"><span class="text-rose-500 font-semibold">MSE (pred−true)²</span><span class="font-bold">${mse(pred).toFixed(3)}</span></div>
+           <div class="flex justify-between"><span class="text-sky-500 font-semibold">MAE |pred−true|</span><span class="font-bold">${mae(pred).toFixed(3)}</span></div>
+           <div class="text-xs text-slate-400 pt-1">MSE ≈ MAE² near a big error — that's the outlier sensitivity.</div>`;
+  } else {
+    maxL = 5;
+    curve(bce, maxL, "#fb7185");
+    ctx.strokeStyle="#34d399"; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(px(1),PAD); ctx.lineTo(px(1),H-PAD); ctx.stroke(); ctx.setLineDash([]);
+    mark(pred, Math.min(bce(pred),maxL), maxL, "#fb7185");
+    box = `<div class="flex justify-between"><span class="text-rose-500 font-semibold">Cross-entropy −log(p)</span><span class="font-bold">${bce(pred).toFixed(3)}</span></div>
+           <div class="text-xs text-slate-400 pt-1">True class = 1. As your predicted probability p → 0 (confident &amp; wrong), the loss rockets toward ∞.</div>`;
+  }
+  document.getElementById("lossBox").innerHTML = box;
+}
+function mark(x, loss, maxL, color){ const X=px(x), Y=py(Math.min(loss,maxL),maxL); ctx.fillStyle=color; ctx.beginPath(); ctx.arc(X,Y,5,0,Math.PI*2); ctx.fill(); ctx.strokeStyle="#fff"; ctx.lineWidth=2; ctx.stroke(); }
+function setMode(m){
+  mode=m;
+  document.querySelectorAll(".mode-btn").forEach(b=>{ const on=b.dataset.mode===m; b.classList.toggle("bg-rose-500",on); b.classList.toggle("text-white",on); b.classList.toggle("bg-slate-100",!on); });
+  document.getElementById("lblTrue").textContent = m==="reg" ? "True value" : "True class";
+  document.getElementById("trueVal").textContent = m==="reg" ? "0.60" : "1 (positive)";
+  document.getElementById("lblPred").textContent = m==="reg" ? "Prediction" : "Predicted prob p";
+  document.getElementById("caption").textContent = m==="reg"
+    ? "↑ MSE (rose parabola) punishes big misses far harder than MAE (blue V). One outlier can dominate MSE — that's why the loss you pick changes the model you get."
+    : "↑ Cross-entropy is gentle when you're right (p→1, loss→0) and savage when you're confidently wrong (p→0, loss→∞). That steep slope is exactly what trains classifiers fast.";
+  draw();
+}
+document.getElementById("pred").oninput = function(){ pred=+this.value/100; document.getElementById("predVal").textContent=pred.toFixed(2); draw(); };
+document.querySelectorAll(".mode-btn").forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
+setMode("reg");
+
+const STEPS = [
+  { title:"1. Loss = one number for 'how wrong'", why:"A network's output is compared to the truth and collapsed into a single scalar: the loss. Everything in training exists to make that number smaller. Pick the loss and you've defined the network's entire goal — it will optimise exactly what you measure, for better or worse.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">(prediction, truth) → loss function → one number</div>`, code:`loss = lossFn(prediction, truth);  // training minimises this` },
+  { title:"2. MSE: square the error (regression)", why:"For predicting numbers, Mean Squared Error squares the gap. Squaring means a prediction that's off by 4 hurts 16×, while one off by 1 hurts 1×. So MSE obsesses over large errors — great when big misses are unacceptable, risky when your data has outliers it'll chase.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">error 2 → loss 4 · error 4 → loss 16 (quadratic)</div>`, code:`mse = (pred - y) ** 2;` },
+  { title:"3. MAE: absolute error, outlier-robust", why:"Mean Absolute Error penalises the gap linearly — off by 4 hurts exactly 4× as much as off by 1. No squaring means a single crazy outlier can't dominate the total. The trade-off: its gradient is constant, so it can be slower and less precise near the answer. Drag near the truth and compare the curves.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">MSE = parabola (steep) · MAE = V (linear)</div>`, code:`mae = Math.abs(pred - y);` },
+  { title:"4. Cross-entropy: for classification", why:"When the output is a probability, you don't use MSE — you use cross-entropy. It rewards confident-and-right and brutally punishes confident-and-wrong: predict 1% for the true class and the loss screams toward infinity. Switch the demo to Classification and slide p toward 0 to watch it explode.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full"><div>right & confident → loss ≈ 0</div><div class="text-rose-600">wrong & confident → loss → ∞</div></div>`, code:`bce = -(y*Math.log(p) + (1-y)*Math.log(1-p));` },
+  { title:"5. The loss's SLOPE is what learning uses", why:"Backprop doesn't care about the loss value directly — it follows the loss's gradient (slope) downhill. That's why the shape matters: cross-entropy's steep slope when very wrong gives a strong push to fix confident mistakes, helping classifiers learn faster than MSE would.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">steeper slope where wrong → bigger corrective step</div>`, code:`grad = dLoss/dPred;  // gradient descent steps along this` },
+  { title:"6. Choosing the loss is a design decision", why:"Predicting a price? MSE or MAE. Yes/no? Binary cross-entropy. One-of-many? Categorical cross-entropy. The loss encodes what you care about — penalise outliers or ignore them, value calibrated probabilities or just the top class. Same network, different loss, genuinely different behaviour.", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">Loss = the goal. Match it to the task; its slope drives the learning.</p></div>`, code:`// numbers → MSE/MAE · classes → cross-entropy` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let cur = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ cur=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,cur-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,cur+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(cur>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(cur+1); },2800); };
+show(0);
+</script>
+</body>
+</html>

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 9 — Pooling</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .cell { width:34px; height:34px; display:flex; align-items:center; justify-content:center; font-size:11px; font-family:ui-monospace,monospace; border-radius:4px; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 9</div>
+      <h1 class="text-xl font-bold">🪟 Pooling — Shrink the Map, Keep What Matters</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-3xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">2×2 pooling: four numbers in, one number out</h2>
+      <p class="text-slate-500 mb-5">Each coloured 2×2 block of the feature map collapses to a single value — max pooling keeps the strongest, average pooling takes the mean. The map halves in size; the important signal survives.</p>
+      <div class="flex justify-center gap-2 mb-4">
+        <button id="mMax" class="pmode bg-rose-500 text-white font-semibold px-4 py-2 rounded-lg text-sm" data-m="max">Max pooling</button>
+        <button id="mAvg" class="pmode bg-slate-100 font-semibold px-4 py-2 rounded-lg text-sm" data-m="avg">Average pooling</button>
+        <button id="newd" class="border border-slate-200 px-3 py-2 rounded-lg text-sm hover:bg-slate-50">🎲</button>
+      </div>
+      <div class="flex flex-wrap items-center justify-center gap-5">
+        <div><div class="text-xs font-bold uppercase text-slate-500 mb-2">Input feature map (8×8)</div><div id="in" class="inline-grid gap-1 bg-white p-2 rounded-xl border border-slate-200" style="grid-template-columns:repeat(8,34px);"></div></div>
+        <div class="text-3xl text-rose-400">→</div>
+        <div><div class="text-xs font-bold uppercase text-rose-600 mb-2">Pooled (4×4)</div><div id="out" class="inline-grid gap-1 bg-white p-2 rounded-xl border border-slate-200" style="grid-template-columns:repeat(4,34px);"></div></div>
+      </div>
+      <p class="text-xs text-slate-400 mt-5">↑ Each 2×2 colour-group in the input maps to the same-colour cell on the right. Max pooling (the common choice) reports "the strongest activation in this region" — making the network care WHAT is present, not exactly WHERE.</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Why pooling exists</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Pool it yourself</h2>
+    <p class="text-slate-500 mb-8">Step over the map in 2×2 jumps; reduce each window to one number. ~10 lines.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Stride 2: hop, don't slide</h3></div><pre>for (let y = 0; y < h; y += 2)       // step by the pool size
+  for (let x = 0; x < w; x += 2) {
+    const window = [img[y][x], img[y][x+1], img[y+1][x], img[y+1][x+1]];
+    out[y/2][x/2] = reduce(window);
+  }</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Max pool — keep the strongest</h3></div><pre>const reduce = (w) => Math.max(...w);   // "was the feature present here?"</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Average pool — smooth it</h3></div><pre>const reduce = (w) => w.reduce((a,b)=>a+b) / w.length;</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">No weights to learn</h3></div><pre>// pooling has ZERO parameters — it's a fixed downsample.
+// modern nets sometimes use strided convolutions instead, but the goal
+// is the same: shrink the map, build translation tolerance, cut compute.</pre></li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 9 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">Tomorrow: RNNs — networks with a memory of the past.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== POOLING =====
+const N=8;
+let grid=[], mode="max";
+const inEl=document.getElementById("in"), outEl=document.getElementById("out");
+const COLORS=["#fecaca","#bfdbfe","#bbf7d0","#fde68a","#ddd6fe","#fbcfe8","#a5f3fc","#fed7aa","#c7d2fe","#d9f99d","#fda4af","#99f6e4","#e9d5ff","#fef08a","#bae6fd","#f5d0fe"];
+function gen(){ grid=Array.from({length:N},()=>Array.from({length:N},()=>Math.floor(Math.random()*9)+1)); }
+function pool(){ const o=[]; for(let y=0;y<N;y+=2){ const row=[]; for(let x=0;x<N;x+=2){ const w=[grid[y][x],grid[y][x+1],grid[y+1][x],grid[y+1][x+1]]; row.push(mode==="max"?Math.max(...w):Math.round(w.reduce((a,b)=>a+b)/4)); } o.push(row); } return o; }
+function blockIndex(x,y){ return Math.floor(y/2)*4+Math.floor(x/2); }
+function render(){
+  inEl.innerHTML=""; for(let y=0;y<N;y++)for(let x=0;x<N;x++){ const d=document.createElement("div"); d.className="cell text-slate-700"; d.style.background=COLORS[blockIndex(x,y)%COLORS.length]; d.textContent=grid[y][x]; inEl.appendChild(d); }
+  const o=pool(); outEl.innerHTML=""; for(let y=0;y<4;y++)for(let x=0;x<4;x++){ const d=document.createElement("div"); d.className="cell font-bold text-slate-800"; d.style.background=COLORS[(y*4+x)%COLORS.length]; d.textContent=o[y][x]; outEl.appendChild(d); }
+}
+document.querySelectorAll(".pmode").forEach(b=>b.onclick=()=>{ mode=b.dataset.m; document.querySelectorAll(".pmode").forEach(x=>{x.classList.remove("bg-rose-500","text-white");x.classList.add("bg-slate-100");}); b.classList.add("bg-rose-500","text-white"); b.classList.remove("bg-slate-100"); render(); });
+document.getElementById("newd").onclick=()=>{ gen(); render(); };
+gen(); render();
+
+const STEPS = [
+  { title:"1. Feature maps are big — too big", why:"After a convolution you have a feature map for every kernel, each nearly the size of the image. Stack a few conv layers and you're drowning in numbers — slow to compute and prone to overfitting. You need to shrink the maps while keeping the signal. That's pooling.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">conv layers → many large maps → must downsample</div>`, code:`// 64 maps × 100×100 each → way too much to carry forward` },
+  { title:"2. Pool: reduce a window to one number", why:"Pooling slides a small window (usually 2×2) across the map and collapses each window to a single value. With a stride equal to the window size, the windows don't overlap, so a 2×2 pool halves both dimensions — 4× fewer numbers. No sliding-and-overlapping like convolution; it hops.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">2×2 window → 1 value · halves width & height (4× smaller)</div>`, code:`for (y += 2) for (x += 2) out[y/2][x/2] = reduce(window);` },
+  { title:"3. Max pooling: keep the strongest", why:"The most common kind takes the MAX of each window — the strongest activation. A feature detector's job is 'is this feature here?', and max pooling answers 'yes, somewhere in this region it fired'. It keeps the presence of a feature while throwing away its exact pixel location.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">max([3,7,2,5]) = 7 → "the feature fired here, strongly"</div>`, code:`out = Math.max(a, b, c, d);` },
+  { title:"4. Average pooling: smooth it", why:"The alternative takes the MEAN of each window — a gentler, smoothing downsample. Average pooling is common right at the end of a network (global average pooling) to condense each feature map to a single summary number before the classifier. Max for detecting, average for summarising.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">avg([3,7,2,5]) = 4.25 → smoother summary</div>`, code:`out = (a + b + c + d) / 4;` },
+  { title:"5. Translation tolerance (the real point)", why:"Because pooling reports 'the feature is somewhere in this region', the network stops caring about exact position. Shift the input a pixel and the pooled output barely changes. This translation invariance is why a CNN recognises a cat whether it's top-left or centre — pooling bakes in that robustness.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">shift input 1px → pooled map ~unchanged → position-tolerant</div>`, code:`// "feature present in region" matters; exact (x,y) doesn't` },
+  { title:"6. Free, parameter-less downsampling", why:"Pooling has NO learnable weights — it's a fixed operation, so it adds robustness and cuts compute for free. (Some modern nets replace it with strided convolutions, but the intent is identical: smaller maps, more tolerance, less compute.) Conv finds features; pool condenses them.", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">Hop in 2×2s, keep the max → smaller maps, position-tolerant, zero params.</p></div>`, code:`// 0 parameters · shrinks the map · adds invariance` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let cur = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ cur=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,cur-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,cur+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(cur>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(cur+1); },2800); };
+show(0);
+</script>
+</body>
+</html>

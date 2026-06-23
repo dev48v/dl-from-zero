@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 14 — GANs</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .copy-btn:hover { background:#1e293b; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  canvas { background:#020617; border:1px solid #1e293b; border-radius:10px; }
+  .tok { transition:all .2s; cursor:pointer; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 14</div>
+      <h1 class="text-xl font-bold">🎭 GANs — Two Networks That Make Fakes Real</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-5xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Watch a Generator learn to forge the real data</h2>
+      <p class="text-slate-500 mb-5">The <b class="text-emerald-600">teal ring</b> is the <b>real</b> data distribution. The <b class="text-rose-600">rose dots</b> are <b>fakes</b> the <b>Generator</b> invents from random noise — at first scattered everywhere. Hit <b class="text-rose-600">▶ train</b>: the generator nudges its fakes to match the ring, while the <b>Discriminator</b> tries to tell real from fake. As the fakes get good, the discriminator's accuracy slides toward <b>~50%</b> — a coin flip. That stalemate is the famous GAN equilibrium.</p>
+      <div class="flex flex-wrap items-center justify-center gap-2 mb-4">
+        <button id="trainBtn"  class="bg-rose-600 text-white px-5 py-2 rounded-lg font-semibold text-sm">▶ train</button>
+        <button id="stepBtn"   class="bg-rose-500 text-white px-5 py-2 rounded-lg font-semibold text-sm">▶ one step</button>
+        <button id="resetBtn"  class="bg-slate-200 px-5 py-2 rounded-lg font-semibold text-sm">↺ reset</button>
+        <label class="text-sm text-slate-600 ml-2 flex items-center gap-1">target:
+          <select id="shapeSel" class="border border-slate-300 rounded px-2 py-1 text-sm">
+            <option value="ring" selected>ring</option>
+            <option value="blobs">two blobs</option>
+            <option value="spiral">spiral</option>
+          </select>
+        </label>
+      </div>
+      <div class="flex flex-col lg:flex-row justify-center items-center gap-5">
+        <canvas id="c" width="430" height="430"></canvas>
+        <div class="w-full lg:w-72 text-left space-y-3">
+          <div class="bg-white border border-slate-200 rounded-xl p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">scoreboard</div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">training step</span><span id="sStep" class="font-bold font-mono">0</span></div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-emerald-600 font-semibold">real spotted</span><span id="sReal" class="font-bold font-mono">—</span></div>
+            <div class="flex justify-between text-sm mb-3"><span class="text-rose-600 font-semibold">fakes caught</span><span id="sFake" class="font-bold font-mono">—</span></div>
+            <div class="text-xs text-slate-500 mb-1">Discriminator accuracy</div>
+            <div class="w-full bg-slate-100 rounded-full h-4 overflow-hidden border border-slate-200">
+              <div id="accBar" class="h-4 bg-rose-500 transition-all duration-200" style="width:100%"></div>
+            </div>
+            <div class="flex justify-between text-[10px] text-slate-400 mt-1"><span>50% = fooled</span><span id="accNum" class="font-mono font-bold text-slate-600">100%</span></div>
+          </div>
+          <div id="verdict" class="bg-white border border-slate-200 rounded-xl p-4 text-sm text-slate-600 min-h-[64px]">
+            Press <b class="text-rose-600">▶ train</b> to start the contest.
+          </div>
+        </div>
+      </div>
+      <p class="text-xs text-slate-400 mt-5 max-w-3xl mx-auto">↑ Two networks compete: the <b>generator</b> tries to fake the data, the <b>discriminator</b> tries to catch the fakes. Each pushes the other to improve — until the fakes are indistinguishable from the real thing and the detective can do no better than guessing.</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">How a GAN learns to forge</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="autoS" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 A GAN, in code</h2>
+    <p class="text-slate-500 mb-8">Define a Generator and a Discriminator → sample noise → G makes fakes → train D on real + fake → train G to fool D → loop. ~7 steps. The structure below is the real PyTorch training loop every GAN uses, from toy 2D data to StyleGAN faces.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Define the two networks (G and D)</h3></div>
+        <div class="relative"><pre>import torch, torch.nn as nn
+
+# Generator: random noise vector  ->  a fake sample
+G = nn.Sequential(
+    nn.Linear(latent_dim, 128), nn.ReLU(),
+    nn.Linear(128, data_dim),                 # e.g. data_dim = 2 (x, y)
+)
+# Discriminator: a sample  ->  P(real)  in [0, 1]
+D = nn.Sequential(
+    nn.Linear(data_dim, 128), nn.ReLU(),
+    nn.Linear(128, 1), nn.Sigmoid(),
+)</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Optimizers + loss (two players, two updaters)</h3></div>
+        <div class="relative"><pre># each network has its OWN optimizer — they are trained separately
+opt_D = torch.optim.Adam(D.parameters(), lr=2e-4, betas=(0.5, 0.999))
+opt_G = torch.optim.Adam(G.parameters(), lr=2e-4, betas=(0.5, 0.999))
+
+bce = nn.BCELoss()          # binary cross-entropy: "is this real?"
+real_label, fake_label = 1.0, 0.0</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Sample noise → Generator makes fakes</h3></div>
+        <div class="relative"><pre># draw a batch of random latent vectors z ~ N(0, 1)
+z      = torch.randn(batch, latent_dim)
+fakes  = G(z)                       # G turns noise into fake samples
+reals  = sample_real_data(batch)    # a real batch from the dataset</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Train D — reward catching real + fake</h3></div>
+        <div class="relative"><pre># D should output ~1 for reals and ~0 for fakes
+opt_D.zero_grad()
+loss_real = bce(D(reals),          torch.ones (batch, 1))   # call reals "real"
+loss_fake = bce(D(fakes.detach()), torch.zeros(batch, 1))   # call fakes "fake"
+loss_D = loss_real + loss_fake
+loss_D.backward()                 # .detach() => G is NOT updated here
+opt_D.step()</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Train G — fool D into saying "real"</h3></div>
+        <div class="relative"><pre># freeze nothing; just push G so D thinks the fakes are real (label = 1)
+opt_G.zero_grad()
+fakes  = G(torch.randn(batch, latent_dim))
+loss_G = bce(D(fakes), torch.ones(batch, 1))   # G WANTS D to say "real"
+loss_G.backward()                              # gradient flows D -> G
+opt_G.step()                                   # only G's weights move</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Loop — alternate D then G until equilibrium</h3></div>
+        <div class="relative"><pre>for step in range(num_steps):
+    train_discriminator()     # step 4
+    train_generator()         # step 5
+    if step % 500 == 0:
+        # as G wins, D(fakes) drifts toward 0.5  ->  accuracy ~ 50%
+        print(step, "D(real)=", D(reals).mean().item(),
+                     "D(fake)=", D(fakes).mean().item())</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">Generate new samples from the trained G</h3></div>
+        <div class="relative"><pre># training done — throw D away, keep G as your generator
+G.eval()
+with torch.no_grad():
+    z       = torch.randn(64, latent_dim)   # fresh noise = fresh, varied outputs
+    samples = G(z)                          # brand-new data that looks real
+# for images, G is a stack of ConvTranspose2d layers (a DCGAN)</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 14 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">A generator and a discriminator locked in a forger-vs-detective game. Swap the linear layers for convolutions and you get DCGAN; add a style-mapped latent space and you get StyleGAN — the faces of "this person does not exist".</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== GAN-training visualizer =====
+const cv = document.getElementById("c"), cx = cv.getContext("2d"), CW = cv.width, CH = cv.height;
+const N = 220;                       // points per cloud
+const shapeSel = document.getElementById("shapeSel");
+
+// --- map data-space [-1,1] -> canvas pixels ---
+function px(x){ return CW/2 + x * (CW/2 - 26); }
+function py(y){ return CH/2 - y * (CH/2 - 26); }
+
+// --- the REAL target distribution: returns a fresh sample point ---
+function sampleReal(){
+  const t = Math.random() * Math.PI * 2;
+  if (target === "blobs"){
+    const left = Math.random() < 0.5;
+    const cxp = left ? -0.45 : 0.45;
+    return [ cxp + gauss()*0.13, gauss()*0.13 ];
+  }
+  if (target === "spiral"){
+    const r = 0.18 + 0.72 * (t / (Math.PI*2));
+    return [ r*Math.cos(t*1.6) + gauss()*0.02, r*Math.sin(t*1.6) + gauss()*0.02 ];
+  }
+  // ring (default)
+  const r = 0.62 + gauss()*0.04;
+  return [ r*Math.cos(t), r*Math.sin(t) ];
+}
+function gauss(){ return (Math.random()+Math.random()+Math.random()+Math.random()-2)/2; }
+
+let target = "ring";
+let reals = [];            // fixed real cloud
+let fakes = [];            // generator output  {x,y}
+let noise = [];            // per-fake latent (angle + jitter) so outputs stay varied
+let realTargets = [];      // the real point each fake is being pulled toward (its "goal")
+let step = 0, timer = null;
+let blend = 0;             // 0 = pure random fakes, 1 = matches its real target
+
+function makeReals(){ reals = Array.from({length:N}, sampleReal); }
+
+// fakes start as random noise spread across the whole plane
+function initFakes(){
+  noise = []; fakes = []; realTargets = [];
+  for (let i=0;i<N;i++){
+    noise.push({ a: Math.random()*Math.PI*2, jx: gauss()*0.9, jy: gauss()*0.9 });
+    // each fake is assigned a real point it will gradually approach (varied outputs)
+    realTargets.push(reals[Math.floor(Math.random()*reals.length)]);
+    fakes.push({ x: gauss()*0.95, y: gauss()*0.95 });
+  }
+}
+
+// Generator(z, blend): interpolate from initial random point -> its real target.
+// blend rises with training; small per-point noise keeps the cloud varied, not a copy.
+function generate(){
+  for (let i=0;i<N;i++){
+    const n = noise[i], tg = realTargets[i];
+    const startX = n.jx, startY = n.jy;
+    // residual jitter shrinks but never vanishes -> a believable spread, not point-copies
+    const jit = 0.10 * (1 - blend);
+    fakes[i].x = startX*(1-blend) + tg[0]*blend + gauss()*jit;
+    fakes[i].y = startY*(1-blend) + tg[1]*blend + gauss()*jit;
+  }
+}
+
+// Discriminator: a fake is "caught" if it sits far from ANY real point.
+// As fakes overlap the reals, fewer are caught -> accuracy falls toward chance.
+function discriminate(){
+  let fakeCaught = 0;
+  const thresh = 0.16;                       // "looks fake" radius
+  for (const f of fakes){
+    let best = Infinity;
+    for (const r of reals){
+      const d = (f.x-r[0])**2 + (f.y-r[1])**2;
+      if (d < best) best = d;
+    }
+    if (Math.sqrt(best) > thresh) fakeCaught++;
+  }
+  const realSpotted = N;                      // reals always look real (~100%)
+  const fakeRate = fakeCaught / N;            // fraction of fakes correctly flagged
+  // overall accuracy over a balanced real+fake batch
+  const acc = (realSpotted/N + fakeRate) / 2; // 1.0 when all fakes caught, 0.5 when none
+  return { fakeCaught, realSpotted, acc };
+}
+
+function draw(){
+  cx.clearRect(0,0,CW,CH); cx.fillStyle="#020617"; cx.fillRect(0,0,CW,CH);
+  // subtle axes
+  cx.strokeStyle="#0f172a"; cx.lineWidth=1;
+  cx.beginPath(); cx.moveTo(CW/2,0); cx.lineTo(CW/2,CH); cx.moveTo(0,CH/2); cx.lineTo(CW,CH/2); cx.stroke();
+
+  // real cloud (teal)
+  cx.fillStyle="rgba(16,185,129,0.85)";
+  for (const r of reals){ cx.beginPath(); cx.arc(px(r[0]),py(r[1]),2.6,0,7); cx.fill(); }
+  // fake cloud (rose)
+  cx.fillStyle="rgba(244,63,94,0.80)";
+  for (const f of fakes){ cx.beginPath(); cx.arc(px(f.x),py(f.y),2.6,0,7); cx.fill(); }
+
+  // legend
+  cx.font="11px monospace"; cx.textAlign="left";
+  cx.fillStyle="#34d399"; cx.fillText("● real data", 12, 18);
+  cx.fillStyle="#fb7185"; cx.fillText("● generator fakes", 12, 34);
+}
+
+function refreshHUD(){
+  const { fakeCaught, realSpotted, acc } = discriminate();
+  document.getElementById("sStep").textContent = step;
+  document.getElementById("sReal").textContent = realSpotted + " / " + N;
+  document.getElementById("sFake").textContent = fakeCaught + " / " + N;
+  const pct = Math.round(acc*100);
+  document.getElementById("accBar").style.width = pct + "%";
+  document.getElementById("accNum").textContent = pct + "%";
+  const v = document.getElementById("verdict");
+  if (step === 0)        v.innerHTML = 'Fakes are pure noise — the discriminator catches almost all of them. Accuracy is high.';
+  else if (acc > 0.78)   v.innerHTML = '<b class="text-rose-600">Discriminator winning.</b> The fakes still look wrong, so it spots them easily.';
+  else if (acc > 0.60)   v.innerHTML = 'The generator is closing in — fewer fakes are being caught each step.';
+  else                   v.innerHTML = '<b class="text-emerald-600">Equilibrium.</b> Fakes overlap the real data; the discriminator is down to a coin flip (~50%). It can no longer tell them apart.';
+}
+
+function render(){ generate(); draw(); refreshHUD(); }
+
+function reset(){
+  if (timer){ clearInterval(timer); timer=null; document.getElementById("trainBtn").textContent="▶ train"; }
+  step = 0; blend = 0;
+  target = shapeSel.value;
+  makeReals(); initFakes(); render();
+}
+
+function trainStep(){
+  step++;
+  // generator improves: blend approaches 1 with diminishing returns (learning curve)
+  blend = blend + (1 - blend) * 0.045;
+  render();
+}
+
+document.getElementById("stepBtn").onclick = trainStep;
+document.getElementById("resetBtn").onclick = reset;
+shapeSel.onchange = reset;
+document.getElementById("trainBtn").onclick = () => {
+  const b = document.getElementById("trainBtn");
+  if (timer){ clearInterval(timer); timer=null; b.textContent="▶ train"; return; }
+  b.textContent = "⏸ pause";
+  timer = setInterval(()=>{
+    trainStep();
+    if (blend > 0.985){ clearInterval(timer); timer=null; b.textContent="✓ converged"; }
+  }, 90);
+};
+reset();
+
+// ===== UNDERSTAND step engine =====
+const STEPS = [
+  { title:"1. The goal: generate brand-new data", why:"Most networks we have built so far are discriminative — you hand them an input and they predict a label or a number. A GAN is generative: its job is to produce entirely new samples that look like they came from the training set. Train it on photos of faces and it invents new faces of people who do not exist. Train it on a 2D ring of points and it learns to spit out fresh points that land on that ring. The model is not memorising and replaying examples; it is learning the shape of the data so it can create more of it.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">learn the shape of the data → invent NEW samples that fit it</div>`, code:`# goal: a function that turns random noise into realistic new samples
+new_sample = G(random_noise)   # never seen before, yet looks real` },
+  { title:"2. Two players: Generator and Discriminator", why:"A GAN is not one network but two, trained against each other. The Generator (G) takes a vector of random noise and outputs a fake sample. The Discriminator (D) takes a sample — real or fake — and outputs a probability that it is real. G never sees the real data directly; it only learns from D's reactions. D acts as a smart, learnable judge of quality. Pitting them together is what makes the fakes get sharp without anyone hand-writing a rule for what 'realistic' means.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">G: noise → fake sample &nbsp;·&nbsp; D: sample → P(real)</div>`, code:`fake  = G(noise)        # generator invents
+score = D(sample)       # discriminator judges: P(real) in [0,1]` },
+  { title:"3. The adversarial game: forger vs detective", why:"Think of G as a money forger and D as a detective. The forger prints fake notes and tries to pass them off as real; the detective studies real and fake notes and tries to catch every forgery. Every time the detective gets better at spotting fakes, the forger is forced to print more convincing ones; every time the forger improves, the detective must sharpen its eye. This arms race is the whole idea — neither side is told the 'right answer' up front, they squeeze quality out of each other through competition.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">🖨️ forger (G) ⚔️ detective (D) — each forces the other to improve</div>`, code:`# no fixed target image — the "loss" for G is just: did it fool D?
+# the two losses point in OPPOSITE directions → an adversarial game` },
+  { title:"4. The training loop: train D, then train G", why:"You cannot train both networks at once, so you alternate. First, freeze G and train D: show it a batch of real samples (label them 1) and a batch of G's fakes (label them 0), and update D to score them correctly. Then freeze D and train G: have G produce fakes, run them through D, and update G so that D scores them as real. One step of D, one step of G, repeat thousands of times. The demo's 'one step' button does exactly one of these alternating rounds.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">step A: improve detective (D) &nbsp;→&nbsp; step B: improve forger (G) &nbsp;→&nbsp; repeat</div>`, code:`for step in range(N):
+    train_D(real_batch, G(noise))   # teach the judge
+    train_G(noise)                  # teach the forger to beat the judge` },
+  { title:"5. The objective: a minimax game", why:"Formally the two networks play a minimax game over one score: D tries to MAXIMISE how often it is right (high score for reals, low for fakes), while G tries to MINIMISE that same quantity by making fakes D rates as real. D's loss rewards correctly calling reals 'real' and fakes 'fake'; G's loss rewards making D call its fakes 'real'. You do not need the equation to feel it — the two losses pull in opposite directions, and gradient descent on each in turn drives the contest forward. In practice G is trained to maximise log D(fake) for steadier gradients.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">min<sub>G</sub> max<sub>D</sub> &nbsp; — &nbsp; D wants to be right, G wants D to be wrong</div>`, code:`loss_D = bce(D(real),1) + bce(D(fake),0)   # D: maximise correctness
+loss_G = bce(D(fake),1)                    # G: make fakes look real` },
+  { title:"6. Why it reaches ~50% equilibrium", why:"As G's fakes improve, they start to overlap the real data so closely that D genuinely cannot separate them. At the ideal point the fake distribution equals the real distribution, and any sample — real or fake — is equally likely under both. The best D can do is guess, so its accuracy settles around 50%, a coin flip. That stalemate is the signal that training has converged: a discriminator stuck at chance means the generator's output is, statistically, indistinguishable from the real thing. Watch the accuracy bar in the demo slide toward 50%.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">fake distribution = real distribution → D accuracy → 50% (can't tell)</div>`, code:`# converged when D is no better than a coin flip
+assert abs(D(reals).mean() - D(fakes).mean()) < tol   # ≈ 0.5 each` },
+  { title:"7. Latent space: noise in → variety out", why:"The Generator's only input is a vector of random numbers, called the latent vector or z. Different noise vectors produce different outputs, so by sampling fresh noise you get endless, varied samples instead of the same one over and over. Better still, the latent space is smooth: nearby z vectors give similar outputs, so you can interpolate between two points and watch one face morph smoothly into another. The generator has effectively learned a compact 'dial board' where every setting maps to a plausible sample.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">random z → G → a sample &nbsp;·&nbsp; nearby z → similar sample (smooth space)</div>`, code:`z1, z2 = torch.randn(latent), torch.randn(latent)
+for a in torch.linspace(0,1,10):
+    show(G((1-a)*z1 + a*z2))   # smoothly morph between two outputs` },
+  { title:"8. Mode collapse & instability (the famous pain)", why:"GANs are notoriously hard to train. The classic failure is mode collapse: G discovers one output that reliably fools D and just produces that over and over, ignoring the rest of the data's variety — imagine a face generator that only ever draws the same face. The other failure is plain instability: because the two losses fight each other, training can oscillate, the discriminator can overpower the generator (so gradients vanish), or the whole thing can diverge. Tricks like careful learning rates, batch norm, label smoothing, and alternative losses (WGAN) exist precisely to tame this.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">mode collapse: G outputs ONE thing &nbsp;·&nbsp; or training just oscillates / diverges</div>`, code:`# symptoms to watch for
+#  - G's samples all look identical      -> mode collapse
+#  - D(real)→1 and D(fake)→0 and stuck   -> D too strong, G can't learn` },
+  { title:"9. GAN variants: DCGAN, StyleGAN & co.", why:"The original GAN used plain fully-connected layers. DCGAN swapped them for convolutions, which made image generation work properly and became the template everyone copied. StyleGAN went further by feeding the latent vector in at every layer as a 'style', giving astonishingly photoreal, controllable faces — this is the engine behind 'this person does not exist'. Other variants specialise: CycleGAN turns horses into zebras without paired data, pix2pix turns sketches into photos, and conditional GANs let you steer the output by class. Same forger-vs-detective core, different network shapes and conditioning.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">DCGAN (conv) → StyleGAN (photoreal faces) · CycleGAN (horse↔zebra)</div>`, code:`# DCGAN generator = stacked transposed convolutions
+G = nn.Sequential(nn.ConvTranspose2d(...), nn.BatchNorm2d(...), nn.ReLU(), ...)` },
+  { title:"10. GANs vs diffusion (today's image models)", why:"For years GANs were the king of image generation, but most of today's big text-to-image systems use diffusion instead. A diffusion model learns to start from pure noise and gradually 'denoise' it into an image over many steps, rather than producing it in one shot through an adversarial game. Diffusion is generally more stable to train and covers the full variety of the data better (less mode collapse), which is why it powers modern image generators. GANs still shine where speed matters — they generate in a single forward pass — and the adversarial idea remains one of the most important in deep learning.", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">GAN = one-shot forger-vs-detective · diffusion = gradual denoising. Same goal: invent realistic new data.</p></div>`, code:`# GAN:        noise --G--> image            (one pass, adversarial)
+# diffusion:  noise --denoise×T--> image     (many steps, more stable)` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("autoS");
+let cur = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ cur=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,cur-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,cur+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(cur>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(cur+1); },2800); };
+show(0);
+
+function copy(btn) {
+  const pre = btn.parentElement.querySelector("pre");
+  navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500);
+}
+</script>
+</body>
+</html>

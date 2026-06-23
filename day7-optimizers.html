@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 7 — Optimizers</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  canvas { background:#020617; border:1px solid #1e293b; border-radius:10px; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 7</div>
+      <h1 class="text-xl font-bold">⚙️ Optimizers — SGD vs Momentum vs Adam</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-5xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">Three ways down the same valley — race them</h2>
+      <p class="text-slate-500 text-center mb-6">Plain <b class="text-sky-600">SGD</b> zigzags down a narrow valley. <b class="text-amber-500">Momentum</b> builds speed and rolls through. <b class="text-rose-500">Adam</b> adapts its step per-direction and arrows straight to the bottom.</p>
+      <div class="grid md:grid-cols-3 gap-5 items-start">
+        <div class="md:col-span-2 flex justify-center"><canvas id="c" width="480" height="340"></canvas></div>
+        <div class="space-y-3">
+          <div class="bg-white rounded-2xl border border-slate-200 p-4 space-y-2 text-sm">
+            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-sky-500"></span> SGD <span id="s-sgd" class="ml-auto font-mono text-slate-500">—</span></div>
+            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-amber-500"></span> Momentum <span id="s-mom" class="ml-auto font-mono text-slate-500">—</span></div>
+            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-rose-500"></span> Adam <span id="s-adam" class="ml-auto font-mono text-slate-500">—</span></div>
+            <div class="flex justify-between pt-1"><span class="text-slate-500">Step</span><span id="step" class="font-bold">0</span></div>
+          </div>
+          <div class="flex gap-2">
+            <button id="run" class="flex-1 bg-rose-500 hover:bg-rose-600 text-white font-bold py-2.5 rounded-xl">▶ Race</button>
+            <button id="reset" class="px-4 bg-slate-200 hover:bg-slate-300 rounded-xl font-semibold">↺</button>
+          </div>
+          <p class="text-xs text-slate-400">The surface is a stretched valley (steep one way, shallow the other) — the hard case real loss landscapes are full of. Watch how each optimizer copes.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">How optimizers differ</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 The three update rules</h2>
+    <p class="text-slate-500 mb-8">Each is a small variation on "step against the gradient".</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">SGD — plain gradient step</h3></div><pre>w = w - lr * grad;
+// simple, but in a narrow valley it bounces wall-to-wall</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Momentum — a heavy ball</h3></div><pre>v = beta * v - lr * grad;   // velocity accumulates
+w = w + v;                  // keeps rolling in a consistent direction
+// damps the zigzag, builds speed along the valley floor</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Adam — adaptive, per-parameter</h3></div><pre>m = b1*m + (1-b1)*grad;          // 1st moment (momentum)
+v = b2*v + (1-b2)*grad**2;       // 2nd moment (per-dim scale)
+w = w - lr * m̂ / (sqrt(v̂) + eps); // big steps where flat, small where steep</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Which to use?</h3></div><pre>// Adam: the default for most deep learning — fast, forgiving of lr
+// SGD + momentum: often generalizes a touch better; common for vision
+// the optimizer is a hyperparameter, like the learning rate</pre></li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 7 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">Tomorrow: CNNs — convolution, the filter that sees images.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== OPTIMIZERS RACE =====
+const c=document.getElementById("c"), ctx=c.getContext("2d"), W=c.width, H=c.height;
+const A=0.08, B=2.2;                       // ill-conditioned bowl: L = A x^2 + B y^2
+const L=(x,y)=>A*x*x+B*y*y;
+const gx=x=>2*A*x, gy=y=>2*B*y;
+const RX=6, RY=4;                          // domain half-widths
+const px=x=>W/2 + x/RX*(W/2-20), py=y=>H/2 - y/RY*(H/2-20);
+let opts, step, timer, maxL;
+function reset(){
+  if(timer){clearInterval(timer);timer=null;document.getElementById("run").textContent="▶ Race";}
+  const start={x:-5,y:3.2};
+  opts={
+    sgd:{x:start.x,y:start.y,lr:0.40,path:[],done:false,color:"#38bdf8"},
+    mom:{x:start.x,y:start.y,lr:0.035,vx:0,vy:0,path:[],done:false,color:"#f59e0b"},
+    adam:{x:start.x,y:start.y,lr:0.40,mx:0,my:0,vx:0,vy:0,t:0,path:[],done:false,color:"#fb7185"},
+  };
+  step=0; maxL=L(start.x,start.y);
+  ["sgd","mom","adam"].forEach(k=>opts[k].path.push({x:opts[k].x,y:opts[k].y}));
+  document.getElementById("step").textContent=0;
+  ["s-sgd","s-mom","s-adam"].forEach(id=>document.getElementById(id).textContent="—");
+  draw();
+}
+function stepOpt(){
+  step++;
+  // SGD
+  let o=opts.sgd; if(!o.done){ o.x-=o.lr*gx(o.x); o.y-=o.lr*gy(o.y); o.path.push({x:o.x,y:o.y}); if(L(o.x,o.y)<0.02){o.done=true; document.getElementById("s-sgd").textContent="✓ "+step;} }
+  // Momentum
+  o=opts.mom; if(!o.done){ o.vx=0.9*o.vx-o.lr*gx(o.x); o.vy=0.9*o.vy-o.lr*gy(o.y); o.x+=o.vx; o.y+=o.vy; o.path.push({x:o.x,y:o.y}); if(L(o.x,o.y)<0.02){o.done=true; document.getElementById("s-mom").textContent="✓ "+step;} }
+  // Adam
+  o=opts.adam; if(!o.done){ o.t++; const b1=0.9,b2=0.999,e=1e-8; const Gx=gx(o.x),Gy=gy(o.y);
+    o.mx=b1*o.mx+(1-b1)*Gx; o.my=b1*o.my+(1-b1)*Gy; o.vx=b2*o.vx+(1-b2)*Gx*Gx; o.vy=b2*o.vy+(1-b2)*Gy*Gy;
+    const mhx=o.mx/(1-b1**o.t), mhy=o.my/(1-b1**o.t), vhx=o.vx/(1-b2**o.t), vhy=o.vy/(1-b2**o.t);
+    o.x-=o.lr*mhx/(Math.sqrt(vhx)+e); o.y-=o.lr*mhy/(Math.sqrt(vhy)+e); o.path.push({x:o.x,y:o.y}); if(L(o.x,o.y)<0.02){o.done=true; document.getElementById("s-adam").textContent="✓ "+step;} }
+  document.getElementById("step").textContent=step;
+  draw();
+  if((opts.sgd.done&&opts.mom.done&&opts.adam.done)||step>400){ if(timer){clearInterval(timer);timer=null;document.getElementById("run").textContent="▶ Race";} }
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // heatmap of loss
+  const G=48, cw=W/G, ch=H/G;
+  for(let i=0;i<G;i++)for(let j=0;j<G;j++){ const x=(i/G-0.5)*2*RX, y=-(j/G-0.5)*2*RY; const l=Math.min(L(x,y),maxL)/maxL; const v=Math.round(8+l*40); ctx.fillStyle=`rgb(${v},${v+10},${v+30})`; ctx.fillRect(i*cw,j*ch,cw+1,ch+1); }
+  // minimum marker
+  ctx.strokeStyle="#fff"; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(px(0),py(0),4,0,Math.PI*2); ctx.stroke();
+  // paths
+  for(const k of ["sgd","mom","adam"]){ const o=opts[k]; ctx.strokeStyle=o.color; ctx.lineWidth=2; ctx.beginPath(); o.path.forEach((p,i)=>{ const X=px(p.x),Y=py(p.y); i===0?ctx.moveTo(X,Y):ctx.lineTo(X,Y); }); ctx.stroke();
+    const last=o.path[o.path.length-1]; ctx.fillStyle=o.color; ctx.beginPath(); ctx.arc(px(last.x),py(last.y),5,0,Math.PI*2); ctx.fill(); }
+}
+document.getElementById("run").onclick=function(){ if(timer){clearInterval(timer);timer=null;this.textContent="▶ Race";return;} this.textContent="⏸ Pause"; timer=setInterval(stepOpt,60); };
+document.getElementById("reset").onclick=reset;
+reset();
+
+const STEPS = [
+  { title:"1. The optimizer drives the descent", why:"Backprop computes the gradient — which way is downhill. The OPTIMIZER decides how to actually step: how far, with what memory, adapting or not. Same gradient, different optimizer, very different training speed and stability. It's one of the most consequential choices you make.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">gradient = direction · optimizer = how to take the step</div>`, code:`w = optimizer.step(w, grad);` },
+  { title:"2. Plain SGD zigzags in valleys", why:"Real loss surfaces are 'ill-conditioned' — steep in some directions, nearly flat in others (a long narrow valley). Plain SGD with one learning rate bounces back and forth across the steep walls while creeping along the flat floor. Watch the blue path ping-pong. Effective but slow here.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">narrow valley → SGD bounces wall-to-wall, crawls forward</div>`, code:`w = w - lr * grad;  // one rate for every direction` },
+  { title:"3. Momentum: a rolling ball", why:"Momentum keeps a running velocity: each step adds a bit of the gradient to it and moves by the velocity. Like a heavy ball, it damps the side-to-side zigzag (opposite gradients cancel) and accelerates along the consistent downhill direction. The amber path rolls through where SGD stutters.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">velocity carries over → cancels zigzag, builds speed</div>`, code:`v = 0.9*v - lr*grad;  w = w + v;` },
+  { title:"4. Adam: adapt per direction", why:"Adam keeps TWO running averages per parameter: the gradient (momentum) and its squared size (how steep/noisy this direction is). It then takes big steps where the surface is flat and small steps where it's steep — a custom learning rate for every weight. The rose path heads almost straight to the minimum.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full"><div>m = avg gradient · v = avg gradient²</div><div class="text-rose-600">step = lr · m / √v → per-direction scaling</div></div>`, code:`m = b1*m+(1-b1)*g;  v = b2*v+(1-b2)*g*g;
+w -= lr * m̂ / (√v̂ + ε);` },
+  { title:"5. Bias correction (the m̂, v̂)", why:"Adam's running averages start at zero, so early on they're biased toward zero. The hats (m̂ = m/(1-β₁ᵗ)) divide that bias out so the first steps aren't tiny. A small detail, but it's why Adam works well from step one without a warmup.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">m starts at 0 → divide by (1-βᵗ) to un-bias early steps</div>`, code:`mHat = m / (1 - b1**t);  vHat = v / (1 - b2**t);` },
+  { title:"6. Which one, when", why:"Adam is the safe default for most deep learning: fast and forgiving about the learning rate. SGD with momentum often generalizes slightly better and is standard in computer vision. The optimizer is a hyperparameter you tune like any other — but if unsure, reach for Adam.", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">Same gradient, smarter steps. Momentum rolls; Adam adapts.</p></div>`, code:`// default: Adam · vision/generalization: SGD+momentum` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let cur = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ cur=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,cur-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,cur+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(cur>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(cur+1); },2800); };
+show(0);
+</script>
+</body>
+</html>

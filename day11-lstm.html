@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 11 — LSTM & GRU</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  canvas { background:#020617; border:1px solid #1e293b; border-radius:10px; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 11</div>
+      <h1 class="text-xl font-bold">🚪 LSTM &amp; GRU — Gates That Remember the Long Ago</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-4xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Drop a memory early — see who still has it 20 steps later</h2>
+      <p class="text-slate-500 mb-5">Press <b>Remember</b> to write a value into the cell, then feed noise. The <b class="text-rose-500">LSTM</b> keeps a near-flat <i>cell state</i> (its forget gate stays open), holding the value. A plain <b class="text-sky-600">RNN</b> bleeds it away within a few steps.</p>
+      <div class="flex items-center justify-center gap-2 mb-3">
+        <button id="remember" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">💾 Remember (write)</button>
+        <button id="noise" class="bg-rose-500 hover:bg-rose-600 text-white font-semibold px-4 py-2 rounded-lg text-sm">+ feed noise step</button>
+        <button id="auto" class="bg-rose-400 text-white font-semibold px-4 py-2 rounded-lg text-sm">⏩ run noise ×15</button>
+        <button id="reset" class="border border-slate-200 px-3 py-2 rounded-lg text-sm hover:bg-slate-50">↺</button>
+      </div>
+      <div class="flex justify-center"><canvas id="c" width="660" height="220"></canvas></div>
+      <p class="text-xs text-slate-400 mt-4">↑ Both start blank. Hit "Remember", then feed noise. The LSTM's gate decides to KEEP (≈multiply by 1), so its memory rides the conveyor belt unchanged. The RNN multiplies its state by &lt;1 every step → it fades. That's the vanishing-gradient cure.</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">How LSTMs remember</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="autoS" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 The LSTM cell, in code</h2>
+    <p class="text-slate-500 mb-8">Three gates (each a sigmoid 0→1) control a protected cell state. ~12 lines.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">A cell state c — the conveyor belt</h3></div><pre>// c flows straight down the sequence with only tiny, gated edits.
+// that near-untouched highway is how gradients (and memories) survive.</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Forget gate: what to drop</h3></div><pre>const f = sigmoid(Wf·[h, x]);   // 0 = erase, 1 = keep
+c = f * c;                      // keep ~1 → memory rides along untouched</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Input gate: what to write</h3></div><pre>const i = sigmoid(Wi·[h, x]);   // how much of the new candidate to add
+const g = tanh(Wg·[h, x]);      // the candidate value
+c = c + i * g;                  // write new info into the cell state</pre></li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Output gate: what to reveal</h3></div><pre>const o = sigmoid(Wo·[h, x]);
+h = o * tanh(c);   // the visible hidden state — a filtered view of c
+// GRU is a leaner cousin: 2 gates, merges cell + hidden state.</pre></li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 11 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">The recurrent arc complete — next stop in DL: attention &amp; the Transformer.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== LSTM vs RNN memory =====
+const c=document.getElementById("c"), ctx=c.getContext("2d"), W=c.width, H=c.height;
+let lstm=[], rnn=[], cCell=0, hRnn=0, t=0, timer=null;
+function reset(){ if(timer){clearInterval(timer);timer=null;} cCell=0; hRnn=0; t=0; lstm=[{v:0}]; rnn=[{v:0}]; draw(); }
+function remember(){ cCell = 0.9; hRnn = 0.9; t++; lstm.push({v:cCell,mark:true}); rnn.push({v:hRnn,mark:true}); draw(); }
+function noiseStep(){
+  const x=(Math.random()-0.5)*0.4;
+  // LSTM: forget gate ~0.99 (keep), input gate small → cell barely changes
+  cCell = 0.99*cCell + 0.05*Math.tanh(x);
+  // RNN: state multiplied by ~0.7 each step → decays fast, plus noise
+  hRnn = Math.tanh(0.7*hRnn + 0.5*x);
+  t++; lstm.push({v:cCell}); rnn.push({v:hRnn}); draw();
+}
+function draw(){
+  ctx.clearRect(0,0,W,H); ctx.fillStyle="#020617"; ctx.fillRect(0,0,W,H);
+  const padL=44,padR=20,padT=18,padB=24, pw=W-padL-padR, ph=H-padT-padB;
+  const n=Math.max(lstm.length,18);
+  const X=i=>padL+i/(n-1)*pw, Y=v=>padT+ph/2 - v*ph/2;
+  ctx.strokeStyle="#1e293b"; ctx.beginPath(); ctx.moveTo(padL,Y(0)); ctx.lineTo(W-padR,Y(0)); ctx.stroke();
+  ctx.fillStyle="#64748b"; ctx.font="10px sans-serif"; ctx.textAlign="right"; ctx.fillText("remembered (1)",padL-3,Y(1)+3); ctx.fillText("forgotten (0)",padL-3,Y(0)+3);
+  const line=(arr,col)=>{ ctx.strokeStyle=col; ctx.lineWidth=2.5; ctx.beginPath(); arr.forEach((p,i)=>{const x=X(i),y=Y(p.v); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);}); ctx.stroke(); const last=arr[arr.length-1]; ctx.fillStyle=col; ctx.beginPath(); ctx.arc(X(arr.length-1),Y(last.v),4,0,Math.PI*2); ctx.fill(); };
+  line(rnn,"#38bdf8"); line(lstm,"#fb7185");
+  // legend
+  ctx.font="12px sans-serif"; ctx.textAlign="left"; ctx.fillStyle="#fb7185"; ctx.fillText("● LSTM cell state",padL+6,padT+8); ctx.fillStyle="#38bdf8"; ctx.fillText("● RNN hidden state",padL+150,padT+8);
+  // mark write
+  lstm.forEach((p,i)=>{ if(p.mark){ ctx.strokeStyle="#34d399"; ctx.setLineDash([3,3]); ctx.beginPath(); ctx.moveTo(X(i),padT); ctx.lineTo(X(i),H-padB); ctx.stroke(); ctx.setLineDash([]); ctx.fillStyle="#34d399"; ctx.font="10px sans-serif"; ctx.textAlign="center"; ctx.fillText("write",X(i),H-6); } });
+}
+document.getElementById("remember").onclick=remember;
+document.getElementById("noise").onclick=noiseStep;
+document.getElementById("auto").onclick=()=>{ let k=15; if(timer)return; timer=setInterval(()=>{ noiseStep(); if(--k<=0){clearInterval(timer);timer=null;} },180); };
+document.getElementById("reset").onclick=reset;
+reset(); remember();
+
+const STEPS = [
+  { title:"1. Plain RNNs forget too fast", why:"A vanilla RNN multiplies its state by a weight every step, and backprop multiplies gradients the same way down the sequence. Numbers <1 shrink toward zero over many steps (vanishing gradient); >1 explode. Either way, the network can't link things far apart — the start of a paragraph is lost by the end.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">repeated ×(weight) → state & gradient vanish over long gaps</div>`, code:`h = tanh(Wh*h + ...);  // many steps → h's early signal fades` },
+  { title:"2. The cell state: a protected highway", why:"The LSTM adds a separate CELL STATE (c) that flows down the sequence almost untouched — edited only by gentle, gated add/erase operations, not repeatedly multiplied by weights. It's a conveyor belt that carries information (and gradients) across many steps without decaying. That's the core fix.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">cell state c ──────────▶ (rides straight through, lightly edited)</div>`, code:`// c changes only via gates, so it (and its gradient) survives long gaps` },
+  { title:"3. The forget gate: keep or erase", why:"A sigmoid gate (0→1) decides, per value, how much of the old cell state to KEEP. Near 1 = remember (multiply by ~1, no decay); near 0 = wipe it. In the demo, after you write a memory the forget gate stays ≈1, so the rose line holds flat while the RNN bleeds away.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">forget gate f ≈ 1 → c = f·c keeps memory · f ≈ 0 → erase</div>`, code:`const f = sigmoid(...);  c = f * c;` },
+  { title:"4. The input gate: write new info", why:"Another sigmoid gate decides how much NEW information to add to the cell state, and a tanh produces the candidate value. Together: 'should I store this, and what?'. This is how an LSTM chooses to latch a relevant fact (a subject, a flag) and ignore noise.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">input gate i · candidate g → c = c + i·g (write selectively)</div>`, code:`const i = sigmoid(...), g = tanh(...);  c = c + i*g;` },
+  { title:"5. The output gate: what to reveal", why:"The cell state holds everything, but you don't expose all of it every step. The output gate filters c into the hidden state h that the rest of the network sees. So the LSTM can hold a fact quietly in c for many steps and only surface it when relevant.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">output gate o → h = o · tanh(c) (reveal a filtered view)</div>`, code:`const o = sigmoid(...);  h = o * tanh(c);` },
+  { title:"6. GRU, and why it mattered", why:"The GRU is a leaner cousin — two gates, and it merges the cell and hidden state — often as good with less compute. LSTMs/GRUs powered translation, speech, and text generation for years by remembering long-range context. They're the bridge from RNNs to the attention mechanism that replaced them (the Transformer).", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">A gated conveyor belt: keep, write, reveal — memory that lasts.</p></div>`, code:`// GRU: 2 gates, merged state — simpler, often just as strong` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("autoS");
+let cur = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ cur=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,cur-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,cur+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(cur>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(cur+1); },2800); };
+show(0);
+</script>
+</body>
+</html>

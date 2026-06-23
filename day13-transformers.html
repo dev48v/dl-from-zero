@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 13 — Transformers</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .copy-btn:hover { background:#1e293b; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  canvas { background:#020617; border:1px solid #1e293b; border-radius:10px; }
+  .tok { transition:all .2s; cursor:pointer; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 13</div>
+      <h1 class="text-xl font-bold">🧠 Transformers — Assembling the Block Behind GPT</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-5xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Watch a sentence flow UP through one Transformer block</h2>
+      <p class="text-slate-500 mb-5">Step through each stage with <b class="text-rose-600">▶ Next stage</b> (or <b>Auto-play</b>). The active layer lights up and explains itself as the data passes through it: embeddings → positional encoding → <b>multi-head attention</b> (the Day-12 core) → add &amp; norm → feed-forward → add &amp; norm → output.</p>
+      <div class="flex flex-wrap items-center justify-center gap-2 mb-4">
+        <button id="nextStage" class="bg-rose-600 text-white px-5 py-2 rounded-lg font-semibold text-sm">▶ Next stage</button>
+        <button id="autoFlow"  class="bg-rose-500 text-white px-5 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+        <button id="resetFlow" class="bg-slate-200 px-5 py-2 rounded-lg font-semibold text-sm">↺ Reset</button>
+        <label class="text-sm text-slate-600 ml-2 flex items-center gap-1"><input type="checkbox" id="stackToggle"> stack <b>N blocks</b></label>
+      </div>
+      <div class="flex justify-center"><canvas id="c" width="760" height="470"></canvas></div>
+      <div id="stageInfo" class="max-w-3xl mx-auto text-left bg-white border border-slate-200 rounded-xl p-4 mt-4 text-sm text-slate-700"></div>
+      <p class="text-xs text-slate-400 mt-4">↑ A Transformer <b>block</b> = multi-head self-attention + a feed-forward net, each wrapped in a <b>residual</b> (add the input back) + <b>layer-norm</b>. Stack a dozen of these and you have GPT / BERT.</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">How the block is built</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="autoS" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 One Transformer block, in code</h2>
+    <p class="text-slate-500 mb-8">Embed + position → multi-head attention → residual &amp; norm → feed-forward → residual &amp; norm → stack ×N. ~7 steps. This is exactly the layer repeated inside GPT and BERT — and PyTorch ships it as one line.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Embed the tokens, then add position</h3></div>
+        <div class="relative"><pre>// token id → learned vector, then inject order (attention is order-blind)
+let X = tokens.map(id => embedding[id]);        // [seqLen, d_model]
+X = X.map((vec, pos) => vec.map((v, i) =>
+  v + (i % 2 === 0 ? Math.sin(pos / 10000 ** (i / d_model))
+                   : Math.cos(pos / 10000 ** ((i - 1) / d_model)))
+));   // now "dog bites man" ≠ "man bites dog"</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Multi-head self-attention (the Day-12 core)</h3></div>
+        <div class="relative"><pre>// split d_model into h heads; each head gets its own Q/K/V "view"
+function multiHead(X, heads) {
+  const outs = [];
+  for (let i = 0; i < heads.length; i++) {
+    const {Wq, Wk, Wv} = heads[i];
+    outs.push(attention(matmul(X, Wq), matmul(X, Wk), matmul(X, Wv)));
+  }
+  return matmul(concat(outs), Wo);   // combine every head's view
+}
+const attn = multiHead(X, heads);    // [seqLen, d_model]</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Add &amp; LayerNorm (residual #1)</h3></div>
+        <div class="relative"><pre>// add the block's INPUT back, then normalise each token's features
+function layerNorm(row, g = 1, b = 0, eps = 1e-5) {
+  const mean = row.reduce((a, v) => a + v, 0) / row.length;
+  const varr = row.reduce((a, v) => a + (v - mean) ** 2, 0) / row.length;
+  return row.map(v => g * (v - mean) / Math.sqrt(varr + eps) + b);
+}
+let H = X.map((x, i) => layerNorm(add(x, attn[i])));   // residual + norm</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Feed-forward sub-layer (per-token MLP)</h3></div>
+        <div class="relative"><pre>// a tiny 2-layer MLP applied to EACH token position independently
+function feedForward(x) {           // d_model → d_ff (≈4×) → d_model
+  const h = relu(add(matmul1d(x, W1), b1));
+  return add(matmul1d(h, W2), b2);
+}
+const ff = H.map(feedForward);      // transforms features token-by-token</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Add &amp; LayerNorm (residual #2) → block output</h3></div>
+        <div class="relative"><pre>// same residual + norm wrapper around the feed-forward output
+let out = H.map((h, i) => layerNorm(add(h, ff[i])));
+// 'out' has the SAME shape as the input → blocks chain cleanly
+return out;   // [seqLen, d_model]</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Stack N identical blocks (depth = abstraction)</h3></div>
+        <div class="relative"><pre>// one block in, same shape out → just feed it forward N times
+function transformerBlock(X, p) {
+  const a = X.map((x, i) => layerNorm(add(x, multiHead(X, p.heads)[i])));
+  const f = a.map(feedForward);
+  return a.map((h, i) => layerNorm(add(h, f[i])));
+}
+let x = embedWithPositions(tokens);
+for (const p of blockParams) x = transformerBlock(x, p);  // ×12, ×24, ×96…</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">In real frameworks: one line (PyTorch)</h3></div>
+        <div class="relative"><pre># everything above is already packaged — d_model, n_heads, d_ff, norm, residual
+import torch, torch.nn as nn
+
+layer   = nn.TransformerEncoderLayer(d_model=512, nhead=8, dim_feedforward=2048)
+encoder = nn.TransformerEncoder(layer, num_layers=12)   # stack of 12 blocks
+
+x   = embed(tokens) + positional_encoding(tokens)       # [seq, batch, 512]
+out = encoder(x)     # → contextualised vectors, the heart of GPT / BERT</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 13 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">Attention (Day 12) was the engine; the residual + norm + feed-forward wrapper is the chassis. Stack the block and you have the architecture behind GPT, BERT and T5.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== Transformer-block flow visualizer =====
+const TOKENS = ["The", "cat", "sat", "down"];
+const NTOK = TOKENS.length;
+
+// Light but real numbers used in the stage captions.
+// Positional encoding (first dim) as a sine pattern over positions.
+const posEnc = TOKENS.map((_, p) => +(Math.sin(p / 2)).toFixed(2));   // sine wave
+// 3 attention heads, each a different normalised weight row (head "views").
+const HEADS = [
+  [0.10, 0.62, 0.20, 0.08],   // head 1 ≈ subject-tracking → "cat"
+  [0.30, 0.18, 0.14, 0.38],   // head 2 ≈ nearby / boundary words
+  [0.22, 0.24, 0.42, 0.12]    // head 3 ≈ action-tracking → "sat"
+];
+
+// Pipeline stages (bottom → top). Each lights up and explains itself.
+const STAGES = [
+  { name:"Token embeddings",        tag:"input",   color:"#475569",
+    info:`Each word becomes a learned vector. <b>"${TOKENS.join('", "')}"</b> → 4 vectors of length d_model. No meaning of <i>order</i> yet — just identity.` },
+  { name:"+ Positional encoding",   tag:"pos",     color:"#64748b",
+    info:`A sine/cosine pattern is <b>added</b> so the model knows position. Here the first dimension gets [${posEnc.join(", ")}] for positions 0–3 — a sine wave. Now order is baked in.` },
+  { name:"Multi-head self-attention", tag:"attn",  color:"#fb7185",
+    info:`The Day-12 core, run in <b>3 heads in parallel</b> — each head attends differently (see the weight bars). Every token mixes in the others it finds relevant.` },
+  { name:"Add & LayerNorm",         tag:"norm1",   color:"#f43f5e",
+    info:`<b>Residual:</b> add the block's input back to the attention output (helps gradients flow through deep stacks). Then <b>LayerNorm</b> rescales each token's features to mean 0, variance 1 for stable training.` },
+  { name:"Feed-forward network",    tag:"ffn",     color:"#fb7185",
+    info:`A small per-token MLP (d_model → ~4× → d_model, with ReLU). Attention <i>mixed</i> tokens; this <b>transforms</b> each token's features on its own. Applied identically at every position.` },
+  { name:"Add & LayerNorm",         tag:"norm2",   color:"#f43f5e",
+    info:`Second <b>residual + LayerNorm</b>, wrapping the feed-forward output. The result has the <b>same shape</b> as the input — so blocks chain cleanly.` },
+  { name:"Block output",            tag:"out",     color:"#10b981",
+    info:`Contextualised vectors leave the block. <b>Stack a dozen</b> of these (toggle "stack N blocks") and you have GPT / BERT.` }
+];
+
+let stage = -1;     // -1 = nothing lit yet
+let stacked = false;
+const cv = document.getElementById("c"), cx = cv.getContext("2d"), CW = cv.width, CH = cv.height;
+
+function drawFlow(){
+  cx.clearRect(0,0,CW,CH); cx.fillStyle="#020617"; cx.fillRect(0,0,CW,CH);
+  const n = STAGES.length;
+  const padT = 28, padB = 22, padL = 230, padR = 24;
+  const lane = (CH - padT - padB) / n;          // vertical slot per stage (top = output)
+  const boxH = lane * 0.66, boxW = CW - padL - padR;
+
+  // tokens flowing label on the left
+  cx.fillStyle="#94a3b8"; cx.font="11px monospace"; cx.textAlign="left";
+  cx.fillText("data flows UP  ↑", 16, CH - 6);
+
+  for (let s = 0; s < n; s++){
+    const st = STAGES[s];
+    // stage 0 at the BOTTOM, last stage at the TOP
+    const yTop = padT + (n - 1 - s) * lane + (lane - boxH)/2;
+    const lit = (s <= stage);
+    const active = (s === stage);
+
+    // connector arrow from below
+    if (s > 0){
+      const yArrow = yTop + boxH + (lane - boxH)/2 ;
+      cx.strokeStyle = lit ? "#fb7185" : "#1e293b"; cx.lineWidth = active ? 3 : 1.5;
+      cx.beginPath(); cx.moveTo(padL + 28, yTop + boxH + 6); cx.lineTo(padL + 28, yTop + boxH + (lane-boxH) - 2); cx.stroke();
+    }
+
+    // box
+    cx.fillStyle = lit ? st.color : "#0b1220";
+    cx.strokeStyle = active ? "#fda4af" : (lit ? st.color : "#1e293b");
+    cx.lineWidth = active ? 3 : 1.5;
+    roundRect(padL, yTop, boxW, boxH, 8); cx.fill(); cx.stroke();
+
+    // residual loop marker for norm stages
+    if (st.tag === "norm1" || st.tag === "norm2"){
+      cx.strokeStyle = lit ? "#fecdd3" : "#334155"; cx.lineWidth = 1.5;
+      cx.beginPath();
+      cx.moveTo(padL - 8, yTop + boxH + lane*0.30);
+      cx.bezierCurveTo(padL - 30, yTop + boxH*0.5, padL - 30, yTop + boxH*0.5, padL - 8, yTop + boxH*0.5);
+      cx.stroke();
+      cx.fillStyle = lit ? "#fecdd3" : "#334155"; cx.font="9px monospace"; cx.textAlign="right";
+      cx.fillText("+resid", padL - 6, yTop + boxH*0.5 - 4);
+    }
+
+    // label
+    cx.fillStyle = lit ? "#fff" : "#475569"; cx.textAlign="left";
+    cx.font = (active ? "bold " : "") + "14px sans-serif";
+    cx.fillText((s+1) + ".  " + st.name, padL + 12, yTop + boxH/2 + 5);
+
+    // multi-head bars drawn inside the attention box when active/lit
+    if (st.tag === "attn" && lit){
+      drawHeads(padL + boxW - 200, yTop + 6, 188, boxH - 12);
+    }
+  }
+
+  // token chips on the left (the sequence moving up)
+  cx.textAlign="center";
+  TOKENS.forEach((w,i)=>{
+    const x = 40 + i*46;
+    cx.fillStyle = stage >= 0 ? "#fb7185" : "#1e293b";
+    roundRect(x-20, padT + 4, 40, 22, 6); cx.fill();
+    cx.fillStyle = stage >= 0 ? "#fff" : "#475569"; cx.font="11px sans-serif";
+    cx.fillText(w, x, padT + 19);
+  });
+  cx.fillStyle="#64748b"; cx.font="10px monospace"; cx.textAlign="left";
+  cx.fillText("sequence:", 8, padT - 6);
+
+  // stack indicator
+  if (stacked){
+    cx.strokeStyle="#fb7185"; cx.setLineDash([4,3]); cx.lineWidth=1.5;
+    cx.strokeRect(padL+6, padT+6, boxW, CH-padT-padB-12); cx.setLineDash([]);
+    cx.fillStyle="#fda4af"; cx.font="bold 11px monospace"; cx.textAlign="right";
+    cx.fillText("× N blocks (e.g. 12)", CW - padR - 4, padT + 2);
+  }
+}
+
+function drawHeads(x, y, w, h){
+  const gap = 6, hw = (w - gap*2)/3;            // 3 heads side by side
+  HEADS.forEach((head, hi)=>{
+    const hx = x + hi*(hw+gap);
+    cx.fillStyle="#fecdd3"; cx.font="8px monospace"; cx.textAlign="center";
+    cx.fillText("head "+(hi+1), hx + hw/2, y + 8);
+    const bw = hw / NTOK, base = y + h - 4, maxH = h - 18;
+    head.forEach((wt, ti)=>{
+      const bh = Math.max(2, wt * maxH);
+      cx.fillStyle = wt === Math.max(...head) ? "#fff" : "#fb7185";
+      cx.fillRect(hx + ti*bw + 1, base - bh, bw - 2, bh);
+    });
+  });
+}
+
+function roundRect(x,y,w,h,r){ cx.beginPath(); cx.moveTo(x+r,y); cx.arcTo(x+w,y,x+w,y+h,r); cx.arcTo(x+w,y+h,x,y+h,r); cx.arcTo(x,y+h,x,y,r); cx.arcTo(x,y,x+w,y,r); cx.closePath(); }
+
+function showStageInfo(){
+  const el = document.getElementById("stageInfo");
+  if (stage < 0){ el.innerHTML = '<span class="text-slate-400">Press <b>▶ Next stage</b> to push the sentence through the block — each layer will light up and explain what it does.</span>'; return; }
+  const st = STAGES[stage];
+  el.innerHTML = '<div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">Stage '+(stage+1)+' / '+STAGES.length+' — '+st.name+'</div><div class="fade-in">'+st.info+'</div>';
+}
+
+function render(){ drawFlow(); showStageInfo(); }
+
+const nextStageB = document.getElementById("nextStage");
+const autoFlowB  = document.getElementById("autoFlow");
+const resetB     = document.getElementById("resetFlow");
+const stackChk   = document.getElementById("stackToggle");
+
+nextStageB.onclick = ()=>{ stage = Math.min(STAGES.length-1, stage+1); render(); };
+resetB.onclick = ()=>{ stage = -1; if(ft){clearInterval(ft);ft=null;autoFlowB.textContent="▶ Auto-play";} render(); };
+stackChk.onchange = ()=>{ stacked = stackChk.checked; render(); };
+
+let ft = null;
+autoFlowB.onclick = ()=>{
+  if (ft){ clearInterval(ft); ft=null; autoFlowB.textContent="▶ Auto-play"; return; }
+  autoFlowB.textContent = "⏸ Pause"; stage = -1; render();
+  ft = setInterval(()=>{
+    if (stage >= STAGES.length-1){ clearInterval(ft); ft=null; autoFlowB.textContent="▶ Replay"; return; }
+    stage++; render();
+  }, 1500);
+};
+render();
+
+// ===== UNDERSTAND step engine =====
+const STEPS = [
+  { title:"1. Recap: attention is the core (Day 12)", why:"Day 12 gave us self-attention: every word builds three vectors — a query, a key and a value — scores its query against every key, softmaxes those scores into weights that sum to 1, and blends the values. The output is a context-aware vector for each word. That single operation is the engine of the Transformer. Today we don't change it — we wrap it in the scaffolding that turns one clever operation into a deep, trainable network.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">Q·K → softmax → weighted V  (one word now 'sees' the whole sentence)</div>`, code:`// Day 12, in one line — the core we build around today
+const context = softmax(Q @ K.T / Math.sqrt(d)) @ V;` },
+  { title:"2. Why attention alone isn't enough", why:"Attention only mixes information between tokens — it takes a weighted average of values. It never transforms a single token's features on their own, and one attention layer captures just one set of relationships. A real model needs to both mix tokens AND reshape each token's features, and it needs depth to build abstraction. So we add three things around attention: parallel heads, a per-token feed-forward net, and residual + normalization so we can stack the whole thing dozens of times.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">attention = mix tokens · we also need: transform features + go deep</div>`, code:`// block = (mix with attention) + (transform with an MLP), wrapped to be stackable` },
+  { title:"3. Token + positional embeddings", why:"First, every token id is mapped to a learned vector — its embedding. But attention is order-blind: shuffle the words and the math is identical, so 'dog bites man' and 'man bites dog' would look the same. To fix this we add a positional signal to each embedding — a fixed pattern of sines and cosines (or a learned vector) unique to each position. Now the very same input carries both what the word is and where it sits.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">embedding(word) + positionalEncoding(pos) → order-aware input</div>`, code:`let X = tokens.map(id => embedding[id]);
+X = X.map((v, pos) => add(v, positionalEncoding(pos)));  // inject order` },
+  { title:"4. Multi-head attention (several views in parallel)", why:"One set of Q/K/V weights learns one kind of relationship. So we run attention several times in parallel — each 'head' has its own small weight matrices and learns its own view of the sentence. One head might track the grammatical subject, another nearby words, another long-range references. Their outputs are concatenated and projected back down. In the LOOK demo the three heads show clearly different weight bars over the same words.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">head 1: subject · head 2: neighbours · head 3: action → concat → mix</div>`, code:`const heads = headParams.map(p => attention(X, p));
+const attn = matmul(concat(heads), Wo);   // many views, combined` },
+  { title:"5. Residual connections (add the input back)", why:"After the attention sub-layer we don't replace the input — we add it back: output = input + attention(input). This 'residual' or skip connection means each sub-layer only has to learn a small adjustment to what came before. Crucially, it gives gradients a clean highway straight through the network, so even very deep stacks (dozens of blocks) train without the signal vanishing. Without residuals, deep Transformers simply wouldn't learn.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">x → x + sublayer(x)  (gradient highway through deep stacks)</div>`, code:`H = add(X, attention(X));   // residual: keep the original, add the change` },
+  { title:"6. Layer normalization (stable training)", why:"Right after the residual we normalize. LayerNorm looks at each token's feature vector on its own, subtracts its mean and divides by its standard deviation (then scales/shifts with learned parameters). This keeps the numbers in every layer at a steady, well-behaved scale, which stops them from exploding or shrinking as they pass through many blocks. Stable activations mean stable gradients — the model trains faster and more reliably.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">each token's features → mean 0, variance 1 (then learned scale/shift)</div>`, code:`function layerNorm(x){ const m = mean(x), s = std(x);
+  return x.map(v => g * (v - m) / (s + 1e-5) + b); }   // per-token, learned g,b` },
+  { title:"7. The feed-forward sub-layer (per-token MLP)", why:"Attention mixes information across tokens; the feed-forward network reshapes each token's features by itself. It's a tiny two-layer MLP — expand the dimension (often ×4), apply a non-linearity like ReLU, then project back — applied identically and independently to every position. This is where a lot of the model's raw capacity lives: it lets each token transform its blended representation into something more useful before the next block.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">d_model → 4·d_model → ReLU → d_model, applied to EACH token alone</div>`, code:`function feedForward(x){ return add(matmul(relu(add(matmul(x, W1), b1)), W2), b2); }
+out = add(H, feedForward(H));   // its own residual + norm wrap` },
+  { title:"8. Stacking blocks (depth = abstraction)", why:"One block outputs vectors of exactly the same shape as its input, so blocks plug into each other effortlessly — just feed the output of one into the next. Early blocks tend to capture surface patterns (word shapes, local syntax); deeper blocks capture meaning, references and reasoning. GPT-style models stack anywhere from 12 to nearly 100 of these identical blocks. Depth, more than any single trick, is where the model's power comes from.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">block → block → block × N  (surface → syntax → meaning)</div>`, code:`let x = embedWithPositions(tokens);
+for (const p of blockParams) x = transformerBlock(x, p);  // ×12, ×24, ×96…` },
+  { title:"9. Encoder vs decoder vs decoder-only", why:"The block comes in a few flavours. An ENCODER lets every token see every other token (used by BERT for understanding tasks). A DECODER adds masked attention so each token only sees earlier tokens, which is needed to generate text left-to-right (GPT). The original Transformer and T5 use both — an encoder to read the input and a decoder to write the output. Same block, different attention masks and arrangement.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">BERT = encoder · GPT = masked decoder-only · T5 = encoder + decoder</div>`, code:`// decoder masks future positions so the model can't peek ahead
+scores = scores.map((row, i) => row.map((s, j) => j > i ? -Infinity : s));` },
+  { title:"10. Why Transformers scale", why:"Because attention compares all positions at once with no recurrence, a whole sequence is processed in parallel — perfect for GPUs — instead of one step at a time like an RNN. Any two tokens are linked in a single step regardless of distance, so long-range dependencies are easy. Add residuals and normalization and you can stack the block extremely deep without training falling apart. Parallelism + depth + clean gradients is exactly what let GPT, BERT and modern LLMs train on internet-scale text.", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">parallel (not sequential) + stackable depth = the engine behind every LLM.</p></div>`, code:`// the whole block, simplified — repeat ×N → GPT / BERT
+x = layerNorm(add(x, multiHeadAttention(x)));
+x = layerNorm(add(x, feedForward(x)));` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("autoS");
+let cur = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ cur=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,cur-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,cur+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(cur>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(cur+1); },2800); };
+show(0);
+
+function copy(btn) {
+  const pre = btn.parentElement.querySelector("pre");
+  navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500);
+}
+</script>
+</body>
+</html>
