@@ -1,10 +1,10 @@
 # DeepLearningFromZero
 
-Deep learning from scratch — neural nets, CNNs, RNNs, Transformers, GANs, visualized.
+Deep learning from scratch - nets, CNNs, RNNs, Transformers, GANs, diffusion, visualized.
 
 🌐 **Live (all days):** https://dev48v.infy.uk/deeplearningfromzero.php
 
-Every lesson is a single, self-contained HTML file with three tabs — 👁 **LOOK** (an interactive demo), 🧠 **UNDERSTAND** (the concept, step by step), 🔨 **BUILD** (do it yourself). No build tools, no install — open any file in a browser.
+Every lesson is a single, self-contained HTML file with three tabs — 👁 **LOOK** (interactive demo), 🧠 **UNDERSTAND** (the concept, step by step), 🔨 **BUILD** (do it yourself). No build tools, no install — open any file in a browser.
 
 ## Days
 - [DeepLearningFromZero · Day 1 — The Perceptron](https://dev48v.infy.uk/dl/day1-perceptron.html) — `day1-perceptron.html`
@@ -21,6 +21,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 12 — Attention &amp; Self-Attention](https://dev48v.infy.uk/dl/day12-attention.html) — `day12-attention.html`
 - [DeepLearningFromZero · Day 13 — Transformers](https://dev48v.infy.uk/dl/day13-transformers.html) — `day13-transformers.html`
 - [DeepLearningFromZero · Day 14 — GANs](https://dev48v.infy.uk/dl/day14-gans.html) — `day14-gans.html`
+- [DeepLearningFromZero · Day 15 — Diffusion Models](https://dev48v.infy.uk/dl/day15-diffusion.html) — `day15-diffusion.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk

@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 15 — Diffusion Models</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .copy-btn:hover { background:#1e293b; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  canvas { background:#020617; border:1px solid #1e293b; border-radius:10px; }
+  .tok { transition:all .2s; cursor:pointer; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 15</div>
+      <h1 class="text-xl font-bold">🌫️ Diffusion Models — Turn Noise Into Images</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-5xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Watch a clean shape dissolve into noise — then come back</h2>
+      <p class="text-slate-500 mb-5">The <b class="text-emerald-600">teal points</b> form a clean target (a recognizable shape). The <b class="text-rose-600">forward process</b> adds a little <b>Gaussian noise</b> at each of the <b id="capT">T</b> steps until the shape is pure static. The <b class="text-rose-600">reverse process</b> runs it backward, removing a slice of noise per step until the shape reappears. Drag the <b class="text-rose-600">scrubber</b> to move along the chain, or hit <b class="text-rose-600">▶</b> to play forward (noise up) or reverse (denoise).</p>
+      <div class="flex flex-wrap items-center justify-center gap-2 mb-4">
+        <button id="fwdBtn"   class="bg-rose-600 text-white px-5 py-2 rounded-lg font-semibold text-sm">▶ add noise (forward)</button>
+        <button id="revBtn"   class="bg-rose-500 text-white px-5 py-2 rounded-lg font-semibold text-sm">▶ denoise (reverse)</button>
+        <button id="resetBtn" class="bg-slate-200 px-5 py-2 rounded-lg font-semibold text-sm">↺ reset</button>
+        <label class="text-sm text-slate-600 ml-2 flex items-center gap-1">target:
+          <select id="shapeSel" class="border border-slate-300 rounded px-2 py-1 text-sm">
+            <option value="heart" selected>heart</option>
+            <option value="ring">ring</option>
+            <option value="smile">smiley</option>
+          </select>
+        </label>
+      </div>
+      <div class="max-w-3xl mx-auto mb-5">
+        <input id="scrub" type="range" min="0" max="40" value="0" step="1" class="w-full accent-rose-600">
+        <div class="flex justify-between text-[10px] text-slate-400 mt-1"><span>t = 0 · clean image</span><span>t = T · pure noise</span></div>
+      </div>
+      <div class="flex flex-col lg:flex-row justify-center items-center gap-5">
+        <canvas id="c" width="430" height="430"></canvas>
+        <div class="w-full lg:w-72 text-left space-y-3">
+          <div class="bg-white border border-slate-200 rounded-xl p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">noise schedule</div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">step</span><span id="sStep" class="font-bold font-mono">0 / 40</span></div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">phase</span><span id="sPhase" class="font-bold font-mono text-emerald-600">clean</span></div>
+            <div class="flex justify-between text-sm mb-3"><span class="text-rose-600 font-semibold">predicted noise to remove</span><span id="sPred" class="font-bold font-mono">0%</span></div>
+            <div class="text-xs text-slate-500 mb-1">noise level (how corrupted)</div>
+            <div class="w-full bg-slate-100 rounded-full h-4 overflow-hidden border border-slate-200">
+              <div id="noiseBar" class="h-4 bg-rose-500 transition-all duration-150" style="width:0%"></div>
+            </div>
+            <div class="flex justify-between text-[10px] text-slate-400 mt-1"><span>0% = clean</span><span id="noiseNum" class="font-mono font-bold text-slate-600">0%</span></div>
+          </div>
+          <div id="verdict" class="bg-white border border-slate-200 rounded-xl p-4 text-sm text-slate-600 min-h-[64px]">
+            Hit <b class="text-rose-600">▶ add noise</b> to corrupt the shape step by step, then <b class="text-rose-600">▶ denoise</b> to bring it back.
+          </div>
+        </div>
+      </div>
+      <p class="text-xs text-slate-400 mt-5 max-w-3xl mx-auto">↑ Diffusion learns to <b>REVERSE</b> a gradual noising process. You <b>train</b> by adding noise to real data and teaching a network to predict (and remove) it; you <b>generate</b> by starting from pure noise and denoising step by step. This is exactly how <b>Stable Diffusion</b> and <b>DALL·E</b> create images.</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">How a diffusion model turns noise into images</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="autoS" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 A diffusion model, in code</h2>
+    <p class="text-slate-500 mb-8">Pick a noise schedule → add noise to a real image at a random step → train a U-Net to predict that noise → minimise MSE → sample by denoising from pure noise step by step. ~7 steps. This is the real DDPM training loop; in practice you reach for the <b>diffusers</b> library, but every line below is what it does under the hood.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Pick a noise schedule (betas → alphas)</h3></div>
+        <div class="relative"><pre>import torch, torch.nn as nn, torch.nn.functional as F
+
+T = 1000                                  # number of diffusion steps
+betas       = torch.linspace(1e-4, 0.02, T)    # how much noise per step
+alphas      = 1.0 - betas
+alpha_bar   = torch.cumprod(alphas, dim=0)     # cumulative product ᾱ_t
+# ᾱ_t controls how much of the ORIGINAL image survives at step t
+sqrt_ab     = alpha_bar.sqrt()
+sqrt_1m_ab  = (1 - alpha_bar).sqrt()</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Forward process — add noise in one shot</h3></div>
+        <div class="relative"><pre># instead of looping t times, the schedule lets us jump straight to step t:
+#   x_t = sqrt(ᾱ_t) * x_0  +  sqrt(1-ᾱ_t) * noise
+def add_noise(x0, t, noise):
+    ab  = sqrt_ab[t].view(-1, 1, 1, 1)
+    omb = sqrt_1m_ab[t].view(-1, 1, 1, 1)
+    return ab * x0 + omb * noise           # the noisy image x_t</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">The network: a U-Net that predicts the noise</h3></div>
+        <div class="relative"><pre># the model takes the noisy image x_t and the step t,
+# and predicts the noise epsilon that was added at that step.
+model = UNet(in_ch=3, out_ch=3, time_emb=True)   # same in/out shape as image
+# (a U-Net = encoder that downsamples + decoder that upsamples,
+#  with skip connections; t is fed in as a time embedding)
+eps_pred = model(x_t, t)        # predicted noise, same shape as the image</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Training objective — just MSE on the noise</h3></div>
+        <div class="relative"><pre>opt = torch.optim.Adam(model.parameters(), lr=2e-4)
+
+def train_step(x0):
+    t     = torch.randint(0, T, (x0.size(0),))   # random step per image
+    noise = torch.randn_like(x0)                 # the noise we add
+    x_t   = add_noise(x0, t, noise)              # corrupt the image
+    loss  = F.mse_loss(model(x_t, t), noise)     # predict the noise!
+    opt.zero_grad(); loss.backward(); opt.step()
+    return loss.item()           # no adversarial game — one stable loss</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Training loop — show it data at random steps</h3></div>
+        <div class="relative"><pre>for epoch in range(epochs):
+    for x0 in dataloader:                 # x0 = a batch of real images
+        loss = train_step(x0)
+    print(epoch, loss)
+# that's it: the net slowly learns "given this noisy image at step t,
+# here is the noise to peel off." No discriminator, no minimax.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Sampling — denoise from pure noise, step by step</h3></div>
+        <div class="relative"><pre>@torch.no_grad()
+def sample(shape):
+    x = torch.randn(shape)                    # start from PURE noise (t = T)
+    for t in reversed(range(T)):              # walk back T -> 0
+        eps = model(x, torch.tensor([t]))     # predict the noise in x
+        a, ab = alphas[t], alpha_bar[t]
+        # remove the predicted noise to estimate the slightly cleaner x_{t-1}
+        x = (x - (1-a)/(1-ab).sqrt() * eps) / a.sqrt()
+        if t > 0:
+            x = x + betas[t].sqrt() * torch.randn_like(x)   # add a little back
+    return x                                  # a brand-new image</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">In practice — text conditioning via diffusers</h3></div>
+        <div class="relative"><pre># real systems use the diffusers library + latent diffusion + text prompts
+from diffusers import StableDiffusionPipeline
+pipe = StableDiffusionPipeline.from_pretrained("runwayml/stable-diffusion-v1-5")
+image = pipe("a cat riding a skateboard, oil painting").images[0]
+# the prompt is encoded by a text model and fed into the U-Net via
+# cross-attention; diffusion runs in a compressed LATENT space for speed.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 15 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">A network that just learns to predict the noise added to an image — then peels it off, step by step, starting from pure static. Add text conditioning and a latent space and you have Stable Diffusion, DALL·E and Midjourney; add time and you have Sora.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== Diffusion process visualizer =====
+const cv = document.getElementById("c"), cx = cv.getContext("2d"), CW = cv.width, CH = cv.height;
+const N = 320;                       // points in the cloud
+const T = 40;                        // number of diffusion steps
+const shapeSel = document.getElementById("shapeSel");
+const scrub = document.getElementById("scrub");
+document.getElementById("capT").textContent = T;
+scrub.max = T;
+
+// --- map data-space [-1,1] -> canvas pixels ---
+function px(x){ return CW/2 + x * (CW/2 - 26); }
+function py(y){ return CH/2 - y * (CH/2 - 26); }
+function gauss(){ return (Math.random()+Math.random()+Math.random()+Math.random()-2)/2; }
+
+// --- the clean TARGET shape: returns a fresh sample point in [-1,1] ---
+function sampleClean(){
+  if (target === "ring"){
+    const t = Math.random()*Math.PI*2;
+    const r = 0.62 + gauss()*0.03;
+    return [ r*Math.cos(t), r*Math.sin(t) ];
+  }
+  if (target === "smile"){
+    const pick = Math.random();
+    if (pick < 0.18){ // left eye
+      return [ -0.28 + gauss()*0.05, 0.30 + gauss()*0.05 ];
+    } else if (pick < 0.36){ // right eye
+      return [ 0.28 + gauss()*0.05, 0.30 + gauss()*0.05 ];
+    } else if (pick < 0.66){ // smile arc (lower half)
+      const a = Math.PI*1.15 + Math.random()*(Math.PI*0.70);
+      const r = 0.45;
+      return [ r*Math.cos(a) + gauss()*0.03, r*Math.sin(a) - 0.05 + gauss()*0.03 ];
+    }
+    // face outline circle
+    const t = Math.random()*Math.PI*2;
+    const r = 0.78 + gauss()*0.02;
+    return [ r*Math.cos(t), r*Math.sin(t) ];
+  }
+  // heart (default) — classic heart curve
+  const t = Math.random()*Math.PI*2;
+  const hx = 16*Math.pow(Math.sin(t),3);
+  const hy = 13*Math.cos(t) - 5*Math.cos(2*t) - 2*Math.cos(3*t) - Math.cos(4*t);
+  return [ hx/18 + gauss()*0.03, hy/18 + 0.05 + gauss()*0.03 ];
+}
+
+let target = "heart";
+let clean = [];            // the clean target points {x,y}
+let noiseVec = [];         // a FIXED noise direction per point (so the chain is deterministic)
+let pts = [];              // current displayed points
+let step = 0;              // current step t (0 = clean, T = pure noise)
+let timer = null, dir = 0; // dir: +1 forward, -1 reverse, 0 idle
+
+function makeClean(){
+  clean = []; noiseVec = []; pts = [];
+  for (let i=0;i<N;i++){
+    clean.push(sampleClean());
+    noiseVec.push([ gauss()*1.05, gauss()*1.05 ]);  // fixed Gaussian target per point
+    pts.push([0,0]);
+  }
+}
+
+// noise level at step t — a smooth schedule from 0 (clean) to 1 (pure noise)
+function noiseLevel(t){
+  // cosine-ish schedule: slow start, accelerates, then saturates
+  const f = t / T;
+  return Math.min(1, 1 - Math.cos(f * Math.PI/2));  // 0 -> 1, ease-in
+}
+
+// position each point at step t:  x_t = clean*(1-L) + fixedNoise*L
+function positionAt(t){
+  const L = noiseLevel(t);
+  for (let i=0;i<N;i++){
+    const c = clean[i], nz = noiseVec[i];
+    pts[i][0] = c[0]*(1-L) + nz[0]*L;
+    pts[i][1] = c[1]*(1-L) + nz[1]*L;
+  }
+}
+
+function draw(){
+  cx.clearRect(0,0,CW,CH); cx.fillStyle="#020617"; cx.fillRect(0,0,CW,CH);
+  // subtle axes
+  cx.strokeStyle="#0f172a"; cx.lineWidth=1;
+  cx.beginPath(); cx.moveTo(CW/2,0); cx.lineTo(CW/2,CH); cx.moveTo(0,CH/2); cx.lineTo(CW,CH/2); cx.stroke();
+
+  const L = noiseLevel(step);
+  // colour fades from teal (clean) toward rose (noisy) as the noise level rises
+  const g = Math.round(185*(1-L) + 63*L);
+  const b = Math.round(129*(1-L) + 94*L);
+  const rr = Math.round(16*(1-L) + 244*L);
+  cx.fillStyle = `rgba(${rr},${g},${b},0.85)`;
+  for (const p of pts){ cx.beginPath(); cx.arc(px(p[0]),py(p[1]),2.5,0,7); cx.fill(); }
+
+  // legend
+  cx.font="11px monospace"; cx.textAlign="left";
+  cx.fillStyle="#34d399"; cx.fillText("● t = 0  clean target", 12, 18);
+  cx.fillStyle="#fb7185"; cx.fillText("● t = T  pure noise", 12, 34);
+  cx.fillStyle="#94a3b8"; cx.fillText("t = " + step + " / " + T, 12, CH-14);
+}
+
+function refreshHUD(){
+  const L = noiseLevel(step);
+  const pct = Math.round(L*100);
+  document.getElementById("sStep").textContent = step + " / " + T;
+  document.getElementById("noiseBar").style.width = pct + "%";
+  document.getElementById("noiseNum").textContent = pct + "%";
+  // "predicted noise to remove" — at reverse step, the network removes one slice
+  const perStep = step > 0 ? Math.round((noiseLevel(step) - noiseLevel(step-1)) * 100) : 0;
+  document.getElementById("sPred").textContent = perStep + "%";
+  const ph = document.getElementById("sPhase");
+  const v = document.getElementById("verdict");
+  if (step === 0){
+    ph.textContent = "clean"; ph.className = "font-bold font-mono text-emerald-600";
+    v.innerHTML = 'The shape is <b class="text-emerald-600">clean</b> (t = 0). Add noise to corrupt it, or this is what reverse rebuilds toward.';
+  } else if (step >= T){
+    ph.textContent = "pure noise"; ph.className = "font-bold font-mono text-rose-600";
+    v.innerHTML = '<b class="text-rose-600">Pure Gaussian noise</b> (t = T). The shape is gone. Generation starts <i>here</i> — hit <b>▶ denoise</b> to walk back to an image.';
+  } else if (dir > 0){
+    ph.textContent = "adding noise"; ph.className = "font-bold font-mono text-rose-500";
+    v.innerHTML = '<b class="text-rose-500">Forward process:</b> a slice of Gaussian noise is added each step. This is how you build training pairs (clean image, noisy image, the noise added).';
+  } else if (dir < 0){
+    ph.textContent = "denoising"; ph.className = "font-bold font-mono text-emerald-500";
+    v.innerHTML = '<b class="text-emerald-500">Reverse process:</b> the network predicts the noise at this step and removes it. Step by step the shape re-emerges from the static.';
+  } else {
+    ph.textContent = step < T/2 ? "mostly shape" : "mostly noise";
+    ph.className = "font-bold font-mono text-slate-600";
+    v.innerHTML = 'Scrubbing the chain. Left = cleaner image, right = more noise. Each step is one rung of the diffusion process.';
+  }
+}
+
+function render(){ positionAt(step); draw(); refreshHUD(); scrub.value = step; }
+
+function stop(){
+  if (timer){ clearInterval(timer); timer=null; }
+  dir = 0;
+  document.getElementById("fwdBtn").textContent = "▶ add noise (forward)";
+  document.getElementById("revBtn").textContent = "▶ denoise (reverse)";
+}
+
+function reset(){
+  stop();
+  step = 0;
+  target = shapeSel.value;
+  makeClean(); render();
+}
+
+function play(direction){
+  // toggle off if already playing in that direction
+  if (timer && dir === direction){ stop(); render(); return; }
+  stop();
+  dir = direction;
+  if (direction > 0) document.getElementById("fwdBtn").textContent = "⏸ pause";
+  else               document.getElementById("revBtn").textContent = "⏸ pause";
+  timer = setInterval(()=>{
+    step += direction;
+    if (step <= 0){ step = 0; render(); stop(); render(); return; }
+    if (step >= T){ step = T; render(); stop(); render(); return; }
+    render();
+  }, 80);
+}
+
+document.getElementById("fwdBtn").onclick  = () => play(+1);
+document.getElementById("revBtn").onclick  = () => play(-1);
+document.getElementById("resetBtn").onclick = reset;
+shapeSel.onchange = reset;
+scrub.oninput = () => { stop(); step = +scrub.value; render(); };
+reset();
+
+// ===== UNDERSTAND step engine =====
+const STEPS = [
+  { title:"1. The goal: generate brand-new images", why:"Like a GAN, a diffusion model is generative — its job is to invent entirely new samples that look like they came from the training set, not to classify or label things. Train it on millions of photos and it produces fresh photos of scenes and people that never existed. The catch is HOW it gets there. A GAN tries to leap from noise to a finished image in one shot through an adversarial game. Diffusion instead breaks the problem into many tiny, easy steps: it starts from pure noise and gradually cleans it up. That patience is what makes it so stable and so good at covering the full variety of the data.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">learn the data → invent NEW images, but built up over MANY small steps</div>`, code:`# goal (same as a GAN): turn random noise into a realistic new image
+# difference: do it gradually, over many denoising steps — not one leap
+image = generate_by_denoising(pure_noise)   # never seen before, looks real` },
+  { title:"2. The forward process: gradually add noise", why:"Diffusion starts with a fixed, hand-designed process that destroys an image. Take a real image and add a small amount of Gaussian noise. Take that slightly noisy image and add a little more. Repeat this T times (often a few hundred or a thousand) and the image dissolves into pure random static — no structure left at all. Nothing is learned here; this 'forward' or 'diffusion' process is just a recipe defined by a noise schedule. Crucially it is easy and predictable: at every step you know exactly how much noise you added. That known answer is what makes training possible.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">clean image → +noise → +noise → … (T steps) → pure static</div>`, code:`# add a bit of Gaussian noise, T times, until the image is pure noise
+x = clean_image
+for t in range(T):
+    x = x + small_gaussian_noise(t)   # a fixed recipe, nothing learned` },
+  { title:"3. The reverse process: learn to undo one step", why:"Here is the clever flip. Adding noise is trivial, but if we could RUN THAT PROCESS BACKWARD — take a noisy image and produce a slightly less noisy one — then starting from pure static we could reverse our way all the way to a clean image. That backward step is what the network learns. We cannot write the reverse recipe by hand because removing noise correctly requires knowing what the image should be. So we train a network to estimate it: given a noisy image at step t, produce the slightly cleaner image at step t-1. Do that T times and noise becomes a picture.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">pure static → denoise → denoise → … (T steps) → clean image</div>`, code:`# the network learns the BACKWARD step: noisier -> slightly cleaner
+x = pure_noise
+for t in reversed(range(T)):
+    x = remove_one_step_of_noise(x, t)   # learned, repeated T times` },
+  { title:"4. What the network actually predicts: the noise", why:"You might expect the network to output the clean image directly, but the trick that makes diffusion work is simpler: the network predicts the NOISE that was added, not the image itself. We hand it a noisy image and the step number t, and it answers 'here is the Gaussian noise hiding in this image.' Once you know the noise, subtracting it gets you closer to the clean image. Predicting noise turns out to be an easier, better-behaved target than predicting pixels, and it is the standard formulation (called epsilon-prediction). The network's input and output are the same shape as the image.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">noisy image + step t → network → the NOISE that was added (ε)</div>`, code:`# the model's job: look at the noisy image and guess the noise in it
+predicted_noise = model(noisy_image, t)   # same shape as the image
+# subtract it -> a cleaner image` },
+  { title:"5. The training objective: predict the noise (MSE)", why:"Training is refreshingly simple. Take a real image, pick a random step t, generate some random Gaussian noise, and use the schedule to add exactly that much noise to the image. Now you have a noisy image AND you know the true noise you put in. Feed the noisy image to the network and ask it to predict that noise. The loss is just the mean squared error between the predicted noise and the real noise — the same humble MSE you have used since linear regression. There is no second network, no game, no special tricks — one network, one regression loss, repeated over millions of images.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">loss = MSE( predicted_noise , real_noise ) — that's the whole objective</div>`, code:`t     = random_step()
+noise = gaussian_like(image)
+x_t   = add_noise(image, t, noise)        # corrupt by a known amount
+loss  = mse( model(x_t, t), noise )       # predict that exact noise` },
+  { title:"6. Why it's more stable than a GAN", why:"A GAN trains two networks locked in an adversarial contest, and that contest is fragile: it can oscillate, the discriminator can overpower the generator, or the generator can collapse to producing one output over and over (mode collapse). Diffusion sidesteps all of that. It trains a single network with a plain regression loss against a known target — the noise you yourself added. There is no opponent to balance and no game to destabilise. Because every training example covers the full data, diffusion rarely suffers mode collapse and reliably captures the variety of the dataset. The price is that it is slower to sample, since you must run many denoising steps.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">one network · one MSE loss · no adversary → stable, no mode collapse</div>`, code:`# GAN:        two nets fighting -> can oscillate / collapse
+# diffusion:  one net, regress to known noise -> stable & full-coverage` },
+  { title:"7. The noise schedule & number of steps", why:"How much noise to add at each step is set by the noise schedule (the 'betas'). A good schedule adds noise gently at first and faster later, so the network sees a smooth range of corruption levels to learn from. The number of steps T trades quality against speed: more steps mean smaller, easier jumps and crisper images, but slower generation. Early diffusion models used a thousand steps; modern samplers (DDIM, DPM-Solver) reach great images in 20–50 steps by taking bigger, smarter strides. The scrubber and step counter in the demo are exactly this chain of steps — left is clean, right is pure noise.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">schedule = how much noise per step · more steps = better but slower</div>`, code:`betas     = linspace(1e-4, 0.02, T)   # the noise schedule
+# T = 1000 -> high quality, slow ;  fast samplers -> ~20-50 steps` },
+  { title:"8. Sampling: start from noise, denoise iteratively", why:"Generation is where the magic shows. You start with a fresh tensor of pure Gaussian noise — literally random static, the same thing you would get at step T of the forward process. Then you walk backward: ask the network to predict the noise, subtract a portion of it to get a slightly cleaner image, add a touch of fresh randomness, and repeat for every step down to zero. Because you reseed the starting noise each time, every run produces a different, brand-new image. This iterative denoising — noise in, image out, over many steps — is exactly what the LOOK demo's reverse button shows.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">random noise → (predict noise → subtract → repeat ×T) → new image</div>`, code:`x = randn(image_shape)                 # pure noise
+for t in reversed(range(T)):
+    eps = model(x, t)                  # predict the noise
+    x   = step_back(x, eps, t)         # remove some, add a little randomness
+# x is now a brand-new generated image` },
+  { title:"9. Conditioning: text → image (latent diffusion)", why:"On its own the model makes random images from the data. To steer it with a text prompt, the words are first turned into a numeric embedding by a text encoder, and that embedding is injected into the U-Net at every layer through cross-attention — so the denoising at each step is guided toward 'a cat riding a skateboard' rather than just any image. To make this fast and cheap, Stable Diffusion runs the whole diffusion process in a compressed LATENT space (a small encoded version of the image) instead of on raw pixels, then decodes the final latent back to a full image. Same denoising idea, just guided and compressed.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">text → embedding → cross-attention into the U-Net · diffuse in latent space</div>`, code:`text_emb = text_encoder("a cat riding a skateboard")
+for t in reversed(range(T)):
+    eps = unet(latent, t, context=text_emb)   # prompt guides denoising
+image = decode(latent)                         # latent -> full pixels` },
+  { title:"10. GANs vs diffusion & what it powers today", why:"After years of GANs ruling image generation, diffusion has become the engine behind nearly every modern text-to-image system: Stable Diffusion, DALL·E, Midjourney, Imagen — and, extended to video, OpenAI's Sora. The reasons are the ones above: diffusion is stable to train, covers the full variety of the data without mode collapse, and conditions cleanly on text. GANs still win on raw speed, since they generate in a single forward pass while diffusion needs many steps — which is why a lot of research now focuses on distilling diffusion models down to just a few steps. Two routes to the same dream: invent realistic new data.", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">GAN = one-shot adversarial leap · diffusion = gradual denoising. Diffusion powers Stable Diffusion, DALL·E, Midjourney, Sora.</p></div>`, code:`# GAN:        noise --G--> image            (one pass, fast, can collapse)
+# diffusion:  noise --denoise×T--> image     (many steps, stable, SOTA)` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("autoS");
+let cur = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ cur=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,cur-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,cur+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(cur>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(cur+1); },2800); };
+show(0);
+
+function copy(btn) {
+  const pre = btn.parentElement.querySelector("pre");
+  navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500);
+}
+</script>
+</body>
+</html>
