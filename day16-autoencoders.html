@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 16 — Autoencoders</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .copy-btn:hover { background:#1e293b; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  canvas { background:#020617; border:1px solid #1e293b; border-radius:10px; }
+  .tok { transition:all .2s; cursor:pointer; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 16</div>
+      <h1 class="text-xl font-bold">🗜️ Autoencoders — Compress, Then Reconstruct</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-5xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Squeeze a picture through a tiny bottleneck — then rebuild it</h2>
+      <p class="text-slate-500 mb-5">Paint a digit-like shape on the <b class="text-rose-600">input grid</b> (or pick a preset). The <b class="text-rose-600">encoder</b> compresses those 144 pixels into just a few numbers — the <b class="text-rose-600">latent code</b> in the <b>bottleneck</b>. The <b class="text-rose-600">decoder</b> rebuilds the picture from <i>only</i> that code. Shrink the <b class="text-rose-600">bottleneck slider</b> and watch the reconstruction get blurrier — with too few numbers the model can keep only the essence, not every pixel.</p>
+
+      <div class="flex flex-wrap items-center justify-center gap-2 mb-4">
+        <span class="text-sm font-semibold text-slate-600 mr-1">mode:</span>
+        <button id="mReconstruct" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">🗜️ Reconstruct</button>
+        <button id="mDenoise"     class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">🧹 Denoise</button>
+        <button id="mGenerate"    class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">✨ Generate</button>
+        <span class="w-px h-6 bg-slate-300 mx-1"></span>
+        <label class="text-sm text-slate-600 ml-1 flex items-center gap-1">preset:
+          <select id="presetSel" class="border border-slate-300 rounded px-2 py-1 text-sm">
+            <option value="seven" selected>digit 7</option>
+            <option value="one">digit 1</option>
+            <option value="zero">digit 0</option>
+            <option value="cross">plus +</option>
+            <option value="x">cross X</option>
+          </select>
+        </label>
+        <button id="clearBtn" class="bg-slate-200 px-3 py-2 rounded-lg font-semibold text-sm">clear</button>
+      </div>
+
+      <div id="latentCtl" class="max-w-3xl mx-auto mb-5">
+        <div class="flex items-center justify-center gap-3 mb-1">
+          <span class="text-sm text-slate-600 font-semibold">bottleneck (latent) size</span>
+          <input id="latK" type="range" min="2" max="16" value="6" step="1" class="w-64 accent-rose-600">
+          <span id="latKnum" class="font-mono font-bold text-rose-600 w-16 text-left">6 nums</span>
+        </div>
+        <div class="flex justify-between text-[10px] text-slate-400 mt-1 max-w-md mx-auto"><span>2 = tiny code · very blurry</span><span>16 = roomier · sharper</span></div>
+      </div>
+
+      <div id="genCtl" class="max-w-3xl mx-auto mb-5 hidden">
+        <p class="text-xs text-slate-500 mb-2">Generate mode: drag the two latent dials to roam latent space — the decoder turns each code into a new picture. No input needed; you are <b>sampling</b> the code directly.</p>
+        <div class="flex items-center justify-center gap-4 flex-wrap">
+          <label class="text-sm text-slate-600 flex items-center gap-2">z₁
+            <input id="z1" type="range" min="-100" max="100" value="40" step="1" class="w-48 accent-rose-600">
+          </label>
+          <label class="text-sm text-slate-600 flex items-center gap-2">z₂
+            <input id="z2" type="range" min="-100" max="100" value="-25" step="1" class="w-48 accent-rose-600">
+          </label>
+        </div>
+      </div>
+
+      <div class="flex flex-col lg:flex-row justify-center items-center gap-4 flex-wrap">
+        <div class="text-center">
+          <div class="text-xs uppercase font-bold text-emerald-600 tracking-wider mb-1" id="inputLbl">input · paint here</div>
+          <canvas id="cin" width="216" height="216" class="cursor-crosshair"></canvas>
+        </div>
+
+        <div class="flex flex-col items-center text-rose-500 text-2xl font-bold">
+          <span>→</span>
+          <span class="text-[10px] text-slate-400 -mt-1">encode</span>
+        </div>
+
+        <div class="text-center">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">bottleneck · latent code</div>
+          <canvas id="clat" width="120" height="216"></canvas>
+        </div>
+
+        <div class="flex flex-col items-center text-rose-500 text-2xl font-bold">
+          <span>→</span>
+          <span class="text-[10px] text-slate-400 -mt-1">decode</span>
+        </div>
+
+        <div class="text-center">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">reconstruction</div>
+          <canvas id="cout" width="216" height="216"></canvas>
+        </div>
+
+        <div class="w-full lg:w-64 text-left space-y-3">
+          <div class="bg-white border border-slate-200 rounded-xl p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">compression</div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">input pixels</span><span class="font-bold font-mono">144</span></div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">latent numbers</span><span id="sLat" class="font-bold font-mono text-rose-600">6</span></div>
+            <div class="flex justify-between text-sm mb-3"><span class="text-slate-500">compression</span><span id="sRatio" class="font-bold font-mono">24×</span></div>
+            <div class="text-xs text-slate-500 mb-1">reconstruction error (per-pixel)</div>
+            <div class="w-full bg-slate-100 rounded-full h-4 overflow-hidden border border-slate-200">
+              <div id="errBar" class="h-4 bg-rose-500 transition-all duration-150" style="width:0%"></div>
+            </div>
+            <div class="flex justify-between text-[10px] text-slate-400 mt-1"><span>0 = perfect</span><span id="errNum" class="font-mono font-bold text-slate-600">0.00</span></div>
+          </div>
+          <div id="verdict" class="bg-white border border-slate-200 rounded-xl p-4 text-sm text-slate-600 min-h-[64px]">
+            Paint on the input or pick a preset. Then drag the <b class="text-rose-600">bottleneck slider</b> down to 2 and watch the reconstruction blur.
+          </div>
+        </div>
+      </div>
+      <p class="text-xs text-slate-400 mt-5 max-w-3xl mx-auto">↑ An autoencoder learns to squeeze input through a <b>tiny bottleneck</b> and rebuild it — forcing it to capture the <b>essence</b>, not memorise pixels. The latent code is a compressed representation you can <b>denoise</b> with (the bottleneck drops the noise) or <b>generate</b> from (sample a code, decode it). Smaller bottleneck = blurrier reconstruction.</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">How an autoencoder compresses and reconstructs</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="autoS" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 An autoencoder, in code</h2>
+    <p class="text-slate-500 mb-8">Define an <b>encoder</b> that shrinks the input to a tiny bottleneck → a <b>decoder</b> that rebuilds it → train with <b>MSE reconstruction loss</b> so the output matches the input → then use the latent code, or corrupt the input to train a <b>denoiser</b>. ~7 steps in PyTorch. Every line is the real thing — an autoencoder is just two small nets glued at a narrow waist.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Pick the shapes — input size and bottleneck dim</h3></div>
+        <div class="relative"><pre>import torch, torch.nn as nn, torch.nn.functional as F
+
+INPUT_DIM  = 28 * 28      # e.g. a flattened 28x28 image = 784 numbers
+LATENT_DIM = 16           # the BOTTLENECK: squeeze 784 -> 16 numbers
+# smaller LATENT_DIM = harder squeeze = the net must keep only essentials
+# (this is the slider in the LOOK demo)</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">The encoder — funnel down to the bottleneck</h3></div>
+        <div class="relative"><pre># the encoder maps the big input down to a tiny latent code z
+encoder = nn.Sequential(
+    nn.Linear(INPUT_DIM, 128), nn.ReLU(),
+    nn.Linear(128, 64),        nn.ReLU(),
+    nn.Linear(64, LATENT_DIM),                # <- the narrow waist (z)
+)
+# z = encoder(x)  is the COMPRESSED representation of the input</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">The decoder — fan back out to full size</h3></div>
+        <div class="relative"><pre># the decoder is a mirror image: latent code -> rebuilt input
+decoder = nn.Sequential(
+    nn.Linear(LATENT_DIM, 64), nn.ReLU(),
+    nn.Linear(64, 128),        nn.ReLU(),
+    nn.Linear(128, INPUT_DIM), nn.Sigmoid(),  # back to 784, in [0,1]
+)
+# x_hat = decoder(z)  is the RECONSTRUCTION, same shape as the input</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Glue them — forward pass = encode then decode</h3></div>
+        <div class="relative"><pre>class AutoEncoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.enc, self.dec = encoder, decoder
+    def forward(self, x):
+        z     = self.enc(x)      # compress  x -> z   (bottleneck)
+        x_hat = self.dec(z)      # rebuild   z -> x_hat
+        return x_hat, z
+
+model = AutoEncoder()</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Reconstruction loss — the target IS the input</h3></div>
+        <div class="relative"><pre>opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+def train_step(x):
+    x_hat, z = model(x)
+    loss = F.mse_loss(x_hat, x)        # output must match the INPUT
+    opt.zero_grad(); loss.backward(); opt.step()
+    return loss.item()
+# no labels needed! the data is its own target -> self-supervised</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Train — show it data, no labels</h3></div>
+        <div class="relative"><pre>for epoch in range(epochs):
+    for x, _ in dataloader:            # ignore the label entirely
+        x = x.view(x.size(0), -1)      # flatten to (batch, 784)
+        loss = train_step(x)
+    print(epoch, loss)
+# because the bottleneck is narrow, the net CAN'T just copy x across;
+# it is forced to learn the few features that best rebuild the data</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">Use it — latent, denoise, anomaly score</h3></div>
+        <div class="relative"><pre># A) compressed representation (dim-reduction, clustering, search):
+z = model.enc(x)                       # 784 -> 16 numbers
+
+# B) DENOISING autoencoder: feed CORRUPTED input, target the CLEAN one
+x_noisy = x + 0.3 * torch.randn_like(x)
+x_clean, _ = model(x_noisy)            # bottleneck drops the noise
+loss = F.mse_loss(x_clean, x)          # clean image is the target
+
+# C) ANOMALY detection: high reconstruction error = doesn't fit the data
+err = F.mse_loss(model(x)[0], x, reduction='none').mean(1)
+is_anomaly = err > threshold           # weird inputs reconstruct badly</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 16 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">Two small nets glued at a narrow waist: an encoder that compresses and a decoder that rebuilds, trained to make output ≈ input. The bottleneck forces it to keep only the essence — giving you a compressed latent code for dimensionality reduction, denoising, and anomaly detection. Make that latent <i>probabilistic</i> and you get a VAE that can generate.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== Autoencoder visualizer =====
+// Faithful linear-autoencoder = PCA-on-a-fixed-basis. We project the GRID onto
+// an ordered orthonormal basis (low-frequency 2D-DCT cosines first). Keeping the
+// top-K coefficients = a bottleneck of size K. Fewer coefficients -> blurrier
+// reconstruction & higher error -> exactly the undercomplete-AE relationship.
+const G = 12;                 // 12x12 grid = 144 "pixels"
+const NPX = G * G;
+const cin  = document.getElementById("cin"),  ix = cin.getContext("2d");
+const cout = document.getElementById("cout"), ox = cout.getContext("2d");
+const clat = document.getElementById("clat"), lx = clat.getContext("2d");
+const CELL = cin.width / G;   // 18px per cell
+
+let input = new Float32Array(NPX);   // current input image, values 0..1
+let mode  = "reconstruct";
+
+// ---- build an ordered orthonormal 2D-DCT basis (NPX vectors of length NPX) ----
+// basis[k] is a flattened GxG cosine pattern; lower k = lower frequency = coarser.
+const basis = [];
+(function buildBasis(){
+  // enumerate (u,v) frequency pairs ordered by u+v (low freq first)
+  const freqs = [];
+  for (let u=0; u<G; u++) for (let v=0; v<G; v++) freqs.push([u,v]);
+  freqs.sort((a,b)=>(a[0]+a[1])-(b[0]+b[1]) || a[0]-b[0]);
+  const cu = u => u===0 ? Math.sqrt(1/G) : Math.sqrt(2/G);
+  for (const [u,v] of freqs){
+    const vec = new Float32Array(NPX);
+    for (let y=0;y<G;y++) for (let x=0;x<G;x++){
+      vec[y*G+x] = cu(u)*cu(v)
+        * Math.cos(Math.PI*(2*x+1)*u/(2*G))
+        * Math.cos(Math.PI*(2*y+1)*v/(2*G));
+    }
+    basis.push(vec);
+  }
+})();
+
+function dot(a,b){ let s=0; for (let i=0;i<NPX;i++) s+=a[i]*b[i]; return s; }
+
+// encode: project onto top-K basis vecs -> K latent coefficients
+function encode(img, K){
+  const z = new Float32Array(K);
+  for (let k=0;k<K;k++) z[k] = dot(img, basis[k]);
+  return z;
+}
+// decode: rebuild image from K coefficients
+function decode(z, K){
+  const out = new Float32Array(NPX);
+  for (let k=0;k<K;k++){
+    const c = z[k], bk = basis[k];
+    for (let i=0;i<NPX;i++) out[i] += c*bk[i];
+  }
+  return out;
+}
+
+// ---- presets (12x12 painted patterns) ----
+const PRESETS = {
+  seven: ["............","..########..","..######.#..",".......##...","......##....",".....##.....","....##......","....##......","...##.......","...##.......","............","............"],
+  one:   ["............",".....##.....","....###.....","...####.....",".....##.....",".....##.....",".....##.....",".....##.....",".....##.....","...######...","............","............"],
+  zero:  ["............","...######...","..##....##..","..##....##..","..##....##..","..##....##..","..##....##..","..##....##..","..##....##..","...######...","............","............"],
+  cross: ["............","............",".....##.....",".....##.....","..########..","..########..",".....##.....",".....##.....",".....##.....","............","............","............"],
+  x:     ["............","..#......#..","...#....#...","....#..#....",".....##.....","......#.....",".....##.....","....#..#....","...#....#...","..#......#..","............","............"]
+};
+function loadPreset(name){
+  const rows = PRESETS[name] || PRESETS.seven;
+  input = new Float32Array(NPX);
+  for (let y=0;y<G;y++){
+    const r = rows[y] || "";
+    for (let x=0;x<G;x++) if (r[x] && r[x] !== '.') input[y*G+x] = 1;
+  }
+}
+
+function drawGrid(ctx, img, accentNoise){
+  const W = ctx.canvas.width;
+  ctx.clearRect(0,0,W,W);
+  for (let y=0;y<G;y++) for (let x=0;x<G;x++){
+    let v = img[y*G+x];
+    v = Math.max(0, Math.min(1, v));
+    const g = Math.round(v*255);
+    ctx.fillStyle = `rgb(${g},${g},${g})`;
+    ctx.fillRect(x*CELL, y*CELL, CELL, CELL);
+  }
+  // grid lines
+  ctx.strokeStyle = "#1e293b"; ctx.lineWidth = 1;
+  for (let i=0;i<=G;i++){
+    ctx.beginPath(); ctx.moveTo(i*CELL,0); ctx.lineTo(i*CELL,W); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,i*CELL); ctx.lineTo(W,i*CELL); ctx.stroke();
+  }
+}
+
+// draw the latent code as a vertical stack of K value bars
+function drawLatent(z){
+  const W = clat.width, H = clat.height;
+  lx.clearRect(0,0,W,H); lx.fillStyle = "#020617"; lx.fillRect(0,0,W,H);
+  const K = z.length;
+  const bh = Math.min(20, (H-8)/K);
+  // normalise for display
+  let mx = 1e-6; for (let k=0;k<K;k++) mx = Math.max(mx, Math.abs(z[k]));
+  for (let k=0;k<K;k++){
+    const cy = 4 + k*bh;
+    const w = (Math.abs(z[k])/mx) * (W/2 - 6);
+    lx.fillStyle = z[k] >= 0 ? "#fb7185" : "#64748b";
+    lx.fillRect(W/2, cy + bh*0.15, w, bh*0.7);
+    lx.fillStyle = z[k] < 0 ? "#fb7185" : "#64748b";
+    lx.fillRect(W/2 - w, cy + bh*0.15, w, bh*0.7);
+  }
+  // center line
+  lx.strokeStyle = "#334155"; lx.beginPath(); lx.moveTo(W/2,0); lx.lineTo(W/2,H); lx.stroke();
+  lx.fillStyle = "#94a3b8"; lx.font = "10px monospace"; lx.textAlign="center";
+  lx.fillText(K + " values", W/2, H-3);
+}
+
+function rng(seed){ let s = seed; return () => { s = (s*1103515245 + 12345) & 0x7fffffff; return s/0x7fffffff; }; }
+
+function render(){
+  const K = +document.getElementById("latK").value;
+  document.getElementById("latKnum").textContent = K + " nums";
+  document.getElementById("sLat").textContent = K;
+  document.getElementById("sRatio").textContent = (NPX / K).toFixed(0) + "×";
+  document.getElementById("errBar"); // ensure exists
+
+  const inLbl = document.getElementById("inputLbl");
+  let source = input;              // what the encoder sees
+  let target = input;              // what error is measured against
+  let z, recon;
+
+  if (mode === "generate"){
+    // sample the latent directly: only z1,z2 are user-driven, rest 0
+    inLbl.textContent = "input · (ignored)";
+    const zz = new Float32Array(K);
+    zz[0] = (+document.getElementById("z1").value)/100 * 6;   // scale to coeff range
+    if (K>1) zz[1] = (+document.getElementById("z2").value)/100 * 6;
+    recon = decode(zz, K);
+    drawGrid(ix, new Float32Array(NPX));   // blank input
+    drawLatent(zz);
+    drawGrid(ox, recon);
+    document.getElementById("errBar").style.width = "0%";
+    document.getElementById("errNum").textContent = "—";
+    document.getElementById("verdict").innerHTML =
+      '<b class="text-rose-600">Generate:</b> you are sampling a latent code by hand and decoding it. Drag z₁/z₂ to roam latent space — the output morphs smoothly. Real generators (VAEs) learn a tidy latent you can sample at random.';
+    return;
+  }
+
+  let errVal, errMax = 0.5;        // errVal drives the bar; errMax = "full bar" scale
+
+  if (mode === "denoise"){
+    inLbl.textContent = "input · (noisy)";
+    // corrupt the clean input with salt-and-pepper + additive noise
+    const r = rng(12345);
+    source = new Float32Array(NPX);
+    for (let i=0;i<NPX;i++){
+      let v = input[i] + (r()-0.5)*0.6;        // additive jitter
+      if (r() < 0.18) v = r() < 0.5 ? 0 : 1;   // salt & pepper specks
+      source[i] = Math.max(0, Math.min(1, v));
+    }
+    // A trained denoising AE's decoder has LEARNED the clean shapes: the noisy input
+    // is encoded, but the learned clean prior dominates the latent, so the decoder
+    // reconstructs the CLEAN shape at this bottleneck size (noise can't survive a
+    // few smooth latent numbers). z = mostly the clean code, slightly tugged by noise.
+    const zClean = encode(input,  K);
+    const zNoisy = encode(source, K);
+    const w = 0.92;                            // strength of the learned clean prior
+    z = new Float32Array(K);
+    for (let k=0;k<K;k++) z[k] = w*zClean[k] + (1-w)*zNoisy[k];
+    recon = decode(z, K);
+    drawGrid(ix, source);
+    // honest error: how much NOISE survived = distance from the ideal clean reconstruction
+    const cleanRecon = decode(zClean, K);
+    let se=0; for (let i=0;i<NPX;i++){ const d=recon[i]-cleanRecon[i]; se+=d*d; }
+    errVal = Math.sqrt(se/NPX); errMax = 0.25;
+  } else {
+    inLbl.textContent = "input · paint here";
+    z = encode(input, K);
+    recon = decode(z, K);
+    drawGrid(ix, input);
+    // reconstruction error vs the input (per-pixel RMSE) — shrinks as K grows
+    let se=0; for (let i=0;i<NPX;i++){ const d=Math.max(0,Math.min(1,recon[i]))-input[i]; se+=d*d; }
+    errVal = Math.sqrt(se/NPX); errMax = 0.45;
+  }
+
+  drawLatent(z);
+  drawGrid(ox, recon);
+
+  document.getElementById("errBar").style.width = Math.min(100, Math.round(errVal/errMax*100)) + "%";
+  document.getElementById("errNum").textContent = errVal.toFixed(3);
+
+  const v = document.getElementById("verdict");
+  if (mode === "denoise"){
+    v.innerHTML = '<b class="text-rose-600">Denoise:</b> the left grid is corrupted with noise, but a trained autoencoder\'s decoder has learned the clean shapes — and the tiny bottleneck can\'t store random speckle. So it rebuilds the <b>clean</b> shape on the right. The error here measures leftover noise: near zero means the noise was squeezed out.';
+  } else if (K <= 4){
+    v.innerHTML = 'Tiny bottleneck (<b class="text-rose-600">'+K+' numbers</b>): the decoder keeps only the coarsest blob of the shape — very blurry, high error. The model is forced to throw away detail.';
+  } else if (K >= 13){
+    v.innerHTML = 'Roomy bottleneck (<b class="text-rose-600">'+K+' numbers</b>): enough capacity to keep fine detail, so the reconstruction is sharp and error is low. Push the slider down to feel the squeeze.';
+  } else {
+    v.innerHTML = 'Bottleneck = <b class="text-rose-600">'+K+' numbers</b> for 144 pixels. The decoder rebuilds the gist of the shape. Slide it smaller for blurrier output, larger for sharper.';
+  }
+}
+
+// ---- painting on the input grid ----
+let painting = false, paintVal = 1;
+function cellFromEvent(e){
+  const rect = cin.getBoundingClientRect();
+  const x = Math.floor((e.clientX - rect.left) / (rect.width / G));
+  const y = Math.floor((e.clientY - rect.top)  / (rect.height / G));
+  if (x<0||x>=G||y<0||y>=G) return null;
+  return y*G + x;
+}
+function paintAt(e){
+  if (mode === "generate") return;       // input ignored in generate mode
+  const idx = cellFromEvent(e); if (idx==null) return;
+  input[idx] = paintVal; render();
+}
+cin.addEventListener("mousedown", e => { painting = true; paintVal = input[cellFromEvent(e)] > 0.5 ? 0 : 1; paintAt(e); });
+cin.addEventListener("mousemove", e => { if (painting) paintAt(e); });
+window.addEventListener("mouseup", () => painting = false);
+cin.addEventListener("mouseleave", () => {});
+
+// ---- controls ----
+document.getElementById("latK").oninput = render;
+document.getElementById("z1").oninput = render;
+document.getElementById("z2").oninput = render;
+document.getElementById("presetSel").onchange = e => { loadPreset(e.target.value); render(); };
+document.getElementById("clearBtn").onclick = () => { input = new Float32Array(NPX); render(); };
+
+function setMode(m){
+  mode = m;
+  const btns = { reconstruct:"mReconstruct", denoise:"mDenoise", generate:"mGenerate" };
+  Object.entries(btns).forEach(([k,id])=>{
+    const b = document.getElementById(id);
+    if (k===m){ b.className = "bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm"; }
+    else      { b.className = "bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm"; }
+  });
+  // generate mode shows latent dials, hides bottleneck-vs-input narrative slightly
+  document.getElementById("genCtl").classList.toggle("hidden", m!=="generate");
+  render();
+}
+document.getElementById("mReconstruct").onclick = () => setMode("reconstruct");
+document.getElementById("mDenoise").onclick     = () => setMode("denoise");
+document.getElementById("mGenerate").onclick    = () => setMode("generate");
+
+loadPreset("seven");
+setMode("reconstruct");
+
+// ===== UNDERSTAND step engine =====
+const STEPS = [
+  { title:"1. The idea: compress, then reconstruct", why:"An autoencoder is a network with a very simple job: take an input, squeeze it down to a handful of numbers, and then rebuild the original from just those numbers. It is trained to make its output match its input as closely as possible. That sounds pointless at first — why learn to copy something you already have? The trick is the squeeze in the middle. By forcing everything to pass through a narrow channel, the network can't simply pass the input straight through; it has to discover a compact way to describe the data. It is self-supervised: the data is its own answer key, so you need no labels at all.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">input → <b>squeeze to a few numbers</b> → rebuild → output ≈ input</div>`, code:`# train a net so that output ≈ input, but force it through a tiny middle
+x_hat = decode(encode(x))     # encode squeezes, decode rebuilds
+# loss = how different x_hat is from x` },
+  { title:"2. Three parts: encoder · bottleneck · decoder", why:"Every autoencoder has the same three-part shape. The ENCODER is the first half: it takes the full-size input and progressively shrinks it through layers down to a small vector. That small vector is the BOTTLENECK (also called the latent code, or z) — the narrowest point of the network, holding far fewer numbers than the input. The DECODER is the mirror image of the encoder: it takes the tiny latent code and fans it back out, layer by layer, to the original size. Input and output are the same shape; everything interesting happens because the middle is so much smaller. In the LOOK demo the three canvases are exactly these three parts.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">[ ENCODER ▶ ] → <b class="text-rose-600">bottleneck (z)</b> → [ ◀ DECODER ]</div>`, code:`z     = encoder(x)     # big input  -> small latent code z
+x_hat = decoder(z)     # small code  -> rebuilt full-size output
+# encoder and decoder are usually mirror images of each other` },
+  { title:"3. The objective: reconstruction loss", why:"Training an autoencoder needs only one ingredient: a measure of how well the output rebuilt the input. The standard choice is mean squared error — compare the reconstructed image to the original pixel by pixel and average the squared differences. The network adjusts both the encoder and the decoder, together, to make this error as small as possible. There is no separate label, no class to predict, no second network. The target is literally the input itself, which is why people call it self-supervised or unsupervised. Minimising reconstruction loss is the entire goal, and everything the network learns is in service of rebuilding its input faithfully.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">loss = MSE( output , input ) — make the rebuild match the original</div>`, code:`loss = mse(x_hat, x)        # output vs the SAME input
+# backprop updates encoder + decoder together to shrink this error` },
+  { title:"4. Why the bottleneck forces useful features", why:"If the middle layer were as wide as the input, the network could cheat — just copy each number straight through and reconstruct perfectly while learning nothing. The bottleneck makes that impossible. When the latent code has only a few numbers but the input has hundreds, the network simply cannot store everything, so it has to decide what matters. It learns to keep the patterns that explain most of the data — the overall shape, the broad strokes — and discard fine detail it can't afford to store. That pressure is what turns a copy machine into a feature learner: the compact code ends up capturing the essence of the data. Shrink the slider in the demo and you watch detail being sacrificed first.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">narrow waist → can't copy everything → must keep only the essentials</div>`, code:`# wide middle  -> net just copies the input, learns nothing
+# narrow middle -> net MUST compress -> learns meaningful features
+LATENT_DIM = 16    # small on purpose` },
+  { title:"5. The latent code is a compressed representation", why:"After training, the bottleneck vector z is a genuinely useful object in its own right. It is a dense, compressed summary of the input — a few numbers that, together, describe what that input is. You can throw away the decoder and use just the encoder as a feature extractor: feed in an image, read out its latent code, and use that code as input to a simpler model, for clustering, or for similarity search (two inputs with nearby codes look alike). Because the code lives in a much smaller space than the raw data, it is faster and often cleaner to work with. This is why autoencoders are a classic tool for dimensionality reduction.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">z = encode(x) → a compact \"fingerprint\" you can cluster, search, reuse</div>`, code:`z = encoder(x)          # e.g. 784 pixels -> 16 numbers
+# nearby z  -> similar inputs ; use z for clustering / search / viz` },
+  { title:"6. Undercomplete vs overcomplete", why:"The size of the bottleneck relative to the input defines two regimes. An UNDERCOMPLETE autoencoder has a latent smaller than the input — this is the usual, useful case, because the squeeze forces compression and feature learning. An OVERCOMPLETE autoencoder has a latent as large as, or larger than, the input; with that much room the network can just learn the identity (copy the input) and learns nothing meaningful unless you add extra constraints. To make overcomplete codes useful, people add regularisation — for example a sparsity penalty that forces most latent values to be zero, or noise (the next step). So the bottleneck isn't only about size; it's about creating some kind of pressure that prevents trivial copying.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">undercomplete (z &lt; input) = compress · overcomplete (z ≥ input) = risk of just copying</div>`, code:`# undercomplete: LATENT_DIM < INPUT_DIM   -> must compress (good)
+# overcomplete:  LATENT_DIM >= INPUT_DIM  -> can cheat; needs a penalty
+loss = mse(x_hat, x) + lam * z.abs().mean()   # sparsity penalty example` },
+  { title:"7. Denoising autoencoders", why:"A powerful twist is to deliberately damage the input. In a denoising autoencoder you corrupt each training image — add random noise, blank out pixels — and then ask the network to reconstruct the CLEAN original, not the corrupted version it was shown. The input and the target are now different: dirty in, clean out. To succeed the network can't just memorise pixels; it must understand the underlying structure well enough to fill in and repair what was damaged. This makes the learned features more robust and gives you a practical tool that removes noise from real signals. The Denoise mode in the demo shows exactly this: a noisy grid in, a cleaner grid out, because the bottleneck can't store the random noise.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center"><b>corrupt</b> the input → reconstruct the <b>clean</b> original → learns to repair</div>`, code:`x_noisy = x + 0.3 * randn_like(x)   # corrupt the input
+x_hat   = decode(encode(x_noisy))   # but...
+loss    = mse(x_hat, x)             # ...target the CLEAN x` },
+  { title:"8. What autoencoders are used for", why:"The same compress-then-rebuild machine powers several practical jobs. DIMENSIONALITY REDUCTION: use the encoder to turn high-dimensional data into a small code for visualisation or as input to other models. DENOISING: clean up corrupted images, audio, or sensor signals. ANOMALY DETECTION is one of the most popular: train the autoencoder only on normal data so it learns to rebuild normal things well; then at test time, anything weird reconstructs badly and produces a high error — so a large reconstruction error flags an anomaly (fraud, defects, intrusions). COMPRESSION and pre-training of features round out the list. The common thread is that the latent code, or the reconstruction error, is the useful output.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">dim-reduction · denoising · <b>anomaly = high reconstruction error</b></div>`, code:`# anomaly detection: train on NORMAL data only
+err = mse(decode(encode(x)), x)
+flag = err > threshold     # high error = "this doesn't look normal"` },
+  { title:"9. VAEs: a latent you can sample from", why:"A plain autoencoder learns a latent code but its latent space is messy — random points in it usually decode to garbage, so it can't really generate new data. A VARIATIONAL autoencoder (VAE) fixes this by making the latent probabilistic. Instead of mapping each input to a single point, the encoder outputs a small probability distribution (a mean and a spread), and the training adds a term that keeps these distributions packed neatly around the origin. The result is a smooth, continuous latent space: pick a random point, decode it, and you get a plausible new sample. That is why VAEs can generate — and it's what the Generate mode hints at, where you roam the latent space by hand and watch the output morph.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">VAE: encode to a <b>distribution</b> → smooth latent → sample random z → generate</div>`, code:`mu, logvar = encoder(x)                 # a distribution, not a point
+z = mu + exp(0.5*logvar) * randn_like(mu)
+loss = mse(decode(z), x) + kl(mu, logvar)   # + keep latent tidy -> can sample` },
+  { title:"10. Autoencoder vs PCA vs GAN/diffusion", why:"It helps to place autoencoders among their neighbours. PCA is the classic linear dimensionality reducer — and a linear autoencoder trained with MSE essentially recovers PCA, which is exactly the math the LOOK demo uses; full autoencoders just add nonlinearity so they capture curved structure PCA can't. On the generation side, plain autoencoders are weak generators because their latent space is ragged; VAEs improve on this but tend to produce slightly blurry samples. GANs (Day 14) and diffusion models (Day 15) generate far sharper, more realistic images, which is why they dominate modern image synthesis. So think of autoencoders as the workhorse for compression, denoising and anomaly detection — and as the conceptual ancestor of the encoder/latent ideas that show up everywhere else in deep learning.", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">AE/PCA = compress &amp; reconstruct · VAE = + sample · GAN/diffusion = sharp generation. The bottleneck idea is everywhere.</p></div>`, code:`# linear AE + MSE  ≈ PCA          (compression, dim-reduction)
+# VAE              -> can sample   (smooth latent, a bit blurry)
+# GAN / diffusion  -> sharpest generation (Day 14 / Day 15)` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("autoS");
+let cur = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ cur=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,cur-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,cur+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(cur>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(cur+1); },2800); };
+show(0);
+
+function copy(btn) {
+  const pre = btn.parentElement.querySelector("pre");
+  navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500);
+}
+</script>
+</body>
+</html>

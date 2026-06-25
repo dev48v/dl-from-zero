@@ -1,6 +1,6 @@
 # DeepLearningFromZero
 
-Deep learning from scratch - nets, CNNs, RNNs, Transformers, GANs, diffusion, visualized.
+Deep learning from scratch - nets, CNNs, RNNs, Transformers, GANs, diffusion, autoencoders, visualized.
 
 🌐 **Live (all days):** https://dev48v.infy.uk/deeplearningfromzero.php
 
@@ -22,6 +22,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 13 — Transformers](https://dev48v.infy.uk/dl/day13-transformers.html) — `day13-transformers.html`
 - [DeepLearningFromZero · Day 14 — GANs](https://dev48v.infy.uk/dl/day14-gans.html) — `day14-gans.html`
 - [DeepLearningFromZero · Day 15 — Diffusion Models](https://dev48v.infy.uk/dl/day15-diffusion.html) — `day15-diffusion.html`
+- [DeepLearningFromZero · Day 16 — Autoencoders](https://dev48v.infy.uk/dl/day16-autoencoders.html) — `day16-autoencoders.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk
