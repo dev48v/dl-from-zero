@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 17 — Transfer Learning</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .copy-btn:hover { background:#1e293b; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  canvas { background:#020617; border:1px solid #1e293b; border-radius:10px; }
+  .tok { transition:all .2s; cursor:pointer; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 17</div>
+      <h1 class="text-xl font-bold">♻️ Transfer Learning — Stand on a Pretrained Model</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Train from scratch vs. stand on a pretrained model — watch them race</h2>
+      <p class="text-slate-500 mb-5 max-w-4xl mx-auto">You have <b class="text-rose-600">very few examples</b> for a new task. <b class="text-slate-600">From scratch</b> (grey) starts knowing nothing and must learn edges, shapes and your task all at once — with little data it climbs slowly and plateaus low. <b class="text-rose-600">Transfer learning</b> (rose) reuses a backbone already pretrained on <i>millions</i> of images: its <b>🔒 frozen layers</b> already know general features, so only a tiny <b>🔓 head</b> needs training — it starts high and reaches strong accuracy in minutes. Set the <b class="text-rose-600">number of examples</b> and choose <b class="text-rose-600">freeze</b> vs <b class="text-rose-600">fine-tune</b>, then press play.</p>
+
+      <div class="flex flex-wrap items-center justify-center gap-3 mb-4">
+        <button id="playBtn" class="bg-rose-600 text-white px-5 py-2 rounded-lg font-semibold text-sm">▶ Run the race</button>
+        <button id="resetBtn" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">↺ Reset</button>
+        <span class="w-px h-6 bg-slate-300 mx-1"></span>
+        <span class="text-sm font-semibold text-slate-600">strategy:</span>
+        <button id="mFreeze"   class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">🔒 Freeze backbone</button>
+        <button id="mFinetune" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">🔓 Fine-tune top</button>
+      </div>
+
+      <div class="max-w-3xl mx-auto mb-5">
+        <div class="flex items-center justify-center gap-3 mb-1">
+          <span class="text-sm text-slate-600 font-semibold"># training examples (your new task)</span>
+          <input id="nEx" type="range" min="10" max="2000" value="120" step="10" class="w-64 accent-rose-600">
+          <span id="nExNum" class="font-mono font-bold text-rose-600 w-24 text-left">120</span>
+        </div>
+        <div class="flex justify-between text-[10px] text-slate-400 mt-1 max-w-md mx-auto"><span>10 = barely any data</span><span>2000 = a decent amount</span></div>
+      </div>
+
+      <div class="flex flex-col lg:flex-row justify-center items-stretch gap-4 flex-wrap">
+        <!-- the layer stack diagram -->
+        <div class="text-center">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">the pretrained network</div>
+          <canvas id="cstack" width="240" height="320"></canvas>
+          <div class="text-[10px] text-slate-400 mt-1 max-w-[240px] mx-auto">🔒 = reused, weights frozen · 🔓 = trained on your task</div>
+        </div>
+
+        <!-- the racing curves -->
+        <div class="text-center">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">accuracy vs. training time (epochs)</div>
+          <canvas id="ccurve" width="460" height="320"></canvas>
+          <div class="flex items-center justify-center gap-5 text-xs mt-1">
+            <span class="flex items-center gap-1"><span class="inline-block w-4 h-1 bg-slate-400 rounded"></span> from scratch</span>
+            <span class="flex items-center gap-1"><span class="inline-block w-4 h-1 bg-rose-500 rounded"></span> transfer learning</span>
+          </div>
+        </div>
+
+        <!-- the scoreboard -->
+        <div class="w-full lg:w-64 text-left space-y-3">
+          <div class="bg-white border border-slate-200 rounded-xl p-4">
+            <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">from scratch</div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">accuracy</span><span id="accScratch" class="font-bold font-mono text-slate-700">—</span></div>
+            <div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200 mb-1">
+              <div id="barScratch" class="h-3 bg-slate-400 transition-all duration-100" style="width:0%"></div>
+            </div>
+          </div>
+          <div class="bg-white border border-rose-200 rounded-xl p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">transfer learning</div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">accuracy</span><span id="accTransfer" class="font-bold font-mono text-rose-600">—</span></div>
+            <div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200 mb-1">
+              <div id="barTransfer" class="h-3 bg-rose-500 transition-all duration-100" style="width:0%"></div>
+            </div>
+            <div class="flex justify-between text-[10px] text-slate-400 mt-1"><span>trainable params</span><span id="paramTransfer" class="font-mono font-bold text-slate-600">tiny head</span></div>
+          </div>
+          <div id="verdict" class="bg-white border border-slate-200 rounded-xl p-4 text-sm text-slate-600 min-h-[64px]">
+            Press <b class="text-rose-600">Run the race</b>. With few examples, transfer learning leaps ahead — its frozen layers already learned edges and shapes from millions of images, so only a small head is left to learn.
+          </div>
+        </div>
+      </div>
+      <p class="text-xs text-slate-400 mt-5 max-w-3xl mx-auto">↑ A model pretrained on millions of images already learned <b>general features</b> — edges, textures, shapes. You <b>freeze</b> those layers and train just a <b>small head</b> on your few examples: high accuracy, little data, minutes not days. <b>Fine-tuning</b> unfreezes a few top layers with a tiny learning rate to squeeze out a bit more — at the cost of more trainable parameters.</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">How transfer learning reuses a pretrained model</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="autoS" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Transfer learning, in code</h2>
+    <p class="text-slate-500 mb-8">Load a model <b>pretrained on a huge dataset</b> → <b>freeze</b> its backbone so those general features stay put → <b>replace the head</b> with a small new one for your task → train just the head on your few examples → optionally <b>unfreeze</b> the top layers and <b>fine-tune</b> with a very low learning rate. ~7 steps in PyTorch (Keras + Hugging Face shown too). Every line is the real thing — transfer learning is mostly <i>turning gradients off</i> and swapping the last layer.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Load a model pretrained on a huge dataset</h3></div>
+        <div class="relative"><pre>import torch, torch.nn as nn
+from torchvision import models
+
+# ResNet-18 with weights already trained on ImageNet (1.2M images, 1000 classes)
+model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+# the convolutional "backbone" already knows edges, textures, shapes, parts.
+# we did NOT train any of this — we downloaded it.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Freeze the backbone — turn its gradients off</h3></div>
+        <div class="relative"><pre># stop the backbone from updating: its weights stay exactly as pretrained
+for param in model.parameters():
+    param.requires_grad = False
+# with requires_grad=False, backprop skips these layers entirely.
+# this is feature extraction: reuse the frozen features as-is.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Replace the head with one for YOUR task</h3></div>
+        <div class="relative"><pre># the pretrained head predicts 1000 ImageNet classes — useless for us.
+# swap it for a small new layer sized to OUR number of classes.
+NUM_CLASSES = 3                       # e.g. cat / dog / rabbit
+in_feats = model.fc.in_features       # 512 for resnet18
+model.fc = nn.Linear(in_feats, NUM_CLASSES)
+# the new fc layer is created fresh -> requires_grad=True by default,
+# so ONLY this tiny head will train.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Optimise ONLY the trainable parameters</h3></div>
+        <div class="relative"><pre># hand the optimiser only the params that still require gradients (the head)
+trainable = [p for p in model.parameters() if p.requires_grad]
+opt = torch.optim.Adam(trainable, lr=1e-3)
+loss_fn = nn.CrossEntropyLoss()
+# far fewer params to learn -> needs far less data and far less time.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Train the head on your few examples</h3></div>
+        <div class="relative"><pre>for epoch in range(epochs):
+    for x, y in your_small_dataloader:     # maybe only a few hundred images
+        logits = model(x)                  # backbone (frozen) -> head (learns)
+        loss = loss_fn(logits, y)
+        opt.zero_grad(); loss.backward(); opt.step()
+    print(epoch, loss.item())
+# because the backbone is frozen, training is fast and won't overfit your data.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Optional: unfreeze the top + fine-tune (low LR)</h3></div>
+        <div class="relative"><pre># once the head is trained, gently adapt the TOP of the backbone too.
+for param in model.layer4.parameters():    # just the last block
+    param.requires_grad = True
+# CRUCIAL: a tiny learning rate, so we nudge — not wreck — the good features
+opt = torch.optim.Adam(
+    [p for p in model.parameters() if p.requires_grad], lr=1e-5)
+# too-high LR here causes "catastrophic forgetting" of the pretrained knowledge.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">Same idea in Keras &amp; Hugging Face</h3></div>
+        <div class="relative"><pre># --- Keras (vision) ---
+base = keras.applications.ResNet50(include_top=False, weights="imagenet")
+base.trainable = False                       # freeze backbone
+model = keras.Sequential([base,
+    keras.layers.GlobalAveragePooling2D(),
+    keras.layers.Dense(NUM_CLASSES, activation="softmax")])   # new head
+
+# --- Hugging Face (text/LLMs) — same recipe, different domain ---
+from transformers import AutoModelForSequenceClassification
+m = AutoModelForSequenceClassification.from_pretrained(
+        "bert-base-uncased", num_labels=NUM_CLASSES)   # pretrained backbone + fresh head
+# fine-tune on your labelled text with a low LR (e.g. 2e-5).
+# this is literally how fine-tuning an LLM works.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 17 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">Don't start from zero — stand on a model that already learned the world. Load a pretrained backbone, freeze it so its general features (edges, textures, shapes) stay intact, swap on a small new head, and train just that on your handful of examples. Need a little more? Unfreeze the top layers and fine-tune with a tiny learning rate. It's why ImageNet backbones, BERT, and foundation models are everywhere — and exactly why fine-tuning an LLM works.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== Transfer-learning visualizer =====
+// Two learning curves race as a function of training epoch. Each is a smooth
+// saturating curve  acc(t) = floor + (ceil - floor) * (1 - exp(-t / tau)).
+// FROM SCRATCH: low ceiling (data-starved) + slow tau (must learn features
+//   from nothing) + low starting floor.  Few examples -> ceiling collapses.
+// TRANSFER:     high starting floor (frozen features already useful) + high
+//   ceiling + fast tau (only a tiny head to learn). Barely cares about data
+//   count because the backbone did the heavy lifting.
+// "freeze vs fine-tune" nudges the transfer ceiling up a touch (fine-tune) at
+//   the cost of more trainable params shown in the scoreboard.
+const cstack = document.getElementById("cstack"), sx = cstack.getContext("2d");
+const ccurve = document.getElementById("ccurve"), cx = ccurve.getContext("2d");
+
+let strategy = "freeze";       // "freeze" | "finetune"
+let nEx = 120;                 // number of training examples
+const TOTAL_EPOCHS = 40;
+let anim = null, epoch = 0;
+
+// layer stack: backbone blocks (frozen unless fine-tuning top) + head
+const LAYERS = [
+  { name:"Input image",      kind:"input" },
+  { name:"Conv block 1 · edges",        kind:"backbone" },
+  { name:"Conv block 2 · textures",     kind:"backbone" },
+  { name:"Conv block 3 · shapes/parts", kind:"backbone" },
+  { name:"Conv block 4 · objects",      kind:"backbone-top" },  // unfrozen when fine-tuning
+  { name:"NEW head · your classes",     kind:"head" },
+];
+
+function trainableTop(){ return strategy === "finetune"; }
+
+function drawStack(){
+  const W = cstack.width, H = cstack.height;
+  sx.clearRect(0,0,W,H); sx.fillStyle = "#020617"; sx.fillRect(0,0,W,H);
+  const n = LAYERS.length;
+  const pad = 10, gap = 8;
+  const bh = (H - pad*2 - gap*(n-1)) / n;
+  for (let i=0;i<n;i++){
+    const L = LAYERS[i];
+    const y = pad + i*(bh+gap);
+    let trainable, fill, stroke, label;
+    if (L.kind === "input"){ trainable=false; fill="#1e293b"; stroke="#334155"; label="🖼  "+L.name; }
+    else if (L.kind === "head"){ trainable=true;  fill="#9f1239"; stroke="#fb7185"; label="🔓 "+L.name; }
+    else if (L.kind === "backbone-top"){ trainable=trainableTop(); fill=trainable?"#9f1239":"#0f172a"; stroke=trainable?"#fb7185":"#475569"; label=(trainable?"🔓 ":"🔒 ")+L.name; }
+    else { trainable=false; fill="#0f172a"; stroke="#475569"; label="🔒 "+L.name; }
+    sx.fillStyle = fill; sx.strokeStyle = stroke; sx.lineWidth = trainable ? 2 : 1;
+    roundRect(sx, 12, y, W-24, bh, 7); sx.fill(); sx.stroke();
+    sx.fillStyle = trainable ? "#fecdd3" : "#94a3b8";
+    sx.font = "11px monospace"; sx.textAlign = "left"; sx.textBaseline = "middle";
+    sx.fillText(label, 22, y + bh/2);
+  }
+  // caption
+  sx.fillStyle = "#64748b"; sx.font = "9px monospace"; sx.textAlign = "center";
+  sx.fillText(trainableTop() ? "fine-tune: top block unfrozen" : "freeze: only the head trains", W/2, H-3);
+}
+function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+
+// ---- curve model ----
+function dataFactor(){
+  // few examples cripple "from scratch"; saturates around 1.0 at ~1500 examples
+  return Math.min(1, Math.log10(nEx/8) / Math.log10(2000/8));
+}
+function scratchCurve(t){
+  const d = dataFactor();
+  const floor = 0.10;                       // starts near chance
+  const ceil  = 0.30 + 0.55 * d;            // data-starved -> low plateau
+  const tau   = 16;                         // slow: must learn features from scratch
+  return floor + (ceil - floor) * (1 - Math.exp(-t / tau));
+}
+function transferCurve(t){
+  const d = dataFactor();
+  const floor = 0.55 + 0.10 * d;            // frozen features already useful from epoch 0
+  let ceil    = 0.88 + 0.06 * d;            // strong, barely data-hungry
+  if (strategy === "finetune") ceil = Math.min(0.98, ceil + 0.04);  // a touch higher
+  const tau   = strategy === "finetune" ? 7 : 5;   // fast (tiny head); fine-tune a bit slower
+  return floor + (ceil - floor) * (1 - Math.exp(-t / tau));
+}
+
+function drawCurves(upto){
+  const W = ccurve.width, H = ccurve.height;
+  cx.clearRect(0,0,W,H); cx.fillStyle = "#020617"; cx.fillRect(0,0,W,H);
+  const mL=44, mR=12, mT=14, mB=28;
+  const pw = W-mL-mR, ph = H-mT-mB;
+  const X = e => mL + (e/TOTAL_EPOCHS)*pw;
+  const Y = a => mT + (1-a)*ph;
+  // grid + axes
+  cx.strokeStyle="#1e293b"; cx.lineWidth=1; cx.fillStyle="#64748b"; cx.font="10px monospace";
+  for (let a=0;a<=1.0001;a+=0.25){
+    cx.beginPath(); cx.moveTo(mL, Y(a)); cx.lineTo(W-mR, Y(a)); cx.stroke();
+    cx.textAlign="right"; cx.textBaseline="middle"; cx.fillText(Math.round(a*100)+"%", mL-6, Y(a));
+  }
+  cx.textAlign="center"; cx.textBaseline="top";
+  cx.fillText("0", mL, H-mB+4); cx.fillText(TOTAL_EPOCHS+" epochs", W-mR-30, H-mB+4);
+  cx.save(); cx.translate(12, mT+ph/2); cx.rotate(-Math.PI/2); cx.textAlign="center"; cx.textBaseline="middle"; cx.fillText("accuracy", 0, 0); cx.restore();
+
+  function plot(fn, color, dash){
+    cx.strokeStyle = color; cx.lineWidth = 2.5; cx.setLineDash(dash||[]);
+    cx.beginPath();
+    for (let e=0;e<=upto;e+=0.5){
+      const px=X(e), py=Y(fn(e));
+      if (e===0) cx.moveTo(px,py); else cx.lineTo(px,py);
+    }
+    cx.stroke(); cx.setLineDash([]);
+    // moving dot
+    const a = fn(upto);
+    cx.fillStyle = color; cx.beginPath(); cx.arc(X(upto), Y(a), 4, 0, 7); cx.fill();
+  }
+  plot(scratchCurve,  "#94a3b8");
+  plot(transferCurve, "#fb7185");
+}
+
+function updateScoreboard(upto){
+  const s = scratchCurve(upto), tr = transferCurve(upto);
+  document.getElementById("accScratch").textContent  = Math.round(s*100)+"%";
+  document.getElementById("accTransfer").textContent = Math.round(tr*100)+"%";
+  document.getElementById("barScratch").style.width  = Math.round(s*100)+"%";
+  document.getElementById("barTransfer").style.width = Math.round(tr*100)+"%";
+  document.getElementById("paramTransfer").textContent = strategy==="finetune" ? "head + top block" : "tiny head only";
+
+  const v = document.getElementById("verdict");
+  if (upto < 1){
+    v.innerHTML = 'Press <b class="text-rose-600">Run the race</b>. At epoch 0 the transfer model already sits high — its frozen layers know general features before training even starts.';
+    return;
+  }
+  const gap = Math.round((tr - s)*100);
+  if (nEx <= 100){
+    v.innerHTML = 'Only <b class="text-rose-600">'+nEx+' examples</b>: from scratch is starved and plateaus around <b>'+Math.round(s*100)+'%</b>, while transfer reaches <b class="text-rose-600">'+Math.round(tr*100)+'%</b> — a <b>'+gap+'-point</b> lead, with just '+(strategy==="finetune"?"a head + one block":"a tiny head")+' trained.';
+  } else if (nEx >= 1200){
+    v.innerHTML = 'With <b class="text-rose-600">'+nEx+' examples</b> from scratch finally catches up a bit ('+Math.round(s*100)+'%), but transfer is still ahead at <b class="text-rose-600">'+Math.round(tr*100)+'%</b> and got there far faster. Transfer learning shines most when data is scarce.';
+  } else {
+    v.innerHTML = 'Transfer learning leads <b class="text-rose-600">'+Math.round(tr*100)+'%</b> vs '+Math.round(s*100)+'% — a <b>'+gap+'-point</b> gap. '+(strategy==="finetune"?'Fine-tuning the top block nudges the ceiling up further.':'Freezing the backbone keeps it fast and overfit-resistant.');
+  }
+}
+
+function frame(){
+  epoch += 0.6;
+  if (epoch >= TOTAL_EPOCHS){ epoch = TOTAL_EPOCHS; }
+  drawCurves(epoch); updateScoreboard(epoch);
+  if (epoch < TOTAL_EPOCHS){ anim = requestAnimationFrame(frame); }
+  else { anim = null; document.getElementById("playBtn").textContent = "▶ Run again"; }
+}
+function play(){
+  if (anim) cancelAnimationFrame(anim);
+  epoch = 0; document.getElementById("playBtn").textContent = "⏵ Running…";
+  anim = requestAnimationFrame(frame);
+}
+function resetRace(){
+  if (anim){ cancelAnimationFrame(anim); anim = null; }
+  epoch = 0; drawCurves(0); updateScoreboard(0);
+  document.getElementById("playBtn").textContent = "▶ Run the race";
+}
+
+// ---- controls ----
+document.getElementById("playBtn").onclick  = play;
+document.getElementById("resetBtn").onclick = resetRace;
+document.getElementById("nEx").oninput = e => {
+  nEx = +e.target.value;
+  document.getElementById("nExNum").textContent = nEx;
+  // live re-plot at current epoch so the curves respond to the slider
+  drawCurves(epoch); updateScoreboard(epoch);
+};
+function setStrategy(m){
+  strategy = m;
+  const a = document.getElementById("mFreeze"), b = document.getElementById("mFinetune");
+  if (m === "freeze"){ a.className="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm"; b.className="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm"; }
+  else               { b.className="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm"; a.className="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm"; }
+  drawStack();
+  drawCurves(epoch); updateScoreboard(epoch);
+}
+document.getElementById("mFreeze").onclick   = () => setStrategy("freeze");
+document.getElementById("mFinetune").onclick = () => setStrategy("finetune");
+
+drawStack();
+resetRace();
+
+// ===== UNDERSTAND step engine =====
+const STEPS = [
+  { title:"1. The problem: deep nets are data- and compute-hungry", why:"A deep neural network has millions of weights, and to set them all correctly from scratch it needs an enormous amount of labelled data and a lot of compute time. Training an image classifier from nothing might demand hundreds of thousands of pictures and many hours or days on expensive hardware. Most real projects don't have that. You might have only a few hundred photos of your particular product, or a small set of medical scans. Trained from scratch on such a tiny dataset, a big network simply overfits — it memorises your handful of examples and fails on anything new. So the naive approach — build a deep net and train it on your small data — just doesn't work well.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">millions of weights + a few hundred examples → <b>overfit, low accuracy</b></div>`, code:`# from scratch on a small dataset:
+# millions of random weights, only ~200 labelled images
+# -> the net memorises the 200 and fails to generalise.` },
+  { title:"2. The insight: early layers learn GENERAL features", why:"When you look inside a trained vision network, the layers learn in a clear order. The earliest layers detect very general, low-level things: edges, corners, simple colours and gradients. The middle layers combine those into textures and simple shapes. Only the deepest layers and the final head become specific to the exact task — 'this particular arrangement means a golden retriever'. The crucial observation is that those early and middle features are not specific to one dataset at all: edges and textures are useful for almost any image task. A network that learned them on millions of photos already holds knowledge you would otherwise have to re-learn from scratch every single time.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">early = <b>edges/textures</b> (reusable) · deep = <b>task-specific</b> (replace)</div>`, code:`# layer 1: edges, colours       <- general, reuse
+# layer 2: textures, patterns    <- general, reuse
+# layer 3: shapes, parts         <- mostly general
+# final:   "is it a cat?"        <- task-specific, replace` },
+  { title:"3. What transfer learning is: reuse a pretrained backbone", why:"Transfer learning is the simple idea of taking a model that was already trained on a big, general dataset and reusing it for your own, different task. The pretrained network — its stack of feature-extracting layers, called the backbone — already encodes all that general visual knowledge. Instead of starting from random weights, you start from this knowledgeable backbone and adapt it to your problem. You are transferring what it learned on the source task (say, ImageNet's millions of photos) over to your target task (your few hundred images). The hard, expensive part — learning what edges and shapes look like — was done once, by someone else, and you simply inherit it.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">pretrained backbone (knows the world) → <b>adapt to YOUR task</b></div>`, code:`# don't start from random weights:
+backbone = load_pretrained("imagenet")   # already knows general features
+# adapt this to your task instead of training from zero` },
+  { title:"4. Feature extraction: freeze the backbone, train a new head", why:"The most common form of transfer learning is feature extraction. You take the pretrained backbone and freeze it — you switch off its gradients so its weights never change during training. Then you attach a small new head (often just one fresh layer) sized for your task, and you train only that head on your data. The frozen backbone acts as a fixed feature extractor: every image you feed in comes out as a rich vector of general features, and your tiny head only has to learn how to map those features to your specific classes. Because you're training so few parameters, it needs very little data, finishes in minutes, and is very hard to overfit. This is exactly the 'freeze' strategy in the LOOK demo.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">🔒 freeze backbone · 🔓 train only the small new head</div>`, code:`for p in backbone.parameters():
+    p.requires_grad = False        # FREEZE: weights won't change
+model.head = nn.Linear(feats, my_classes)   # small NEW head, trainable
+# train only the head on your few examples` },
+  { title:"5. Fine-tuning: unfreeze the top layers, low learning rate", why:"Feature extraction reuses the backbone exactly as-is, but sometimes your task differs enough that you want the deeper features to adapt a little too. Fine-tuning does this: after the new head is trained, you unfreeze the top few layers of the backbone and continue training, so they can adjust to your data. The critical rule is to use a very small learning rate. The pretrained weights are already good; you only want to nudge them, not overwrite them. A large learning rate here would smash the carefully learned features and undo the whole benefit of starting pretrained. Fine-tuning usually buys you a bit more accuracy than pure feature extraction — at the cost of more trainable parameters and a slightly higher risk of overfitting on tiny datasets.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">unfreeze the <b>top</b> layers · train with a <b class="text-rose-600">tiny learning rate</b></div>`, code:`for p in backbone.top_block.parameters():
+    p.requires_grad = True         # unfreeze just the top
+opt = Adam(trainable_params, lr=1e-5)   # TINY lr: nudge, don't wreck` },
+  { title:"6. Why it needs far less data", why:"The amount of data a model needs roughly scales with how many parameters it has to learn. Training from scratch means learning all the millions of backbone weights, which demands a correspondingly huge dataset. Transfer learning flips this: the millions of backbone weights are already set, so the only thing left to learn is the small head — maybe a few thousand parameters. With so few parameters to fit, a few hundred examples is plenty, and overfitting is far less likely. This is the whole payoff you see in the LOOK demo: drag the example count down to a handful and the from-scratch curve collapses to a low plateau, while the transfer curve barely moves — it was never relying on your data to learn the general features in the first place.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">few params to learn → <b>few examples needed</b> → fast, no overfit</div>`, code:`# from scratch: ~11,000,000 params to learn  -> needs LOTS of data
+# transfer:     ~1,500 params (just the head) -> a few hundred is enough` },
+  { title:"7. When it works — and when domains mismatch", why:"Transfer learning works best when the source and target tasks are related, because the reused features have to actually be relevant. A backbone pretrained on everyday photos transfers wonderfully to other natural-image tasks: classifying flowers, products, animals. The further your target drifts from the source, the less the features help. Medical X-rays, satellite imagery, or audio spectrograms look very different from ImageNet photos, so a photo-trained backbone helps less and you may need to fine-tune more layers, or pick a backbone pretrained on something closer. In a true domain mismatch — reusing an image model for raw tabular numbers, say — transfer can even hurt. The rule of thumb: the more similar the domains, the more you can freeze and the less data you need.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">related domains = <b>freeze more, big win</b> · very different = <b>fine-tune more / weaker</b></div>`, code:`# similar to source (photos -> photos):  freeze most, train head only
+# somewhat different (photos -> X-rays):  fine-tune more top layers
+# totally different domain:               transfer may not help` },
+  { title:"8. Catastrophic forgetting (a quick warning)", why:"There is one failure mode worth knowing by name. If you fine-tune with too aggressive a learning rate, or train too long on a small target dataset, the network can overwrite the valuable general knowledge it arrived with — it 'forgets' the pretrained features while chasing your few examples. This is called catastrophic forgetting, and it shows up as a model that does fine on your training set but has lost the broad competence that made transfer worthwhile. The defences are exactly the precautions from the fine-tuning step: keep the learning rate very low, unfreeze only the top layers rather than everything, and don't over-train. Freezing the backbone entirely (pure feature extraction) sidesteps the problem completely, which is part of why it's the safe default.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">too-high LR / too long → net <b>forgets</b> pretrained knowledge → low LR + freeze to avoid</div>`, code:`# catastrophic forgetting: aggressive fine-tuning erases good features
+# defences: tiny lr, unfreeze only the top, stop early,
+#           or just FREEZE the backbone (feature extraction = safe).` },
+  { title:"9. Examples everywhere: ImageNet backbones, BERT, foundation models", why:"Transfer learning is not a niche trick — it is how most modern deep learning is actually done. In vision, almost nobody trains from scratch: you grab a backbone like ResNet, EfficientNet, or a Vision Transformer pretrained on ImageNet and adapt it. In language, BERT and its relatives are pretrained on enormous text corpora and then fine-tuned for specific jobs like sentiment analysis or question answering. The biggest models of all — the foundation models behind today's image and text systems — are pretrained once at huge expense and then transferred to countless downstream tasks by everyone else. The pattern is always the same: an expensive, general pretraining phase, followed by cheap, task-specific adaptation.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">vision: ResNet/ViT · language: BERT · everything: foundation models → all transferred</div>`, code:`# vision:   resnet/efficientnet/vit pretrained on ImageNet -> adapt
+# language: BERT pretrained on web text -> fine-tune per task
+# the recipe (pretrain once, adapt cheaply) is the modern default.` },
+  { title:"10. It's why fine-tuning LLMs works too", why:"The exact same principle scales all the way up to large language models. A big model is first pretrained on a vast amount of general text, during which it learns grammar, facts, reasoning patterns, and broad world knowledge — the language equivalent of edges and textures. Fine-tuning then takes that pretrained model and adapts it to a narrower goal: your company's writing style, a specific question-answering domain, or following instructions in a particular way, using a relatively small dataset. You are reusing the model's general competence and only teaching it the new specifics — feature extraction and fine-tuning, just with words instead of pixels. So everything you learned today about freezing a backbone and training a small head is, conceptually, exactly what's happening when an LLM is fine-tuned.", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">Pretrain once on the general world, then cheaply adapt to your task. Same recipe for images, text, and LLMs — never start from zero.</p></div>`, code:`# LLM fine-tuning = transfer learning with text:
+# pretrained LLM (general knowledge) + your small dataset
+# -> adapt to your style / domain / instructions, cheaply.` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("autoS");
+let cur = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ cur=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,cur-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,cur+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(cur>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(cur+1); },2800); };
+show(0);
+
+function copy(btn) {
+  const pre = btn.parentElement.querySelector("pre");
+  navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500);
+}
+</script>
+</body>
+</html>
