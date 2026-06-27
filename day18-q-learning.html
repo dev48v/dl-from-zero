@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 18 — Q-Learning</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .copy-btn:hover { background:#1e293b; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  canvas { background:#020617; border:1px solid #1e293b; border-radius:10px; }
+  .tok { transition:all .2s; cursor:pointer; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 18</div>
+      <h1 class="text-xl font-bold">🎮 Q-Learning — Learning From Rewards</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">No labels — just rewards. Watch the agent learn the way to the goal</h2>
+      <p class="text-slate-500 mb-5 max-w-4xl mx-auto">The robot 🤖 starts knowing <b>nothing</b>. It can move up/down/left/right. Reaching the <b class="text-emerald-600">🏁 goal</b> gives <b>+1</b>, falling in a <b class="text-rose-600">🕳 pit</b> gives <b>−1</b>, walls block it, and every step costs a tiny <b>−0.04</b> so it learns to be quick. Nobody tells it the right moves — it <b>tries actions, gets rewards</b>, and updates a <b class="text-rose-600">Q-table</b> with the Bellman rule. Each cell's colour is its best Q-value (rose = high) and the arrow is the best action it has found. Press <b class="text-rose-600">train</b> and watch the arrows snap into a path. Then <b class="text-rose-600">run greedy</b> to walk the learned route.</p>
+
+      <div class="flex flex-wrap items-center justify-center gap-3 mb-4">
+        <button id="trainBtn"  class="bg-rose-600 text-white px-5 py-2 rounded-lg font-semibold text-sm">▶ Train (run episodes)</button>
+        <button id="stepBtn"   class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">▶ Step</button>
+        <button id="greedyBtn" class="bg-slate-800 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Run greedy</button>
+        <button id="resetBtn"  class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">↺ Reset (forget)</button>
+        <span class="w-px h-6 bg-slate-300 mx-1"></span>
+        <span class="text-sm font-semibold text-slate-600">speed</span>
+        <input id="speed" type="range" min="1" max="60" value="22" class="w-40 accent-rose-600">
+      </div>
+
+      <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mb-5 text-sm">
+        <div class="flex items-center gap-2">
+          <span class="text-slate-600 font-semibold">α learning rate</span>
+          <input id="alpha" type="range" min="0.05" max="1" value="0.5" step="0.05" class="w-32 accent-rose-600">
+          <span id="alphaNum" class="font-mono font-bold text-rose-600 w-10 text-left">0.50</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-slate-600 font-semibold">γ discount</span>
+          <input id="gamma" type="range" min="0.5" max="0.99" value="0.9" step="0.01" class="w-32 accent-rose-600">
+          <span id="gammaNum" class="font-mono font-bold text-rose-600 w-10 text-left">0.90</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-slate-600 font-semibold">ε exploration</span>
+          <input id="eps" type="range" min="0" max="1" value="0.3" step="0.02" class="w-32 accent-rose-600">
+          <span id="epsNum" class="font-mono font-bold text-rose-600 w-10 text-left">0.30</span>
+        </div>
+      </div>
+
+      <div class="flex flex-col lg:flex-row justify-center items-stretch gap-4 flex-wrap">
+        <!-- the gridworld -->
+        <div class="text-center">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">the gridworld + learned Q-values</div>
+          <canvas id="cgrid" width="360" height="360"></canvas>
+          <div class="text-[10px] text-slate-400 mt-1 max-w-[360px] mx-auto">cell colour = best Q-value (rose = more future reward) · arrow = best action learned</div>
+        </div>
+
+        <!-- the reward trend -->
+        <div class="text-center">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">reward per episode (is it learning?)</div>
+          <canvas id="ctrend" width="380" height="360"></canvas>
+          <div class="flex items-center justify-center gap-5 text-xs mt-1">
+            <span class="flex items-center gap-1"><span class="inline-block w-4 h-1 bg-rose-500 rounded"></span> reward this episode</span>
+            <span class="flex items-center gap-1"><span class="inline-block w-4 h-1 bg-emerald-400 rounded"></span> running average</span>
+          </div>
+        </div>
+
+        <!-- the scoreboard -->
+        <div class="w-full lg:w-64 text-left space-y-3">
+          <div class="bg-white border border-slate-200 rounded-xl p-4">
+            <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">progress</div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">episodes</span><span id="epNum" class="font-bold font-mono text-slate-700">0</span></div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">last reward</span><span id="lastR" class="font-bold font-mono text-slate-700">—</span></div>
+            <div class="flex justify-between text-sm"><span class="text-slate-500">avg reward</span><span id="avgR" class="font-bold font-mono text-slate-700">—</span></div>
+          </div>
+          <div class="bg-white border border-rose-200 rounded-xl p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">policy quality</div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">greedy run</span><span id="greedyState" class="font-bold font-mono text-rose-600">untrained</span></div>
+            <div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200 mb-1">
+              <div id="barLearn" class="h-3 bg-rose-500 transition-all duration-150" style="width:0%"></div>
+            </div>
+            <div class="flex justify-between text-[10px] text-slate-400 mt-1"><span>states learned</span><span id="statesLearned" class="font-mono font-bold text-slate-600">0</span></div>
+          </div>
+          <div id="verdict" class="bg-white border border-slate-200 rounded-xl p-4 text-sm text-slate-600 min-h-[88px]">
+            Press <b class="text-rose-600">Train</b>. Early on the agent wanders randomly and often hits a pit (negative reward). As the Q-table fills in, the arrows line up toward the goal and the reward climbs — then <b class="text-rose-600">Run greedy</b> walks the optimal path with no exploration at all.
+          </div>
+        </div>
+      </div>
+      <p class="text-xs text-slate-400 mt-5 max-w-3xl mx-auto">↑ The agent isn't told the right moves — it tries actions, gets rewards, and updates a Q-table so that, over many episodes, it learns which action in each state leads to the most future reward. This is <b>tabular Q-learning</b>: it stores one number per (state, action). Real problems have too many states for a table, so <b>Deep Q-Networks (DQN)</b> replace the table with a neural network that <i>predicts</i> Q-values — that's deep reinforcement learning.</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">How an agent learns from rewards</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="autoS" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Q-learning, in code</h2>
+    <p class="text-slate-500 mb-8">Define the <b>environment</b> (states, actions, rewards) → make an empty <b>Q-table</b> → pick actions <b>ε-greedily</b> (mostly best, sometimes random) → take a step, see the reward, and apply the <b>Bellman update</b> → loop over many <b>episodes</b> → read off the <b>greedy policy</b> the table now encodes. ~7 steps of plain Python — the whole learning rule is a single line. At the end: the same loop with <b>Gymnasium</b> environments, and the one change that turns it into <b>DQN</b>.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Define the environment: states, actions, rewards</h3></div>
+        <div class="relative"><pre>import numpy as np, random
+
+GRID = 5                       # 5x5 gridworld -> 25 states
+ACTIONS = [0, 1, 2, 3]         # 0=up 1=down 2=left 3=right
+GOAL, PIT = 24, 12             # cell indices: +1 goal, -1 pit
+START = 0
+
+def step(state, a):
+    r, c = divmod(state, GRID)
+    if a == 0: r -= 1
+    elif a == 1: r += 1
+    elif a == 2: c -= 1
+    elif a == 3: c += 1
+    if not (0 <= r < GRID and 0 <= c < GRID):   # wall: stay put
+        r, c = divmod(state, GRID)
+    ns = r * GRID + c
+    if ns == GOAL: return ns,  1.0, True        # reward, done
+    if ns == PIT:  return ns, -1.0, True
+    return ns, -0.04, False                      # small step cost</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Initialise the Q-table to all zeros</h3></div>
+        <div class="relative"><pre># Q[state, action] = expected future reward of taking that action there.
+# We know NOTHING yet, so start every value at 0.
+Q = np.zeros((GRID * GRID, len(ACTIONS)))     # shape (25, 4)
+
+alpha = 0.5     # learning rate: how much each update moves Q
+gamma = 0.9     # discount: how much we value future vs immediate reward
+epsilon = 0.3   # exploration: chance of trying a random action</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Pick an action ε-greedily (explore vs exploit)</h3></div>
+        <div class="relative"><pre>def choose(state):
+    if random.random() &lt; epsilon:
+        return random.choice(ACTIONS)      # EXPLORE: try something random
+    return int(np.argmax(Q[state]))        # EXPLOIT: take the best known action
+
+# early on, exploration discovers the goal/pits;
+# later, exploitation follows the best path found so far.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Take a step and apply the Bellman update</h3></div>
+        <div class="relative"><pre># this single line IS Q-learning:
+def update(s, a, r, ns, done):
+    best_next = 0 if done else np.max(Q[ns])          # best future from next state
+    target = r + gamma * best_next                    # reward + discounted future
+    Q[s, a] += alpha * (target - Q[s, a])             # nudge Q toward the target
+# target - Q[s,a] is the "TD error": how wrong our old estimate was.
+# alpha controls how big a correction we make each time.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Loop over many episodes</h3></div>
+        <div class="relative"><pre>for episode in range(2000):
+    s, done = START, False
+    while not done:
+        a = choose(s)                # ε-greedy action
+        ns, r, done = step(s, a)     # environment responds
+        update(s, a, r, ns, done)    # learn from it
+        s = ns
+    epsilon = max(0.02, epsilon * 0.999)   # explore less over time
+# each episode = one attempt from start to goal/pit.
+# values propagate backward from the goal a little more every episode.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Extract the greedy policy the table learned</h3></div>
+        <div class="relative"><pre># the policy is just "argmax over actions" in each state.
+policy = np.argmax(Q, axis=1)        # best action per state
+names = {0:"↑", 1:"↓", 2:"←", 3:"→"}
+
+# walk it greedily — no exploration — to follow the optimal path:
+s, path = START, [START]
+while s not in (GOAL, PIT):
+    s, _, done = step(s, int(policy[s]))
+    path.append(s)
+    if done: break
+print("learned route:", path)</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">Scale up: Gymnasium environments &amp; DQN</h3></div>
+        <div class="relative"><pre># --- the same loop on a real environment (Gymnasium) ---
+import gymnasium as gym
+env = gym.make("FrozenLake-v1")     # also Taxi, CartPole, Atari, ...
+s, _ = env.reset()
+ns, r, term, trunc, _ = env.step(action)   # standard agent/env API
+
+# --- the deep-RL leap: replace the TABLE with a NEURAL NET ---
+# A table needs one row per state -> impossible for images / huge spaces.
+# DQN trains a network Q(s) ~= row of Q-values, learned by the SAME
+# Bellman target, plus a replay buffer + a slow "target network":
+#   loss = ( r + gamma * max_a' Q_target(s', a')  -  Q(s, a) )**2
+# This is how agents learned to play Atari straight from pixels.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 18 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">Reinforcement learning learns from <b>rewards, not labels</b>. The agent loops through state → action → reward → next state, and one Bellman update — <code>Q(s,a) += α·(r + γ·maxQ(s',·) − Q(s,a))</code> — slowly fills a Q-table with the expected future reward of every move. ε-greedy balances trying new things against using what works; γ decides how far ahead it plans. Tabular Q-learning can't fit problems with millions of states, so <b>DQN</b> swaps the table for a neural network that predicts Q-values — and that's deep reinforcement learning, the foundation behind game-playing and robotics agents.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== Q-Learning gridworld visualizer (genuine tabular Q-learning) =====
+// A 5x5 gridworld. State = cell index 0..24. Actions = up/down/left/right.
+// Rewards: GOAL +1 (terminal), PITs -1 (terminal), every step -0.04, walls block.
+// The agent learns FOR REAL via the tabular Q-update:
+//   Q(s,a) += alpha * ( r + gamma * max_a' Q(s',a')  -  Q(s,a) )
+// epsilon-greedy action selection. Over episodes the arrows (argmax action per
+// cell) and heat colours (max Q per cell) converge to the optimal policy, and
+// "run greedy" walks that policy from START to GOAL.
+const N = 5;                       // grid size
+const NS = N * N;                  // number of states
+const NA = 4;                      // up,down,left,right
+const START = 0;                   // top-left
+const GOAL  = 24;                  // bottom-right
+const PITS  = [12, 17];            // two pits
+const WALLS = [7, 11];             // two walls (impassable cells)
+const STEP_COST = -0.04;
+
+let Q = [];                        // Q[s][a]
+function freshQ(){ Q = Array.from({length:NS}, () => [0,0,0,0]); }
+
+let alpha = 0.5, gamma = 0.9, epsilon = 0.3;
+let episodes = 0, lastReward = null, avgReward = null;
+let history = [];                  // per-episode reward, for the trend chart
+let anim = null, speed = 22;
+
+// current live episode state (for ▶ Step and animated training)
+let cur = START, curDone = true, curEpReward = 0, curEpSteps = 0;
+// greedy walk state
+let greedyTimer = null, greedyState = START, greedyPath = [];
+
+const cgrid = document.getElementById("cgrid"),  gx = cgrid.getContext("2d");
+const ctrend = document.getElementById("ctrend"), tx = ctrend.getContext("2d");
+
+function isBlocked(s){ return WALLS.includes(s); }
+function isTerminal(s){ return s === GOAL || PITS.includes(s); }
+
+// environment transition: returns {ns, r, done}
+function envStep(s, a){
+  let r = Math.floor(s / N), c = s % N;
+  if (a === 0) r -= 1;
+  else if (a === 1) r += 1;
+  else if (a === 2) c -= 1;
+  else if (a === 3) c += 1;
+  let ns;
+  if (r < 0 || r >= N || c < 0 || c >= N){ ns = s; }    // off-grid wall -> stay
+  else {
+    ns = r * N + c;
+    if (isBlocked(ns)) ns = s;                          // blocked cell -> stay
+  }
+  if (ns === GOAL)        return { ns, r: 1.0,  done: true };
+  if (PITS.includes(ns))  return { ns, r: -1.0, done: true };
+  return { ns, r: STEP_COST, done: false };
+}
+
+function maxQ(s){ return Math.max(Q[s][0], Q[s][1], Q[s][2], Q[s][3]); }
+function argmaxQ(s){
+  let best = 0, bv = Q[s][0];
+  for (let a = 1; a < NA; a++){ if (Q[s][a] > bv){ bv = Q[s][a]; best = a; } }
+  return best;
+}
+function chooseAction(s){
+  if (Math.random() < epsilon) return Math.floor(Math.random() * NA);
+  return argmaxQ(s);
+}
+// one Q-learning update (the Bellman rule)
+function learn(s, a, r, ns, done){
+  const target = r + (done ? 0 : gamma * maxQ(ns));
+  Q[s][a] += alpha * (target - Q[s][a]);
+}
+
+// ---- run ONE full episode (used by training loop) ----
+function runEpisode(){
+  let s = START, done = false, total = 0, steps = 0;
+  while (!done && steps < 200){
+    const a = chooseAction(s);
+    const { ns, r, done: d } = envStep(s, a);
+    learn(s, a, r, ns, d);
+    total += r; s = ns; done = d; steps++;
+  }
+  episodes++;
+  lastReward = total;
+  avgReward = (avgReward === null) ? total : avgReward * 0.95 + total * 0.05;
+  history.push(total);
+  if (history.length > 400) history.shift();
+  // gently decay exploration so the policy sharpens (but respect slider as ceiling)
+}
+
+// ---- ONE animated step (for the ▶ Step button) ----
+function singleStep(){
+  if (curDone){ cur = START; curDone = false; curEpReward = 0; curEpSteps = 0; }
+  const a = chooseAction(cur);
+  const { ns, r, done } = envStep(cur, a);
+  learn(cur, a, r, ns, done);
+  curEpReward += r; cur = ns; curEpSteps++;
+  if (done || curEpSteps >= 200){
+    curDone = true; episodes++;
+    lastReward = curEpReward;
+    avgReward = (avgReward === null) ? curEpReward : avgReward * 0.95 + curEpReward * 0.05;
+    history.push(curEpReward); if (history.length > 400) history.shift();
+  }
+  draw(cur);
+  updateScoreboard();
+}
+
+// ===== drawing the grid =====
+const ARROWS = ["↑","↓","←","→"];
+function valueColor(v){
+  // map Q in roughly [-1, 1] to a rose heat (dark slate -> rose) for positive,
+  // toward muted for negative.
+  if (v > 0){
+    const t = Math.min(1, v);          // 0..1
+    const r = Math.round(15 + t * 240);
+    const g = Math.round(23 + t * 30);
+    const b = Math.round(42 + t * 80);
+    return `rgb(${r},${g},${b})`;
+  } else {
+    const t = Math.min(1, -v);
+    const r = Math.round(15 + t * 20);
+    const g = Math.round(23 + t * 10);
+    const b = Math.round(42 + t * 10);
+    return `rgb(${r},${g},${b})`;
+  }
+}
+function draw(agentState){
+  const W = cgrid.width, H = cgrid.height;
+  gx.clearRect(0,0,W,H); gx.fillStyle = "#020617"; gx.fillRect(0,0,W,H);
+  const pad = 6, cell = (W - pad*2) / N;
+  for (let s = 0; s < NS; s++){
+    const r = Math.floor(s / N), c = s % N;
+    const x = pad + c*cell, y = pad + r*cell;
+    let fill;
+    if (isBlocked(s))           fill = "#475569";          // wall
+    else if (s === GOAL)        fill = "#059669";          // goal green
+    else if (PITS.includes(s))  fill = "#9f1239";          // pit rose-dark
+    else                        fill = valueColor(maxQ(s));
+    gx.fillStyle = fill;
+    gx.strokeStyle = "#0f172a"; gx.lineWidth = 2;
+    gx.beginPath(); gx.rect(x+1, y+1, cell-2, cell-2); gx.fill(); gx.stroke();
+
+    gx.textAlign = "center"; gx.textBaseline = "middle";
+    if (isBlocked(s)){
+      gx.fillStyle = "#1e293b"; gx.font = "22px sans-serif";
+      gx.fillText("🧱", x+cell/2, y+cell/2);
+    } else if (s === GOAL){
+      gx.font = "24px sans-serif"; gx.fillText("🏁", x+cell/2, y+cell/2);
+    } else if (PITS.includes(s)){
+      gx.font = "24px sans-serif"; gx.fillText("🕳", x+cell/2, y+cell/2);
+    } else {
+      // arrow for best action, only if this state has learned anything
+      const learned = (Q[s][0] || Q[s][1] || Q[s][2] || Q[s][3]);
+      if (learned){
+        gx.fillStyle = "#fecdd3"; gx.font = "20px sans-serif";
+        gx.fillText(ARROWS[argmaxQ(s)], x+cell/2, y+cell/2 - 6);
+      }
+      // tiny Q value text
+      gx.fillStyle = "#64748b"; gx.font = "9px monospace";
+      gx.fillText(maxQ(s).toFixed(2), x+cell/2, y+cell - 9);
+    }
+  }
+  // agent on top
+  if (agentState !== null && agentState !== undefined){
+    const r = Math.floor(agentState / N), c = agentState % N;
+    const x = pad + c*cell, y = pad + r*cell;
+    gx.font = "26px sans-serif"; gx.textAlign = "center"; gx.textBaseline = "middle";
+    gx.fillText("🤖", x+cell/2, y+cell/2);
+  }
+  // start marker
+  {
+    const r = Math.floor(START / N), c = START % N;
+    const x = pad + c*cell, y = pad + r*cell;
+    gx.fillStyle = "#38bdf8"; gx.font = "9px monospace"; gx.textAlign = "left"; gx.textBaseline = "top";
+    gx.fillText("START", x+4, y+4);
+  }
+}
+
+// ===== drawing the reward trend =====
+function drawTrend(){
+  const W = ctrend.width, H = ctrend.height;
+  tx.clearRect(0,0,W,H); tx.fillStyle = "#020617"; tx.fillRect(0,0,W,H);
+  const mL=40, mR=12, mT=14, mB=26;
+  const pw = W-mL-mR, ph = H-mT-mB;
+  const yMin = -2, yMax = 1.1;
+  const Y = v => mT + (1 - (v - yMin)/(yMax - yMin)) * ph;
+  // grid + axis labels
+  tx.strokeStyle="#1e293b"; tx.lineWidth=1; tx.fillStyle="#64748b"; tx.font="10px monospace";
+  [1, 0, -1, -2].forEach(v => {
+    tx.beginPath(); tx.moveTo(mL, Y(v)); tx.lineTo(W-mR, Y(v)); tx.stroke();
+    tx.textAlign="right"; tx.textBaseline="middle"; tx.fillText(v.toFixed(0), mL-5, Y(v));
+  });
+  tx.textAlign="center"; tx.textBaseline="top";
+  tx.fillText("episodes", mL + pw/2, H-mB+6);
+
+  const n = history.length;
+  if (n === 0){
+    tx.fillStyle="#475569"; tx.font="12px sans-serif"; tx.textAlign="center"; tx.textBaseline="middle";
+    tx.fillText("press Train to start learning", mL+pw/2, mT+ph/2);
+    return;
+  }
+  const X = i => mL + (n <= 1 ? 0 : (i/(n-1))*pw);
+  // raw reward per episode (rose)
+  tx.strokeStyle="#fb7185"; tx.lineWidth=1.5; tx.beginPath();
+  history.forEach((v,i)=>{ const px=X(i), py=Y(v); if(i===0) tx.moveTo(px,py); else tx.lineTo(px,py); });
+  tx.stroke();
+  // running average (emerald)
+  tx.strokeStyle="#34d399"; tx.lineWidth=2.5; tx.beginPath();
+  let run = history[0];
+  history.forEach((v,i)=>{ run = run*0.92 + v*0.08; const px=X(i), py=Y(run); if(i===0) tx.moveTo(px,py); else tx.lineTo(px,py); });
+  tx.stroke();
+}
+
+// ===== scoreboard / verdict =====
+function statesLearnedCount(){
+  let k = 0;
+  for (let s = 0; s < NS; s++){
+    if (isBlocked(s) || isTerminal(s)) continue;
+    if (Q[s][0] || Q[s][1] || Q[s][2] || Q[s][3]) k++;
+  }
+  return k;
+}
+// does the greedy policy currently reach the goal? returns steps or null
+function greedyReaches(){
+  let s = START, steps = 0;
+  while (!isTerminal(s) && steps < 100){
+    s = envStep(s, argmaxQ(s)).ns;
+    steps++;
+  }
+  return s === GOAL ? steps : null;
+}
+function updateScoreboard(){
+  document.getElementById("epNum").textContent = episodes;
+  document.getElementById("lastR").textContent = lastReward === null ? "—" : lastReward.toFixed(2);
+  document.getElementById("avgR").textContent  = avgReward  === null ? "—" : avgReward.toFixed(2);
+  const learnable = NS - WALLS.length - 1 - PITS.length;   // non-wall, non-terminal cells
+  const learned = statesLearnedCount();
+  document.getElementById("statesLearned").textContent = learned + " / " + learnable;
+  document.getElementById("barLearn").style.width = Math.round(100*learned/learnable) + "%";
+
+  const reach = greedyReaches();
+  const gs = document.getElementById("greedyState");
+  if (episodes === 0){ gs.textContent = "untrained"; gs.className = "font-bold font-mono text-slate-400"; }
+  else if (reach !== null){ gs.textContent = "reaches 🏁 in " + reach; gs.className = "font-bold font-mono text-emerald-600"; }
+  else { gs.textContent = "not yet"; gs.className = "font-bold font-mono text-rose-600"; }
+
+  const v = document.getElementById("verdict");
+  if (episodes === 0){
+    v.innerHTML = 'Press <b class="text-rose-600">Train</b>. Early on the agent wanders randomly and often hits a pit (negative reward). As the Q-table fills in, the arrows line up toward the goal and the reward climbs — then <b class="text-rose-600">Run greedy</b> walks the optimal path with no exploration at all.';
+  } else if (reach === null){
+    v.innerHTML = 'After <b class="text-rose-600">'+episodes+'</b> episodes the agent is still exploring — last reward <b>'+lastReward.toFixed(2)+'</b>. Keep training: values propagate backward from the goal a little more each episode, and the arrows will straighten into a path.';
+  } else {
+    v.innerHTML = 'Learned! The greedy policy now reaches the <b class="text-emerald-600">🏁 goal</b> in <b>'+reach+'</b> steps after <b class="text-rose-600">'+episodes+'</b> episodes (avg reward '+avgReward.toFixed(2)+'). Press <b class="text-rose-600">Run greedy</b> to watch it walk the route — no exploration, just the Q-table.';
+  }
+}
+
+// ===== animated TRAINING loop (runs episodes, redraws periodically) =====
+function trainFrame(){
+  // run a batch of episodes per frame, scaled by speed slider
+  const batch = Math.max(1, Math.round(speed / 6));
+  for (let i = 0; i < batch; i++) runEpisode();
+  draw(null);          // no live agent dot during fast training
+  drawTrend();
+  updateScoreboard();
+  if (episodes < 1500 && anim !== null){
+    anim = requestAnimationFrame(trainFrame);
+  } else {
+    stopTrain();
+  }
+}
+function startTrain(){
+  if (greedyTimer){ clearInterval(greedyTimer); greedyTimer = null; }
+  if (anim){ cancelAnimationFrame(anim); }
+  anim = 1; // sentinel non-null
+  document.getElementById("trainBtn").textContent = "⏸ Pause";
+  anim = requestAnimationFrame(trainFrame);
+}
+function stopTrain(){
+  if (anim){ cancelAnimationFrame(anim); anim = null; }
+  document.getElementById("trainBtn").textContent = episodes >= 1500 ? "▶ Train more" : "▶ Train (run episodes)";
+}
+function toggleTrain(){ if (anim){ stopTrain(); } else { startTrain(); } }
+
+// ===== GREEDY walk: follow argmax policy, no exploration =====
+function runGreedy(){
+  if (anim){ stopTrain(); }
+  if (greedyTimer){ clearInterval(greedyTimer); greedyTimer = null; }
+  greedyState = START; greedyPath = [START];
+  draw(greedyState);
+  let steps = 0;
+  greedyTimer = setInterval(() => {
+    if (isTerminal(greedyState) || steps >= 60){
+      clearInterval(greedyTimer); greedyTimer = null;
+      const v = document.getElementById("verdict");
+      if (greedyState === GOAL) v.innerHTML = '🏁 <b class="text-emerald-600">Reached the goal!</b> The agent walked '+(greedyPath.length-1)+' steps following only the learned Q-table — no random moves. That sequence of best-action arrows is the optimal <b>policy</b>.';
+      else v.innerHTML = 'The greedy walk didn\'t reach the goal yet — the policy isn\'t fully learned. Press <b class="text-rose-600">Train</b> for more episodes, then run greedy again.';
+      return;
+    }
+    greedyState = envStep(greedyState, argmaxQ(greedyState)).ns;
+    greedyPath.push(greedyState);
+    steps++;
+    draw(greedyState);
+  }, Math.max(60, 600 - speed*8));
+}
+
+// ===== controls =====
+document.getElementById("trainBtn").onclick  = toggleTrain;
+document.getElementById("stepBtn").onclick   = () => { if (anim) stopTrain(); singleStep(); };
+document.getElementById("greedyBtn").onclick = runGreedy;
+document.getElementById("resetBtn").onclick  = () => { resetAll(); };
+document.getElementById("speed").oninput = e => { speed = +e.target.value; };
+document.getElementById("alpha").oninput = e => { alpha = +e.target.value; document.getElementById("alphaNum").textContent = alpha.toFixed(2); };
+document.getElementById("gamma").oninput = e => { gamma = +e.target.value; document.getElementById("gammaNum").textContent = gamma.toFixed(2); };
+document.getElementById("eps").oninput   = e => { epsilon = +e.target.value; document.getElementById("epsNum").textContent = epsilon.toFixed(2); };
+
+function resetAll(){
+  if (anim){ cancelAnimationFrame(anim); anim = null; }
+  if (greedyTimer){ clearInterval(greedyTimer); greedyTimer = null; }
+  freshQ();
+  episodes = 0; lastReward = null; avgReward = null; history = [];
+  cur = START; curDone = true; curEpReward = 0; curEpSteps = 0;
+  document.getElementById("trainBtn").textContent = "▶ Train (run episodes)";
+  draw(START); drawTrend(); updateScoreboard();
+}
+resetAll();
+
+// ===== UNDERSTAND step engine =====
+const STEPS = [
+  { title:"1. What reinforcement learning is: learn from reward, not labels", why:"Most machine learning you've seen is supervised: you hand the model an example and the correct answer, and it learns the mapping. Reinforcement learning is different — there are no correct answers handed over. Instead an agent acts in an environment and only receives a reward signal: a number that says how good or bad things turned out. It is never told 'the right move was up'; it just discovers that some sequences of actions lead to more reward than others. The whole challenge is to figure out, purely from these reward numbers, which behaviour is best. This is how you'd teach something by trial and error — touch the hot stove, get a negative reward, learn to avoid it.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">supervised: example → <b>correct label</b> · RL: action → <b class="text-rose-600">reward number</b> only</div>`, code:`# supervised:  X -> y     (you provide the right answer)
+# RL:          act -> r    (you only get a reward; figure out the rest)` },
+  { title:"2. The loop: agent, environment, state, action, reward", why:"Reinforcement learning is built on one simple cycle that repeats forever. The agent observes the current state of the environment — in our demo, which grid cell it's standing in. It then chooses an action, like moving up or right. The environment responds by moving the agent to a new state and handing back a reward — plus one for reaching the goal, minus one for a pit, a tiny minus for every ordinary step. The agent observes that new state and picks again. That's it: state → action → reward → next state, around and around. Everything in RL is about getting better at the 'choose an action' part of this loop using the rewards collected.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">🤖 agent — <b>action</b> → 🌍 environment — <b class="text-rose-600">state + reward</b> → 🤖 …repeat</div>`, code:`s = env.reset()                 # current state
+while not done:
+    a = agent.choose(s)         # pick an action
+    s_next, r, done = env.step(a)   # env gives next state + reward
+    agent.learn(s, a, r, s_next)    # update from experience
+    s = s_next` },
+  { title:"3. The goal: maximise cumulative DISCOUNTED reward", why:"The agent isn't trying to grab the biggest reward right now — it's trying to maximise the total reward collected over the whole episode, from now until the end. But future rewards are worth a little less than immediate ones, so we multiply each step further into the future by a discount factor gamma (a number just under 1). A reward two steps away counts as gamma squared, three steps away as gamma cubed, and so on. This 'discounted return' is what the agent optimises. It's why our agent will happily take a small step cost now if it leads to the big goal reward soon: the sum of (mostly negative tiny steps) plus (one big +1 at the end) still comes out positive when the path is short.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">return = r₀ + γ·r₁ + γ²·r₂ + γ³·r₃ + … &nbsp;(<b class="text-rose-600">maximise this</b>)</div>`, code:`# discounted return from time t:
+# G = r_t + gamma*r_{t+1} + gamma^2*r_{t+2} + ...
+# gamma < 1 means "future reward is worth slightly less than now".` },
+  { title:"4. The Q-value: expected future reward of an action in a state", why:"Q-learning's central idea is to estimate, for every state and every action, how much total future reward you can expect if you take that action and then keep playing well. That number is the Q-value, written Q(s, a) — 'the quality of doing action a in state s'. If you knew the true Q-values, choosing the best move would be trivial: in any state, just pick the action with the highest Q. So the entire learning problem collapses to one job — estimate Q well. In tabular Q-learning we literally keep a table with one cell for every (state, action) pair and fill it in from experience. In the demo, each grid cell's colour is its best Q-value and the arrow points to its highest-Q action.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">Q(s, a) = <b class="text-rose-600">expected future reward</b> of action a in state s · best action = max Q</div>`, code:`Q = np.zeros((n_states, n_actions))   # one cell per (state, action)
+# Q[s, a] ~ how much total future reward to expect from doing a in s.
+best_action = np.argmax(Q[s])         # if Q is good, this is the right move.` },
+  { title:"5. The Bellman update: how Q learns from one experience", why:"After taking action a in state s and seeing reward r and next state s', the agent updates its estimate. The idea: the value of (s, a) should equal the reward it just got, plus the discounted value of the best you can do from the next state — that's r + gamma · max Q(s', ·). The difference between this fresh 'target' and the old estimate is the temporal-difference error: how wrong we were. We move the Q-value a fraction alpha toward the target: Q(s,a) += alpha · (target − Q(s,a)). Crucially, the goal's +1 leaks one cell backward each visit, then that cell's value leaks to its neighbour next time, and so on — value flows backward from the goal across many episodes until the whole path lights up.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono text-[11px]">Q(s,a) += α · ( r + γ·maxQ(s',·) − Q(s,a) )</div>`, code:`def update(s, a, r, ns, done):
+    best_next = 0 if done else np.max(Q[ns])
+    target = r + gamma * best_next      # reward + discounted future
+    Q[s, a] += alpha * (target - Q[s, a])  # move toward the target
+# (target - Q[s,a]) is the "TD error" — how wrong the old guess was.` },
+  { title:"6. Exploration vs exploitation: the ε-greedy rule", why:"There's a tension at the heart of RL. To get reward you want to exploit — take the action your Q-table currently thinks is best. But if you only ever do that, you'll never discover a better path you haven't tried, and early on your table is just zeros so 'best' is meaningless. So you also need to explore — try random actions to gather new experience. The simplest balance is ε-greedy: with probability epsilon pick a random action, otherwise pick the best known one. A high epsilon early on lets the agent stumble onto the goal and the pits; lowering it over time lets the agent settle into the good route it found. Slide ε to 1 in the demo and the agent wanders forever; slide it to 0 too early and it gets stuck on a bad path.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">with prob <b class="text-rose-600">ε</b>: random (explore) · else: argmax Q (exploit)</div>`, code:`def choose(s):
+    if random.random() < epsilon:
+        return random.choice(ACTIONS)   # EXPLORE
+    return int(np.argmax(Q[s]))         # EXPLOIT
+epsilon = max(0.02, epsilon * 0.999)    # explore less as you learn` },
+  { title:"7. Learning rate α and discount γ: what each knob does", why:"Two dials shape how Q-learning behaves. The learning rate alpha controls how big a correction each experience makes: high alpha learns fast but jumps around and can be unstable on noisy rewards; low alpha learns slowly and smoothly but takes many more episodes. The discount gamma sets the planning horizon: gamma near 1 makes the agent far-sighted, valuing distant goal rewards almost as much as near ones, so value propagates many cells back; a low gamma makes it short-sighted, caring mostly about immediate reward and often failing to 'see' a goal that's several steps away. In the demo, try a tiny gamma and watch the far cells stay dark because the +1 can't reach them.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center"><b class="text-rose-600">α</b> = how fast you update · <b class="text-rose-600">γ</b> = how far ahead you plan</div>`, code:`alpha = 0.5   # big step toward target (fast, a bit jumpy)
+gamma = 0.9   # far-sighted: distant goal still matters a lot
+# small gamma -> short-sighted; small alpha -> slow but stable.` },
+  { title:"8. The Q-table converges to a policy", why:"As episodes accumulate, the Q-values stop changing much — the table converges. Once it has, reading off the best action in every state gives you a policy: a complete rule that says, for any cell you find yourself in, exactly which way to move. That's the set of arrows you see lock into place in the demo. A neat property of Q-learning is that, with enough exploration and a decaying learning rate, this learned policy provably converges to the optimal one — the genuinely shortest, safest route to the goal. 'Run greedy' in the demo just follows this policy with no exploration: from the start it walks arrow to arrow straight to the goal, avoiding the pits.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">converged Q-table → <b class="text-rose-600">policy</b> = best action in every state (the arrows)</div>`, code:`policy = np.argmax(Q, axis=1)   # best action for every state
+# follow it greedily from the start:
+s = START
+while not terminal(s):
+    s, r, done = step(s, policy[s])   # optimal route, no exploration` },
+  { title:"9. On-policy vs off-policy (a quick distinction)", why:"Q-learning is called off-policy, and it's worth knowing what that means. The update uses max Q(s', ·) — it assumes the best possible next action — even though the action the agent actually took might have been a random exploratory one. In other words, it learns the value of the optimal policy while behaving with a different, more exploratory policy. That decoupling is the 'off-policy' part, and it's why Q-learning can explore freely yet still converge to the optimal route. The contrast is an on-policy method like SARSA, which updates using the action it actually takes next, so it learns the value of the policy it's really following — including its exploration. For this demo the off-policy version is exactly what lets aggressive early exploration still produce the optimal greedy path.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">off-policy (Q-learning): learn <b>optimal</b> while acting exploratory · on-policy (SARSA): learn what you actually do</div>`, code:`# Q-learning (off-policy): target uses the BEST next action
+target = r + gamma * np.max(Q[ns])
+# SARSA (on-policy): target uses the action you ACTUALLY take next
+target = r + gamma * Q[ns, a_next]` },
+  { title:"10. Why tabular doesn't scale → DQN replaces the table with a neural net", why:"Our tidy table has one row per state, which is fine for 25 cells. But real environments are astronomically larger: a chess position, a robot's sensor readings, or the raw pixels of a video game have so many possible states that you could never store — let alone visit — a row for each. The table simply breaks. The deep-RL fix is to replace the lookup table with a neural network: instead of storing Q(s, a), you train a network to predict it from the state's features. The network generalises across similar states it has never seen, just like any deep model. This is the Deep Q-Network (DQN), trained with the very same Bellman target you learned today, plus a couple of stabilising tricks — and it's how agents learned to play Atari straight from pixels. Tabular Q-learning is the foundation; DQN is the deep version that scales.", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">Too many states for a table? Train a neural network to predict Q-values instead. Same Bellman update, no table — that's DQN, the deep in deep reinforcement learning.</p></div>`, code:`# tabular: Q[s, a]  -> needs one row per state (impossible if huge/pixels)
+# DQN:     Q = net(state)  -> a network PREDICTS the Q-values
+loss = (r + gamma * Q_target(ns).max() - Q(s)[a])**2   # same Bellman target
+# used in games (Atari, Go), robotics, recommendation, and more.` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("autoS");
+let curStep = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curStep=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curStep-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curStep+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curStep>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curStep+1); },2800); };
+show(0);
+
+function copy(btn) {
+  const pre = btn.parentElement.querySelector("pre");
+  navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500);
+}
+</script>
+</body>
+</html>
