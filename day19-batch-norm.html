@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 19 — Batch Normalization</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .copy-btn:hover { background:#1e293b; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  canvas { background:#020617; border:1px solid #1e293b; border-radius:10px; }
+  .tok { transition:all .2s; cursor:pointer; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 19</div>
+      <h1 class="text-xl font-bold">📊 Batch Normalization — Keep Activations Healthy</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Watch activations drift and saturate — then snap back to a healthy bell with Batch Norm</h2>
+      <p class="text-slate-500 mb-5 max-w-4xl mx-auto">Data flows left→right through <b>4 layers</b>. Each histogram is that layer's <b>activation distribution</b> for one mini-batch. <b class="text-slate-600">Without BN</b> the distribution <b>drifts and spreads</b> deeper into the net — many activations pile up at the edges and <b>saturate</b> (gradients die) — that's <b class="text-rose-600">internal covariate shift</b>, and the loss curve descends <b>slowly and shakily</b>. Flip <b class="text-rose-600">Batch Norm on</b> and after every layer the activations are <b>re-centered to ~mean 0 / std 1</b> — each histogram snaps back to a tidy bell — so the loss drops <b>faster and more stably</b>, and you can <b>crank the learning rate</b> without it diverging. Move the <b class="text-rose-600">learning-rate</b> slider high and compare.</p>
+
+      <div class="flex flex-wrap items-center justify-center gap-3 mb-4">
+        <button id="trainBtn"  class="bg-rose-600 text-white px-5 py-2 rounded-lg font-semibold text-sm">▶ Train</button>
+        <button id="stepBtn"   class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">▶ Step (1 epoch)</button>
+        <button id="resetBtn"  class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">↺ Reset</button>
+        <span class="w-px h-6 bg-slate-300 mx-1"></span>
+        <label class="flex items-center gap-2 cursor-pointer select-none">
+          <input id="bnToggle" type="checkbox" class="w-5 h-5 accent-rose-600">
+          <span class="text-sm font-bold text-rose-600">Batch Norm ON</span>
+        </label>
+        <span class="w-px h-6 bg-slate-300 mx-1"></span>
+        <span class="text-sm font-semibold text-slate-600">speed</span>
+        <input id="speed" type="range" min="1" max="60" value="26" class="w-32 accent-rose-600">
+      </div>
+
+      <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mb-5 text-sm">
+        <div class="flex items-center gap-2">
+          <span class="text-slate-600 font-semibold">η learning rate</span>
+          <input id="lr" type="range" min="0.01" max="2" value="0.3" step="0.01" class="w-56 accent-rose-600">
+          <span id="lrNum" class="font-mono font-bold text-rose-600 w-12 text-left">0.30</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-slate-600 font-semibold">depth</span>
+          <span class="font-mono font-bold text-slate-700">4 layers</span>
+        </div>
+      </div>
+
+      <div class="flex flex-col lg:flex-row justify-center items-stretch gap-4 flex-wrap">
+        <!-- per-layer activation histograms -->
+        <div class="text-center">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">per-layer activation distribution (one mini-batch)</div>
+          <canvas id="chist" width="520" height="360"></canvas>
+          <div class="text-[10px] text-slate-400 mt-1 max-w-[520px] mx-auto">each panel = one layer's activations · <b>BN off</b>: drifts &amp; saturates deeper in · <b class="text-rose-600">BN on</b>: snaps back to mean 0 / std 1</div>
+        </div>
+
+        <!-- the loss curves -->
+        <div class="text-center">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">training loss (does BN help?)</div>
+          <canvas id="closs" width="380" height="360"></canvas>
+          <div class="flex items-center justify-center gap-5 text-xs mt-1">
+            <span class="flex items-center gap-1"><span class="inline-block w-4 h-1 bg-slate-400 rounded"></span> without BN</span>
+            <span class="flex items-center gap-1"><span class="inline-block w-4 h-1 bg-rose-500 rounded"></span> with BN</span>
+          </div>
+        </div>
+
+        <!-- the scoreboard -->
+        <div class="w-full lg:w-64 text-left space-y-3">
+          <div class="bg-white border border-slate-200 rounded-xl p-4">
+            <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">progress</div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">epoch</span><span id="epNum" class="font-bold font-mono text-slate-700">0</span></div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">loss · no BN</span><span id="lossNo" class="font-bold font-mono text-slate-500">—</span></div>
+            <div class="flex justify-between text-sm"><span class="text-slate-500">loss · with BN</span><span id="lossYes" class="font-bold font-mono text-rose-600">—</span></div>
+          </div>
+          <div class="bg-white border border-rose-200 rounded-xl p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">last layer health</div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">mean (no BN)</span><span id="meanNo" class="font-bold font-mono text-slate-500">—</span></div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">std (no BN)</span><span id="stdNo" class="font-bold font-mono text-slate-500">—</span></div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">% saturated</span><span id="satNo" class="font-bold font-mono text-rose-600">—</span></div>
+            <div class="text-[10px] text-slate-400 mt-1">"saturated" = activations stuck near ±1 where the gradient ≈ 0.</div>
+          </div>
+          <div id="verdict" class="bg-white border border-slate-200 rounded-xl p-4 text-sm text-slate-600 min-h-[88px]">
+            Press <b class="text-rose-600">Train</b> with <b>Batch Norm OFF</b> first: watch the deeper histograms drift sideways and pile up at the edges (saturating), and the loss crawl down shakily. Then flip <b class="text-rose-600">Batch Norm ON</b> — every layer's histogram snaps back to a tidy bell and the loss dives. Now slide <b class="text-rose-600">η learning rate</b> up high: without BN it blows up, with BN it stays stable.
+          </div>
+        </div>
+      </div>
+      <p class="text-xs text-slate-400 mt-5 max-w-3xl mx-auto">↑ Batch Norm <b>normalizes each layer's inputs per mini-batch</b> — subtract the batch mean, divide by the batch std — then rescales with two <b>learnable</b> parameters γ (scale) and β (shift) so the network can still represent any distribution it needs. Keeping activations in a healthy range stops them drifting and saturating layer after layer, which makes <b>deeper networks train faster and far more stably</b>, tolerates much higher learning rates, and adds a little regularization for free.</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Why normalizing activations helps</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="autoS" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Batch Norm, in code</h2>
+    <p class="text-slate-500 mb-8">Take a layer's pre-activations for a <b>mini-batch</b> → compute the <b>batch mean &amp; variance</b> per feature → <b>normalize</b> to mean 0 / std 1 → apply the learnable <b>scale γ</b> and <b>shift β</b> → keep a <b>running mean &amp; variance</b> so inference doesn't need a batch → and in real code just drop in <b>nn.BatchNorm1d / 2d</b> (or <b>LayerNorm</b> for Transformers). ~7 steps of plain Python — the whole transform is four short lines.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Start from a layer's pre-activations for one mini-batch</h3></div>
+        <div class="relative"><pre>import numpy as np
+
+# x is the output of a linear layer for a whole mini-batch:
+#   shape (batch_size, num_features)
+# Each COLUMN is one feature across all examples in the batch.
+batch_size, num_features = 32, 64
+x = np.random.randn(batch_size, num_features) * 3 + 1.5   # drifted + spread
+
+gamma = np.ones(num_features)    # learnable scale  (start = 1)
+beta  = np.zeros(num_features)   # learnable shift  (start = 0)
+eps   = 1e-5                     # avoids divide-by-zero</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Compute the batch mean &amp; variance — per feature</h3></div>
+        <div class="relative"><pre># axis=0 -> reduce over the BATCH, keeping one stat per feature.
+mu  = x.mean(axis=0)             # shape (num_features,)
+var = x.var(axis=0)              # shape (num_features,)
+
+# These describe THIS mini-batch's distribution for each feature:
+# where it's centered (mu) and how spread out it is (var).</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Normalize to mean 0 / std 1</h3></div>
+        <div class="relative"><pre># subtract the mean, divide by the std (sqrt of var + eps):
+x_hat = (x - mu) / np.sqrt(var + eps)
+
+# now every feature column has ~mean 0 and ~std 1 for this batch.
+# this is the core trick — activations can't drift or blow up.
+print(x_hat.mean(axis=0).round(3))   # ~ all zeros
+print(x_hat.std(axis=0).round(3))    # ~ all ones</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Apply the learnable scale γ and shift β</h3></div>
+        <div class="relative"><pre># Forcing mean 0 / std 1 might be too restrictive, so let the network
+# learn to rescale & re-shift. gamma and beta are trained by backprop.
+out = gamma * x_hat + beta
+
+# If gamma -> std and beta -> mean, BN can perfectly UNDO itself.
+# So BN never costs the network expressive power; it only HELPS optimisation.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Track running stats for inference</h3></div>
+        <div class="relative"><pre># At inference you may have ONE example -> no batch to take stats from.
+# So during training keep an exponential moving average of mu and var:
+momentum = 0.1
+running_mean = (1 - momentum) * running_mean + momentum * mu
+running_var  = (1 - momentum) * running_var  + momentum * var
+
+# at TEST time, normalize with the running stats (NOT the batch's):
+x_hat_test = (x - running_mean) / np.sqrt(running_var + eps)
+out_test   = gamma * x_hat_test + beta</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">The whole thing as one reusable function</h3></div>
+        <div class="relative"><pre>def batch_norm(x, gamma, beta, running_mean, running_var,
+               training=True, momentum=0.1, eps=1e-5):
+    if training:
+        mu, var = x.mean(0), x.var(0)
+        running_mean = (1-momentum)*running_mean + momentum*mu
+        running_var  = (1-momentum)*running_var  + momentum*var
+    else:
+        mu, var = running_mean, running_var      # use the saved stats
+    x_hat = (x - mu) / np.sqrt(var + eps)         # normalize
+    return gamma * x_hat + beta, running_mean, running_var   # scale + shift</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">In real code: nn.BatchNorm &amp; LayerNorm</h3></div>
+        <div class="relative"><pre>import torch.nn as nn
+
+# --- PyTorch does all of the above for you ---
+net = nn.Sequential(
+    nn.Linear(64, 128), nn.BatchNorm1d(128), nn.ReLU(),  # 1d: tabular/MLP
+    nn.Linear(128, 10),
+)
+# for images use BatchNorm2d(channels) after a Conv2d.
+# model.train() uses batch stats; model.eval() uses running stats.
+
+# --- LayerNorm: normalize across FEATURES of ONE sample (no batch needed) ---
+ln = nn.LayerNorm(128)         # used in Transformers (batch-size independent)
+# GroupNorm is a middle ground for small batches / vision.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 19 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">Batch Norm normalizes each layer's inputs <b>per mini-batch</b> — subtract the batch mean, divide by the batch std — then rescales with two learnable parameters <code>γ</code> (scale) and <code>β</code> (shift) so the network keeps full expressive power. This stops activations drifting and saturating across depth (<b>internal covariate shift</b>), so deeper nets <b>train faster, tolerate higher learning rates, and need less careful initialization</b>, with a bonus of mild regularization. It depends on batch size, so for tiny batches or sequence models we reach for <b>LayerNorm</b> (the default in Transformers) or <b>GroupNorm</b> — but the idea is the same: keep activations in a healthy range so optimisation stays easy.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== Batch Norm visualizer (genuine offline simulation) =====
+// A 4-layer feed-forward net is "trained" on a tiny toy problem. We simulate
+// two parallel runs in lockstep: one WITHOUT batch norm and one WITH it.
+//   - Activation panels: for the currently-selected mode (BN on/off via the
+//     checkbox) we push a mini-batch through the layers with tanh nonlinearity.
+//     WITHOUT BN, each layer multiplies by weights whose effective gain drifts,
+//     so the activation distribution shifts/spreads and saturates near +/-1
+//     deeper in (internal covariate shift). WITH BN, after each layer we
+//     re-center to mean 0 / std 1 (then a mild gamma/beta), so every histogram
+//     snaps back to a tidy bell.
+//   - Loss curves: a simple stable model of optimisation. Higher learning rate
+//     speeds convergence but, WITHOUT BN, large lr makes the loss bounce /
+//     diverge once it crosses a stability threshold; WITH BN that threshold is
+//     far higher, so BN both descends faster and tolerates a higher lr.
+const NLAYERS = 4;
+const BATCH = 400;            // samples per mini-batch for the histograms
+const FEATS = 1;              // we visualise a single representative feature
+const BINS = 26;
+
+let lr = 0.30;
+let bnOn = false;
+let epoch = 0;
+let speed = 26;
+let anim = null;
+
+// loss history for both runs (kept in parallel regardless of toggle)
+let lossNo = [], lossYes = [];
+
+// fixed random weights per layer (so the "drift" is deterministic & visible).
+// Without BN we deliberately give layers a gain > 1 so activations grow/saturate,
+// and a per-layer bias so the mean drifts.
+let W = [], Bz = [];
+function freshWeights(){
+  W = []; Bz = [];
+  // seedable-ish: use fixed multipliers so each reset looks the same shape
+  const gains  = [1.7, 1.9, 2.1, 2.3];   // >1 -> spread grows with depth
+  const shifts = [0.6, -0.9, 1.1, -0.7]; // bias -> mean drifts each layer
+  for (let l = 0; l < NLAYERS; l++){ W.push(gains[l]); Bz.push(shifts[l]); }
+}
+
+const chist = document.getElementById("chist"), hx = chist.getContext("2d");
+const closs = document.getElementById("closs"), lx = closs.getContext("2d");
+
+// gaussian sample (Box-Muller)
+function randn(){
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v);
+}
+
+// Push one mini-batch through the layers, returning the activation array for
+// EACH layer (so we can draw 4 histograms). `useBN` decides whether we
+// renormalize after each layer.
+function forwardBatch(useBN){
+  // input ~ standard normal
+  let acts = new Float64Array(BATCH);
+  for (let i = 0; i < BATCH; i++) acts[i] = randn();
+  const perLayer = [];
+  for (let l = 0; l < NLAYERS; l++){
+    // linear: gain * x + bias  (the gain>1 + bias is what causes drift)
+    const z = new Float64Array(BATCH);
+    for (let i = 0; i < BATCH; i++) z[i] = W[l]*acts[i] + Bz[l];
+    let pre = z;
+    if (useBN){
+      // batch-norm the PRE-activation: mean 0 / std 1, then mild gamma/beta
+      let m = 0; for (let i=0;i<BATCH;i++) m += pre[i]; m /= BATCH;
+      let v = 0; for (let i=0;i<BATCH;i++){ const d = pre[i]-m; v += d*d; } v /= BATCH;
+      const s = Math.sqrt(v + 1e-5);
+      const gamma = 1.0, beta = 0.0;
+      const nb = new Float64Array(BATCH);
+      for (let i=0;i<BATCH;i++) nb[i] = gamma*((pre[i]-m)/s) + beta;
+      pre = nb;
+    }
+    // nonlinearity: tanh (saturates near +/-1)
+    const out = new Float64Array(BATCH);
+    for (let i=0;i<BATCH;i++) out[i] = Math.tanh(pre[i]);
+    perLayer.push(out);
+    acts = out;
+  }
+  return perLayer;   // array of NLAYERS Float64Arrays
+}
+
+function statsOf(arr){
+  let m = 0; for (let i=0;i<arr.length;i++) m += arr[i]; m /= arr.length;
+  let v = 0; for (let i=0;i<arr.length;i++){ const d = arr[i]-m; v += d*d; } v /= arr.length;
+  // fraction saturated: |a| > 0.95 (tanh basically flat -> dead gradient)
+  let sat = 0; for (let i=0;i<arr.length;i++) if (Math.abs(arr[i]) > 0.95) sat++;
+  return { mean:m, std:Math.sqrt(v), sat:sat/arr.length };
+}
+
+// histogram counts over [-1, 1]
+function histogram(arr){
+  const h = new Array(BINS).fill(0);
+  for (let i=0;i<arr.length;i++){
+    let t = (arr[i] + 1) / 2;            // map [-1,1] -> [0,1]
+    let b = Math.floor(t * BINS);
+    if (b < 0) b = 0; if (b >= BINS) b = BINS-1;
+    h[b]++;
+  }
+  return h;
+}
+
+// ===== draw the per-layer activation histograms =====
+function drawHist(){
+  const W0 = chist.width, H0 = chist.height;
+  hx.clearRect(0,0,W0,H0); hx.fillStyle="#020617"; hx.fillRect(0,0,W0,H0);
+  const perLayer = forwardBatch(bnOn);
+  const cols = NLAYERS;
+  const gap = 10, mL = 8, mR = 8, mT = 26, mB = 22;
+  const panelW = (W0 - mL - mR - gap*(cols-1)) / cols;
+  const panelH = H0 - mT - mB;
+  for (let l = 0; l < cols; l++){
+    const px = mL + l*(panelW+gap);
+    const h = histogram(perLayer[l]);
+    const maxC = Math.max(1, ...h);
+    const st = statsOf(perLayer[l]);
+    // panel bg
+    hx.fillStyle = "#0b1220"; hx.fillRect(px, mT, panelW, panelH);
+    hx.strokeStyle = "#1e293b"; hx.lineWidth = 1; hx.strokeRect(px+0.5, mT+0.5, panelW-1, panelH-1);
+    // zero line (center)
+    hx.strokeStyle = "#334155"; hx.beginPath();
+    hx.moveTo(px+panelW/2, mT); hx.lineTo(px+panelW/2, mT+panelH); hx.stroke();
+    // bars
+    const bw = panelW / BINS;
+    for (let b = 0; b < BINS; b++){
+      const bh = (h[b]/maxC) * (panelH-6);
+      const x = px + b*bw;
+      const y = mT + panelH - bh;
+      hx.fillStyle = bnOn ? "#fb7185" : "#94a3b8";
+      hx.fillRect(x+0.5, y, Math.max(1, bw-1), bh);
+    }
+    // title + stats
+    hx.fillStyle = "#e2e8f0"; hx.font = "bold 11px sans-serif";
+    hx.textAlign = "center"; hx.textBaseline = "alphabetic";
+    hx.fillText("layer "+(l+1), px+panelW/2, mT-12);
+    hx.font = "9px monospace"; hx.fillStyle = bnOn ? "#fda4af" : "#94a3b8";
+    hx.fillText("μ "+st.mean.toFixed(2)+"  σ "+st.std.toFixed(2), px+panelW/2, H0-9);
+  }
+  // header tag
+  hx.fillStyle = bnOn ? "#fb7185" : "#94a3b8"; hx.font = "bold 11px sans-serif";
+  hx.textAlign = "left"; hx.fillText(bnOn ? "BATCH NORM ON" : "BATCH NORM OFF", mL+2, 12);
+}
+
+// ===== loss-curve model =====
+// We model loss(epoch) for each run with a stable analytic update so it always
+// looks sensible and reacts to the lr slider. Each "epoch" multiplies the gap
+// to the floor by a decay that depends on lr and on whether BN is used.
+// Without BN, large lr eventually OVERSHOOTS: decay turns into growth/bounce
+// past a low stability threshold. With BN the threshold is much higher.
+const FLOOR_NO = 0.18, FLOOR_YES = 0.05;   // BN reaches a lower loss
+let curNo = null, curYes = null;           // current loss values
+
+function stepEpoch(){
+  if (curNo === null){ curNo = 1.6; curYes = 1.6; }
+  epoch++;
+
+  // ----- WITHOUT BN -----
+  // effective step; unstable past lr ~ 0.6
+  const thrNo = 0.6;
+  let gapNo = curNo - FLOOR_NO;
+  if (lr <= thrNo){
+    const rate = 0.06 + lr * 0.7;                 // faster with lr
+    gapNo *= (1 - Math.min(0.85, rate));
+  } else {
+    // overshoot: loss bounces & creeps UP, with noise
+    const over = (lr - thrNo);
+    gapNo = gapNo * (1 + over*0.6) + over*0.25;
+    gapNo += (Math.random()-0.3) * over * 0.4;    // jitter
+  }
+  // baseline shakiness even when stable (internal covariate shift)
+  gapNo += (Math.random()-0.5) * 0.05 * (1 + lr);
+  curNo = Math.max(FLOOR_NO*0.4, FLOOR_NO + gapNo);
+
+  // ----- WITH BN -----
+  // tolerates lr up to ~1.7 before any wobble; descends faster & smoother
+  const thrYes = 1.7;
+  let gapYes = curYes - FLOOR_YES;
+  if (lr <= thrYes){
+    const rate = 0.12 + lr * 0.45;                // strong, stable progress
+    gapYes *= (1 - Math.min(0.9, rate));
+  } else {
+    const over = (lr - thrYes);
+    gapYes = gapYes * (1 + over*0.3) + over*0.1;
+    gapYes += (Math.random()-0.4) * over * 0.2;
+  }
+  gapYes += (Math.random()-0.5) * 0.012;          // tiny noise (very stable)
+  curYes = Math.max(FLOOR_YES*0.4, FLOOR_YES + gapYes);
+
+  lossNo.push(curNo); lossYes.push(curYes);
+  if (lossNo.length > 200){ lossNo.shift(); lossYes.shift(); }
+}
+
+// ===== draw the loss curves =====
+function drawLoss(){
+  const W0 = closs.width, H0 = closs.height;
+  lx.clearRect(0,0,W0,H0); lx.fillStyle="#020617"; lx.fillRect(0,0,W0,H0);
+  const mL=38, mR=12, mT=14, mB=26;
+  const pw = W0-mL-mR, ph = H0-mT-mB;
+  const yMin = 0, yMax = 2.2;
+  const Y = v => mT + (1 - (Math.min(yMax,Math.max(yMin,v)) - yMin)/(yMax - yMin)) * ph;
+  lx.strokeStyle="#1e293b"; lx.lineWidth=1; lx.fillStyle="#64748b"; lx.font="10px monospace";
+  [2, 1.5, 1, 0.5, 0].forEach(v => {
+    lx.beginPath(); lx.moveTo(mL, Y(v)); lx.lineTo(W0-mR, Y(v)); lx.stroke();
+    lx.textAlign="right"; lx.textBaseline="middle"; lx.fillText(v.toFixed(1), mL-5, Y(v));
+  });
+  lx.textAlign="center"; lx.textBaseline="top";
+  lx.fillText("epochs", mL + pw/2, H0-mB+6);
+
+  const n = lossNo.length;
+  if (n === 0){
+    lx.fillStyle="#475569"; lx.font="12px sans-serif"; lx.textAlign="center"; lx.textBaseline="middle";
+    lx.fillText("press Train to start", mL+pw/2, mT+ph/2);
+    return;
+  }
+  const X = i => mL + (n <= 1 ? 0 : (i/(n-1))*pw);
+  // without BN (slate, thin, shaky)
+  lx.strokeStyle="#94a3b8"; lx.lineWidth=1.6; lx.beginPath();
+  lossNo.forEach((v,i)=>{ const px=X(i), py=Y(v); if(i===0) lx.moveTo(px,py); else lx.lineTo(px,py); });
+  lx.stroke();
+  // with BN (rose, bold, smooth)
+  lx.strokeStyle="#fb7185"; lx.lineWidth=2.6; lx.beginPath();
+  lossYes.forEach((v,i)=>{ const px=X(i), py=Y(v); if(i===0) lx.moveTo(px,py); else lx.lineTo(px,py); });
+  lx.stroke();
+}
+
+// ===== scoreboard / verdict =====
+function updateScoreboard(){
+  document.getElementById("epNum").textContent = epoch;
+  document.getElementById("lossNo").textContent  = curNo  === null ? "—" : curNo.toFixed(3);
+  document.getElementById("lossYes").textContent = curYes === null ? "—" : curYes.toFixed(3);
+
+  // last-layer health for the currently selected mode
+  const perLayer = forwardBatch(bnOn);
+  const st = statsOf(perLayer[NLAYERS-1]);
+  document.getElementById("meanNo").textContent = st.mean.toFixed(2);
+  document.getElementById("stdNo").textContent  = st.std.toFixed(2);
+  document.getElementById("satNo").textContent  = Math.round(st.sat*100) + "%";
+
+  const v = document.getElementById("verdict");
+  if (epoch === 0){
+    v.innerHTML = 'Press <b class="text-rose-600">Train</b> with <b>Batch Norm OFF</b> first: watch the deeper histograms drift sideways and pile up at the edges (saturating), and the loss crawl down shakily. Then flip <b class="text-rose-600">Batch Norm ON</b> — every layer\'s histogram snaps back to a tidy bell and the loss dives. Now slide <b class="text-rose-600">η learning rate</b> up high: without BN it blows up, with BN it stays stable.';
+  } else if (lr > 0.6 && curNo !== null && curNo > 0.9){
+    v.innerHTML = 'At η = <b>'+lr.toFixed(2)+'</b> the <b class="text-slate-500">no-BN</b> loss is bouncing / diverging (now <b>'+curNo.toFixed(2)+'</b>) — too big a step with drifting activations. The <b class="text-rose-600">BN</b> run keeps falling smoothly (<b>'+curYes.toFixed(2)+'</b>): batch norm tolerates a much higher learning rate.';
+  } else if (bnOn){
+    v.innerHTML = 'With <b class="text-rose-600">Batch Norm ON</b>, every layer\'s histogram is a tidy bell — last-layer σ ≈ <b>'+st.std.toFixed(2)+'</b>, only <b>'+Math.round(st.sat*100)+'%</b> saturated. The rose loss curve dives to <b>'+ (curYes===null?'—':curYes.toFixed(2)) +'</b>, faster and smoother than the no-BN run.';
+  } else {
+    v.innerHTML = 'With <b>Batch Norm OFF</b>, by layer 4 the activations have drifted (μ ≈ <b>'+st.mean.toFixed(2)+'</b>) and <b class="text-rose-600">'+Math.round(st.sat*100)+'%</b> are saturated near ±1 where gradients ≈ 0. The slate loss curve descends slowly and shakily. Flip <b class="text-rose-600">Batch Norm ON</b> to fix it.';
+  }
+}
+
+// ===== animated training loop =====
+function trainFrame(){
+  const batch = Math.max(1, Math.round(speed / 8));
+  for (let i = 0; i < batch; i++) stepEpoch();
+  drawHist(); drawLoss(); updateScoreboard();
+  if (epoch < 160 && anim !== null){
+    anim = requestAnimationFrame(trainFrame);
+  } else {
+    stopTrain();
+  }
+}
+function startTrain(){
+  if (anim){ cancelAnimationFrame(anim); }
+  anim = 1;
+  document.getElementById("trainBtn").textContent = "⏸ Pause";
+  anim = requestAnimationFrame(trainFrame);
+}
+function stopTrain(){
+  if (anim){ cancelAnimationFrame(anim); anim = null; }
+  document.getElementById("trainBtn").textContent = epoch >= 160 ? "▶ Train more" : "▶ Train";
+}
+function toggleTrain(){ if (anim){ stopTrain(); } else { startTrain(); } }
+
+// ===== controls =====
+document.getElementById("trainBtn").onclick = toggleTrain;
+document.getElementById("stepBtn").onclick  = () => { if (anim) stopTrain(); stepEpoch(); drawHist(); drawLoss(); updateScoreboard(); };
+document.getElementById("resetBtn").onclick = () => { resetAll(); };
+document.getElementById("speed").oninput = e => { speed = +e.target.value; };
+document.getElementById("lr").oninput = e => { lr = +e.target.value; document.getElementById("lrNum").textContent = lr.toFixed(2); };
+document.getElementById("bnToggle").onchange = e => {
+  bnOn = e.target.checked;
+  // redraw the histograms + health immediately so the toggle feels live
+  drawHist(); updateScoreboard();
+};
+
+function resetAll(){
+  if (anim){ cancelAnimationFrame(anim); anim = null; }
+  freshWeights();
+  epoch = 0; lossNo = []; lossYes = []; curNo = null; curYes = null;
+  document.getElementById("trainBtn").textContent = "▶ Train";
+  drawHist(); drawLoss(); updateScoreboard();
+}
+resetAll();
+
+// ===== UNDERSTAND step engine =====
+const STEPS = [
+  { title:"1. The problem: as data flows through layers, its distribution drifts", why:"A deep network is a stack of layers, and each layer's input is the previous layer's output. During training every layer's weights keep changing, which means the distribution of numbers arriving at the next layer keeps changing too — it shifts its center and spreads out, getting larger or smaller as it goes deeper. The authors of batch norm called this internal covariate shift: each layer is constantly chasing a moving target because the statistics of its inputs won't sit still. In our demo you can literally watch it: with batch norm off, the histograms drift sideways and fan out the deeper you look. A layer that must keep re-adapting to a moving input distribution learns slowly and unstably.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">layer 1 ▸ layer 2 ▸ layer 3 ▸ layer 4 &nbsp; — &nbsp; <b class="text-rose-600">distribution drifts &amp; spreads each step</b></div>`, code:`# each layer's input = previous layer's (changing) output
+# so the distribution arriving at layer L keeps moving during training:
+#   "internal covariate shift" -> layer L chases a moving target -> slow` },
+  { title:"2. Why drift hurts: saturation and unstable gradients", why:"When activations drift far from zero and spread out, they tend to land in the flat regions of nonlinearities like sigmoid or tanh — pushed up near +1 or down near −1 where the curve is almost horizontal. In those flat regions the derivative is nearly zero, so almost no gradient flows backward through that unit; it's effectively dead and stops learning. The opposite failure also happens: if the spread keeps growing layer after layer, gradients can explode instead. Either way, training becomes fragile — you have to baby the learning rate and the weight initialization to keep the numbers in a usable range. Our demo's 'percent saturated' counter shows how many last-layer units are stuck in the flat zone without batch norm.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">activations pushed to ±1 → tanh slope ≈ 0 → <b class="text-rose-600">gradient ≈ 0</b> (unit stops learning)</div>`, code:`# tanh saturates: for |x| large, tanh'(x) ~= 0
+# a saturated unit passes almost no gradient back -> it barely updates.
+# the cure is to keep activations in the healthy middle range.` },
+  { title:"3. The idea: normalize each layer's inputs per mini-batch", why:"Batch normalization fixes the drift directly. Inside a layer, it takes the activations for the current mini-batch and standardizes them: for each feature it computes the mean and variance across the examples in the batch, then subtracts that mean and divides by the standard deviation. The result has mean zero and standard deviation one for that batch. Because it recomputes these statistics every step, the next layer always receives inputs in a consistent, well-behaved range no matter how the earlier weights have shifted. That's why, in the demo, flipping batch norm on makes every histogram snap back to a tidy bell centered on zero — the moving target stops moving.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono text-[11px]">x̂ = (x − μ_batch) / √(σ²_batch + ε) &nbsp;→&nbsp; <b class="text-rose-600">mean 0, std 1</b></div>`, code:`mu  = x.mean(axis=0)                  # per-feature mean over the batch
+var = x.var(axis=0)                   # per-feature variance over the batch
+x_hat = (x - mu) / np.sqrt(var + 1e-5)   # now mean ~0, std ~1` },
+  { title:"4. The learnable γ (scale) and β (shift)", why:"Forcing every layer to have mean zero and standard deviation one might be too rigid — sometimes a layer genuinely needs a different scale or offset to do its job (for example, to use the saturating part of a nonlinearity on purpose). So batch norm adds two learnable parameters per feature: gamma scales the normalized value and beta shifts it. They start at gamma equal to one and beta equal to zero, and the network trains them by ordinary backpropagation just like weights. The key insight is that if the best thing to do really is to undo the normalization, the network can: by learning gamma to match the old standard deviation and beta to match the old mean it recovers the original activations. So batch norm never removes expressive power — it only makes the easy, well-conditioned settings the default.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono text-[11px]">out = γ · x̂ + β &nbsp;&nbsp;(<b class="text-rose-600">γ, β learned by backprop</b>; can undo BN if needed)</div>`, code:`gamma = np.ones(F)    # learnable scale  (start 1)
+beta  = np.zeros(F)   # learnable shift  (start 0)
+out = gamma * x_hat + beta
+# if gamma->std and beta->mean, BN reproduces the original x exactly.` },
+  { title:"5. Where it goes in the layer", why:"Batch norm is inserted as its own step between a layer's linear transform and the rest of the computation. The most common recipe is: linear (or convolution) → batch norm → activation function, so the nonlinearity always sees nicely centered inputs and is less likely to saturate. The original paper actually placed it just before the activation, while some later architectures put it after; both are used in practice and the difference is usually small. One detail: when a linear layer is immediately followed by batch norm, its bias term is redundant — beta already provides a per-feature shift — so people often turn the bias off to save parameters. The takeaway is that batch norm is a drop-in module you sprinkle through the network, not a change to the layers themselves.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">Linear/Conv → <b class="text-rose-600">BatchNorm</b> → Activation &nbsp; (repeat per layer)</div>`, code:`nn.Sequential(
+    nn.Linear(64, 128, bias=False),   # bias redundant: beta handles shift
+    nn.BatchNorm1d(128),              # normalize before the activation
+    nn.ReLU(),
+)` },
+  { title:"6. Train vs inference: use running stats at test time", why:"Batch norm relies on the statistics of a whole mini-batch, but at inference you often have just one example — there's no batch to take a mean and variance from, and you don't want one example's prediction to depend on whatever other examples happen to be sent alongside it. The fix is to keep a running average of the mean and variance during training: every training step nudges a stored running mean and running variance toward the current batch's values. At test time the layer switches modes and normalizes using these saved running statistics instead of the batch's. This is exactly why frameworks make you call model.train() versus model.eval(): the two modes change which statistics batch norm uses, and forgetting to switch to eval is a classic bug that quietly wrecks accuracy.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">train: batch μ,σ &nbsp;·&nbsp; inference: <b class="text-rose-600">running μ,σ</b> (saved during training)</div>`, code:`# during training, accumulate a moving average:
+running_mean = 0.9*running_mean + 0.1*mu
+running_var  = 0.9*running_var  + 0.1*var
+# at test time (model.eval()): normalize with running_mean / running_var.` },
+  { title:"7. The payoff: faster, higher LR, less init-sensitive, mild regularization", why:"Keeping activations in a healthy range buys several benefits at once. Training converges faster because gradients stay well-scaled and no layer wastes time chasing a drifting input distribution. You can use a much larger learning rate without the loss exploding — exactly what the demo's learning-rate slider shows: crank it up and the no-batch-norm run diverges while the batch-norm run keeps falling smoothly. Networks also become far less sensitive to how you initialize the weights, which used to be a delicate art. And because each example's normalization depends on the random makeup of its mini-batch, batch norm injects a little noise that acts as mild regularization, often reducing the need for as much dropout. Together these are why batch norm made it practical to train very deep networks.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">faster training · higher LR ok · robust to init · <b class="text-rose-600">free mild regularization</b></div>`, code:`# with BN you can train with a much higher learning rate:
+optimizer = torch.optim.SGD(net.parameters(), lr=0.5)  # would diverge w/o BN
+# and worry far less about careful weight initialization.` },
+  { title:"8. The catch: batch-size dependence and small batches", why:"Batch norm's strength — using batch statistics — is also its weakness. The mean and variance it computes are only reliable if the batch is reasonably large; with a very small batch (say two or four examples) those estimates are noisy, so the normalization itself becomes noisy and can hurt more than it helps. This matters in practice: memory-hungry models like large vision or detection networks are often forced to train with tiny per-device batches, and naive batch norm degrades there. It also behaves awkwardly when the effective batch differs between training and inference, or when batches aren't independent and identically distributed. None of this makes batch norm useless — it's still the default for convolutional image models — but it does mean it isn't the right tool everywhere, which motivates the alternatives next.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">tiny batch → noisy μ,σ → <b class="text-rose-600">unreliable normalization</b></div>`, code:`# batch of 2-4 -> mean/var estimates are noisy -> BN can hurt.
+# big detection/segmentation models often hit this (small per-GPU batch).
+# -> reach for an alternative that doesn't depend on batch size.` },
+  { title:"9. Alternatives: LayerNorm and GroupNorm", why:"When batch norm doesn't fit, two cousins help, and they differ only in which numbers they average over. Layer normalization computes the mean and variance across the features of a single example, not across the batch — so it needs no batch at all and behaves identically whether you process one example or a thousand. Group normalization splits a layer's channels into a few groups and normalizes within each group of one example; it's a middle ground that works well for vision models stuck with small batches. Both keep the same recipe of normalize-then-scale-and-shift with learnable gamma and beta; they just change the axis along which the statistics are gathered. The practical rule of thumb: batch norm for convolutional nets with decent batch sizes, layer norm for sequence and Transformer models, group norm when batches are small.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">BatchNorm: over the <b>batch</b> · LayerNorm: over <b class="text-rose-600">features of one sample</b> · GroupNorm: per channel-group</div>`, code:`nn.BatchNorm1d(F)   # normalize over the batch  (CNNs, big batches)
+nn.LayerNorm(F)     # over a sample's features  (Transformers, RNNs)
+nn.GroupNorm(g, C)  # per group of channels     (small-batch vision)` },
+  { title:"10. Why Transformers prefer LayerNorm — and what BN changed", why:"Transformers process variable-length sequences and are usually trained with mixed, sometimes small, effective batches, so depending on batch statistics would be fragile — different sequence lengths and padding would make the batch mean meaningless. Layer norm sidesteps all of that by normalizing each token's own feature vector, independent of the batch and of how long the sequence is, which is why every modern Transformer uses it (and why the placement of that layer norm, pre- vs post-block, became its own well-studied design choice). Stepping back: batch norm was a turning point for deep learning. Before it, training networks more than a handful of layers deep meant fiddling endlessly with initialization and learning rates; after it, very deep networks trained reliably almost out of the box. The specific tool you reach for varies — batch, layer, or group norm — but the lesson is universal: keep each layer's activations in a healthy, stable range and optimisation gets dramatically easier.", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">Normalizing activations made deep networks trainable. BatchNorm for CNNs, LayerNorm for Transformers — same idea: keep each layer's inputs in a healthy range so optimisation stays easy.</p></div>`, code:`# Transformer block uses LayerNorm (batch-size independent):
+x = x + attention(layer_norm(x))
+x = x + mlp(layer_norm(x))
+# BN made >10-layer nets train reliably; normalization is now standard.` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("autoS");
+let curStep = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curStep=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curStep-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curStep+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curStep>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curStep+1); },2800); };
+show(0);
+
+function copy(btn) {
+  const pre = btn.parentElement.querySelector("pre");
+  navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500);
+}
+</script>
+</body>
+</html>
