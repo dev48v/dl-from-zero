@@ -26,6 +26,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 17 — Transfer Learning](https://dev48v.infy.uk/dl/day17-transfer-learning.html) — `day17-transfer-learning.html`
 - [DeepLearningFromZero · Day 18 — Q-Learning](https://dev48v.infy.uk/dl/day18-q-learning.html) — `day18-q-learning.html`
 - [DeepLearningFromZero · Day 19 — Batch Normalization](https://dev48v.infy.uk/dl/day19-batch-norm.html) — `day19-batch-norm.html`
+- [DeepLearningFromZero · Day 20 — Dropout](https://dev48v.infy.uk/dl/day20-dropout.html) — `day20-dropout.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk

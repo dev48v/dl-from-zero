@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 20 — Dropout</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .copy-btn:hover { background:#1e293b; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  canvas { background:#020617; border:1px solid #1e293b; border-radius:10px; }
+  .tok { transition:all .2s; cursor:pointer; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 20</div>
+      <h1 class="text-xl font-bold">🎲 Dropout — Switch Off Neurons to Generalize</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Watch neurons randomly switch off each step — and the overfit gap shrink</h2>
+      <p class="text-slate-500 mb-5 max-w-4xl mx-auto">A small fully-connected net runs left→right. During <b class="text-rose-600">TRAINING</b> with dropout, each forward pass randomly <b>drops</b> a fraction <b class="text-rose-600">p</b> of the hidden neurons — they gray out and their edges are cut, and a <b>different random subset</b> goes dark every step. The net can't lean on any single neuron, so it learns <b>redundant, robust</b> features instead of memorizing — like training a whole <b>ensemble of subnetworks</b>. The two loss-style curves show the payoff: <b class="text-slate-600">without dropout</b> the train accuracy races to ~100% but the validation curve <b>overfits</b> and the gap grows; <b class="text-rose-600">with dropout</b> the gap stays small (better generalization). At <b class="text-rose-600">INFERENCE</b> every neuron is on (no dropping), with activations scaled to compensate. Slide <b class="text-rose-600">dropout p</b> and press <b class="text-rose-600">Train</b>.</p>
+
+      <div class="flex flex-wrap items-center justify-center gap-3 mb-4">
+        <button id="trainBtn"  class="bg-rose-600 text-white px-5 py-2 rounded-lg font-semibold text-sm">▶ Train</button>
+        <button id="stepBtn"   class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">▶ Step (1 epoch)</button>
+        <button id="resetBtn"  class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">↺ Reset</button>
+        <span class="w-px h-6 bg-slate-300 mx-1"></span>
+        <label class="flex items-center gap-2 cursor-pointer select-none">
+          <input id="dropToggle" type="checkbox" class="w-5 h-5 accent-rose-600" checked>
+          <span class="text-sm font-bold text-rose-600">Dropout ON</span>
+        </label>
+        <span class="w-px h-6 bg-slate-300 mx-1"></span>
+        <label class="flex items-center gap-2 cursor-pointer select-none">
+          <input id="inferToggle" type="checkbox" class="w-5 h-5 accent-rose-600">
+          <span class="text-sm font-bold text-slate-600">Inference mode (keep all)</span>
+        </label>
+        <span class="w-px h-6 bg-slate-300 mx-1"></span>
+        <span class="text-sm font-semibold text-slate-600">speed</span>
+        <input id="speed" type="range" min="1" max="60" value="26" class="w-32 accent-rose-600">
+      </div>
+
+      <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mb-5 text-sm">
+        <div class="flex items-center gap-2">
+          <span class="text-slate-600 font-semibold">p dropout rate</span>
+          <input id="pr" type="range" min="0" max="0.8" value="0.5" step="0.05" class="w-56 accent-rose-600">
+          <span id="prNum" class="font-mono font-bold text-rose-600 w-12 text-left">0.50</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-slate-600 font-semibold">network</span>
+          <span class="font-mono font-bold text-slate-700">2 hidden layers</span>
+        </div>
+      </div>
+
+      <div class="flex flex-col lg:flex-row justify-center items-stretch gap-4 flex-wrap">
+        <!-- the network with dropped neurons -->
+        <div class="text-center">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">fully-connected network (a different random subset drops each step)</div>
+          <canvas id="cnet" width="520" height="360"></canvas>
+          <div class="text-[10px] text-slate-400 mt-1 max-w-[520px] mx-auto"><b class="text-rose-600">rose</b> = active neuron · <b>gray, dim</b> = dropped this step (edges cut) · inference mode keeps <b>all</b> active</div>
+        </div>
+
+        <!-- the train vs validation curves -->
+        <div class="text-center">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">train vs validation accuracy (does dropout help?)</div>
+          <canvas id="cacc" width="380" height="360"></canvas>
+          <div class="flex items-center justify-center gap-4 text-xs mt-1 flex-wrap">
+            <span class="flex items-center gap-1"><span class="inline-block w-4 h-1 bg-slate-400 rounded"></span> train</span>
+            <span class="flex items-center gap-1"><span class="inline-block w-4 h-1 bg-rose-500 rounded"></span> validation</span>
+          </div>
+        </div>
+
+        <!-- the scoreboard -->
+        <div class="w-full lg:w-64 text-left space-y-3">
+          <div class="bg-white border border-slate-200 rounded-xl p-4">
+            <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">progress</div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">epoch</span><span id="epNum" class="font-bold font-mono text-slate-700">0</span></div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">train acc</span><span id="accTrain" class="font-bold font-mono text-slate-500">—</span></div>
+            <div class="flex justify-between text-sm"><span class="text-slate-500">val acc</span><span id="accVal" class="font-bold font-mono text-rose-600">—</span></div>
+          </div>
+          <div class="bg-white border border-rose-200 rounded-xl p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">this step</div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">mode</span><span id="modeTag" class="font-bold font-mono text-rose-600">TRAIN</span></div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">dropout p</span><span id="pTag" class="font-bold font-mono text-slate-700">—</span></div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">neurons dropped</span><span id="dropTag" class="font-bold font-mono text-rose-600">—</span></div>
+            <div class="flex justify-between text-sm"><span class="text-slate-500">overfit gap</span><span id="gapTag" class="font-bold font-mono text-slate-700">—</span></div>
+            <div class="text-[10px] text-slate-400 mt-1">"gap" = train acc − val acc. A big gap means it's memorizing.</div>
+          </div>
+          <div id="verdict" class="bg-white border border-slate-200 rounded-xl p-4 text-sm text-slate-600 min-h-[88px]">
+            Press <b class="text-rose-600">Train</b> with <b class="text-rose-600">Dropout ON</b> and watch a different random subset of neurons go dark each step — their edges are cut, so the net can't depend on any one of them. The <b class="text-slate-500">train</b> and <b class="text-rose-600">validation</b> curves rise together and the gap stays small. Now turn <b>Dropout OFF</b>: train accuracy races to ~100% but validation stalls — the gap balloons (overfitting). Flip <b class="text-rose-600">Inference mode</b> on to see all neurons switch back on with scaled outputs.
+          </div>
+        </div>
+      </div>
+      <p class="text-xs text-slate-400 mt-5 max-w-3xl mx-auto">↑ Dropout randomly switches off neurons during training so the network learns <b>redundant, robust features instead of memorizing</b> — like training an ensemble of many subnetworks that share weights. Because no neuron can count on its neighbours always being present, it breaks <b>co-adaptation</b> and acts as regularization, shrinking the overfit gap. At <b>test time everything's on</b>: no neuron is dropped, and the activations are scaled (inverted dropout multiplies by <code>1/(1−p)</code> during training) so the expected signal matches and inference needs no change.</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Why switching off neurons helps</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="autoS" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Dropout, in code</h2>
+    <p class="text-slate-500 mb-8">Take a layer's activations → during <b>training</b> sample a random <b>keep mask</b> (each unit kept with prob 1−p) → <b>zero out</b> the dropped units → <b>scale up</b> the survivors by <code>1/(1−p)</code> so the expected output is unchanged (inverted dropout) → at <b>eval time do nothing</b> (all units on, no scaling) → and in real code just drop in <b>nn.Dropout(p)</b> or Keras <b>Dropout(p)</b>. ~7 steps of plain Python — the whole transform is three short lines.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Start from a layer's activations</h3></div>
+        <div class="relative"><pre>import numpy as np
+
+# a is the output (activations) of a hidden layer for a mini-batch:
+#   shape (batch_size, num_units)
+batch_size, num_units = 32, 64
+a = np.random.rand(batch_size, num_units)   # some positive activations
+
+p = 0.5          # DROP probability (fraction to switch off); keep = 1 - p
+keep = 1 - p     # probability a unit survives</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Sample a random keep mask (training only)</h3></div>
+        <div class="relative"><pre># draw one Bernoulli per unit: 1 = keep, 0 = drop.
+# a fresh, different mask is drawn on EVERY forward pass.
+mask = (np.random.rand(*a.shape) > p).astype(a.dtype)
+
+# roughly a fraction p of the entries are 0 (those units are switched off).
+print("kept:", mask.mean().round(2), " (~", round(keep,2), ")")</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Zero out the dropped units</h3></div>
+        <div class="relative"><pre># multiply elementwise: dropped units become 0, survivors pass through.
+a_drop = a * mask
+
+# the network for THIS step is a random subnetwork: only the kept units
+# (and the edges into/out of them) participate in forward & backward.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Scale the survivors by 1/(1−p) — "inverted dropout"</h3></div>
+        <div class="relative"><pre># zeroing units lowers the layer's expected sum. To keep the expected
+# output the SAME as without dropout, scale the survivors back up:
+a_drop = a_drop / keep        # == a * mask / (1 - p)
+
+# doing the scaling at TRAIN time is "inverted dropout": it means
+# inference can run untouched (no scaling needed there).</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">At eval time: do nothing (all units on)</h3></div>
+        <div class="relative"><pre># inference uses the WHOLE network, no dropping and no scaling,
+# because inverted dropout already corrected the scale during training.
+def dropout(a, p, training):
+    if not training or p == 0:
+        return a                     # eval: pass activations through unchanged
+    mask = (np.random.rand(*a.shape) > p) / (1 - p)
+    return a * mask                  # train: drop + scale survivors</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Where to put it &amp; which rate to use</h3></div>
+        <div class="relative"><pre># put dropout AFTER the activation, on dense (fully-connected) layers,
+# which have the most parameters and overfit most.
+# typical p: 0.2-0.5 (higher near big dense layers, lower/none in conv).
+hidden = relu(linear(x))
+hidden = dropout(hidden, p=0.5, training=True)   # heavy on dense layers
+out    = linear(hidden)
+# convolutions share weights & overfit less -> use little or no dropout.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">In real code: nn.Dropout &amp; Keras Dropout</h3></div>
+        <div class="relative"><pre>import torch.nn as nn
+
+# --- PyTorch does all of the above for you (inverted dropout built in) ---
+net = nn.Sequential(
+    nn.Linear(64, 128), nn.ReLU(),
+    nn.Dropout(0.5),                 # drop 50% of these activations in training
+    nn.Linear(128, 10),
+)
+# model.train() -> dropout ACTIVE   |   model.eval() -> dropout OFF (all units)
+
+# --- Keras ---
+# tf.keras.layers.Dropout(0.5)      # same idea; off automatically at predict()
+# Transformers still use dropout in attention &amp; the feed-forward (FFN) blocks.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 20 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">Dropout randomly zeros a fraction <code>p</code> of a layer's activations <b>every training step</b> — a fresh random subnetwork each pass. Because no unit can rely on any specific neighbour, the network is forced to learn <b>redundant, robust features</b> instead of memorizing, which breaks <b>co-adaptation</b> and works like training an <b>ensemble of subnetworks</b> that share weights. Survivors are scaled by <code>1/(1−p)</code> (inverted dropout) so that at <b>test time everything is on with no change needed</b>. It's a regularizer like <b>L2 (Day 17)</b> and partners with <b>batch norm (Day 19)</b>; with strong BN and large datasets it's needed less in conv nets, but it's still standard in <b>Transformers' attention and feed-forward blocks</b>.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== Dropout visualizer (genuine offline simulation) =====
+// A small fully-connected net is drawn (input -> 2 hidden layers -> output).
+//   - Network panel: every animation step we draw a FRESH random keep mask for
+//     the hidden neurons. With dropout ON (training, inference OFF), a fraction
+//     ~p of hidden neurons are "dropped": drawn gray/dim and their incoming +
+//     outgoing edges are cut. A different random subset drops each step, so the
+//     net can't co-adapt to any single neuron. In INFERENCE mode (or dropout
+//     OFF) every neuron is active and all edges drawn.
+//   - Accuracy curves: a stable analytic model of train vs validation accuracy.
+//     WITHOUT dropout, train accuracy races toward ~100% while validation
+//     plateaus lower -> the overfit GAP grows. WITH dropout, train rises a bit
+//     slower but validation tracks it closely -> the gap stays small (better
+//     generalization). Higher p -> stronger regularization (smaller gap, but
+//     too-high p underfits and lowers both curves).
+const LAYERS = [4, 6, 6, 3];      // neurons per layer (input, hidden, hidden, output)
+const HIDDEN = [1, 2];            // which layer indices are hidden (droppable)
+
+let p = 0.5;                       // dropout rate
+let dropOn = true;                 // dropout enabled (training-time)
+let inferMode = false;             // inference mode -> keep all neurons
+let epoch = 0;
+let speed = 26;
+let anim = null;
+
+// accuracy history for both runs (kept in parallel regardless of toggle)
+let accTrain = [], accVal = [];
+let curTrain = null, curVal = null;
+
+// current keep mask per hidden layer (1 = active, 0 = dropped this step)
+let masks = {};
+function freshMasks(){
+  masks = {};
+  const dropping = dropOn && !inferMode;
+  HIDDEN.forEach(li => {
+    const n = LAYERS[li];
+    const m = new Array(n).fill(1);
+    if (dropping){
+      for (let i = 0; i < n; i++) if (Math.random() < p) m[i] = 0;
+      // guard: never drop the entire layer (keep at least one alive)
+      if (m.every(v => v === 0)) m[Math.floor(Math.random()*n)] = 1;
+    }
+    masks[li] = m;
+  });
+}
+
+const cnet = document.getElementById("cnet"), nx = cnet.getContext("2d");
+const cacc = document.getElementById("cacc"), ax = cacc.getContext("2d");
+
+// neuron x/y layout
+function neuronPos(li, ni){
+  const W0 = cnet.width, H0 = cnet.height;
+  const mL = 50, mR = 50, mT = 40, mB = 30;
+  const cols = LAYERS.length;
+  const x = mL + (cols === 1 ? 0 : (li/(cols-1)) * (W0 - mL - mR));
+  const n = LAYERS[li];
+  const span = H0 - mT - mB;
+  const y = n === 1 ? mT + span/2 : mT + (ni/(n-1)) * span;
+  return { x, y };
+}
+function isActive(li, ni){
+  if (!masks[li]) return true;         // input/output always active
+  return masks[li][ni] === 1;
+}
+
+// ===== draw the network =====
+function drawNet(){
+  const W0 = cnet.width, H0 = cnet.height;
+  nx.clearRect(0,0,W0,H0); nx.fillStyle="#020617"; nx.fillRect(0,0,W0,H0);
+
+  // edges first (so neurons sit on top)
+  for (let l = 0; l < LAYERS.length - 1; l++){
+    for (let i = 0; i < LAYERS[l]; i++){
+      for (let j = 0; j < LAYERS[l+1]; j++){
+        const a = neuronPos(l, i), b = neuronPos(l+1, j);
+        const live = isActive(l, i) && isActive(l+1, j);  // edge cut if either end dropped
+        nx.strokeStyle = live ? "rgba(251,113,133,0.30)" : "rgba(71,85,105,0.10)";
+        nx.lineWidth = live ? 1.1 : 0.6;
+        nx.beginPath(); nx.moveTo(a.x, a.y); nx.lineTo(b.x, b.y); nx.stroke();
+      }
+    }
+  }
+  // neurons
+  for (let l = 0; l < LAYERS.length; l++){
+    for (let i = 0; i < LAYERS[l]; i++){
+      const pos = neuronPos(l, i);
+      const active = isActive(l, i);
+      nx.beginPath(); nx.arc(pos.x, pos.y, 11, 0, Math.PI*2);
+      if (active){
+        nx.fillStyle = (HIDDEN.indexOf(l) >= 0) ? "#fb7185" : "#e2e8f0";
+        nx.fill();
+        nx.lineWidth = 2; nx.strokeStyle = "#fda4af"; nx.stroke();
+      } else {
+        nx.fillStyle = "#1e293b"; nx.fill();
+        nx.lineWidth = 1.5; nx.strokeStyle = "#475569"; nx.stroke();
+        // little "off" slash
+        nx.strokeStyle = "#64748b"; nx.lineWidth = 1.5;
+        nx.beginPath(); nx.moveTo(pos.x-6, pos.y+6); nx.lineTo(pos.x+6, pos.y-6); nx.stroke();
+      }
+    }
+  }
+  // layer labels
+  nx.fillStyle = "#64748b"; nx.font = "10px sans-serif"; nx.textAlign = "center";
+  const labels = ["input", "hidden 1", "hidden 2", "output"];
+  for (let l = 0; l < LAYERS.length; l++){
+    const pos = neuronPos(l, 0);
+    nx.fillText(labels[l], pos.x, 20);
+  }
+  // mode tag
+  const dropping = dropOn && !inferMode;
+  nx.textAlign = "left"; nx.font = "bold 11px sans-serif";
+  nx.fillStyle = dropping ? "#fb7185" : "#94a3b8";
+  nx.fillText(dropping ? "TRAINING · dropping" : (inferMode ? "INFERENCE · all neurons on (scaled)" : "DROPOUT OFF · all neurons on"), 12, H0-10);
+}
+
+// count dropped hidden neurons this step
+function droppedCount(){
+  let dropped = 0, total = 0;
+  HIDDEN.forEach(li => { masks[li].forEach(v => { total++; if (v === 0) dropped++; }); });
+  return { dropped, total };
+}
+
+// ===== accuracy model =====
+// train accuracy approaches 1.0; validation approaches a ceiling that is
+// LOWER without dropout (overfitting). Dropout raises the validation ceiling
+// (smaller gap) and slightly slows the train climb.
+function stepEpoch(){
+  if (curTrain === null){ curTrain = 0.45; curVal = 0.45; }
+  epoch++;
+  const dropping = dropOn && !inferMode;
+
+  // --- TRAIN accuracy: rises toward ~1.0; dropout slows it a touch ---
+  const trainCeil = dropping ? 0.965 : 0.998;
+  const trainRate = dropping ? 0.055 : 0.085;
+  curTrain += (trainCeil - curTrain) * trainRate;
+  curTrain += (Math.random()-0.5) * 0.006;
+
+  // --- VALIDATION accuracy: ceiling depends on regularization ---
+  // without dropout it plateaus low (memorizing). with dropout the ceiling is
+  // higher; very high p starts to underfit and pulls the ceiling back down.
+  let valCeil;
+  if (dropping){
+    // peak generalization around p ~ 0.4-0.5; too high underfits
+    const sweet = 1 - Math.abs(p - 0.45) * 0.55;   // ~1.0 near 0.45
+    valCeil = 0.80 + 0.12 * Math.max(0, sweet);     // ~0.88-0.92 in the sweet spot
+    valCeil = Math.min(0.93, valCeil);
+  } else {
+    valCeil = 0.78;                                  // overfit plateau
+  }
+  const valRate = dropping ? 0.05 : 0.06;
+  curVal += (valCeil - curVal) * valRate;
+  curVal += (Math.random()-0.5) * (dropping ? 0.006 : 0.012);  // val noisier when overfitting
+
+  curTrain = Math.min(1, Math.max(0, curTrain));
+  curVal   = Math.min(1, Math.max(0, curVal));
+
+  accTrain.push(curTrain); accVal.push(curVal);
+  if (accTrain.length > 200){ accTrain.shift(); accVal.shift(); }
+}
+
+// ===== draw the accuracy curves =====
+function drawAcc(){
+  const W0 = cacc.width, H0 = cacc.height;
+  ax.clearRect(0,0,W0,H0); ax.fillStyle="#020617"; ax.fillRect(0,0,W0,H0);
+  const mL=38, mR=12, mT=14, mB=26;
+  const pw = W0-mL-mR, ph = H0-mT-mB;
+  const yMin = 0.4, yMax = 1.0;
+  const Y = v => mT + (1 - (Math.min(yMax,Math.max(yMin,v)) - yMin)/(yMax - yMin)) * ph;
+  ax.strokeStyle="#1e293b"; ax.lineWidth=1; ax.fillStyle="#64748b"; ax.font="10px monospace";
+  [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4].forEach(v => {
+    ax.beginPath(); ax.moveTo(mL, Y(v)); ax.lineTo(W0-mR, Y(v)); ax.stroke();
+    ax.textAlign="right"; ax.textBaseline="middle"; ax.fillText(v.toFixed(1), mL-5, Y(v));
+  });
+  ax.textAlign="center"; ax.textBaseline="top";
+  ax.fillText("epochs", mL + pw/2, H0-mB+6);
+
+  const n = accTrain.length;
+  if (n === 0){
+    ax.fillStyle="#475569"; ax.font="12px sans-serif"; ax.textAlign="center"; ax.textBaseline="middle";
+    ax.fillText("press Train to start", mL+pw/2, mT+ph/2);
+    return;
+  }
+  const X = i => mL + (n <= 1 ? 0 : (i/(n-1))*pw);
+
+  // shade the overfit gap between train and val
+  ax.beginPath();
+  accTrain.forEach((v,i)=>{ const px=X(i), py=Y(v); if(i===0) ax.moveTo(px,py); else ax.lineTo(px,py); });
+  for (let i = n-1; i >= 0; i--){ ax.lineTo(X(i), Y(accVal[i])); }
+  ax.closePath();
+  ax.fillStyle = "rgba(148,163,184,0.12)"; ax.fill();
+
+  // train (slate)
+  ax.strokeStyle="#94a3b8"; ax.lineWidth=2.2; ax.beginPath();
+  accTrain.forEach((v,i)=>{ const px=X(i), py=Y(v); if(i===0) ax.moveTo(px,py); else ax.lineTo(px,py); });
+  ax.stroke();
+  // validation (rose)
+  ax.strokeStyle="#fb7185"; ax.lineWidth=2.6; ax.beginPath();
+  accVal.forEach((v,i)=>{ const px=X(i), py=Y(v); if(i===0) ax.moveTo(px,py); else ax.lineTo(px,py); });
+  ax.stroke();
+}
+
+// ===== scoreboard / verdict =====
+function updateScoreboard(){
+  document.getElementById("epNum").textContent = epoch;
+  document.getElementById("accTrain").textContent = curTrain === null ? "—" : (curTrain*100).toFixed(1)+"%";
+  document.getElementById("accVal").textContent   = curVal   === null ? "—" : (curVal*100).toFixed(1)+"%";
+
+  const dropping = dropOn && !inferMode;
+  document.getElementById("modeTag").textContent = inferMode ? "INFERENCE" : "TRAIN";
+  document.getElementById("modeTag").className = "font-bold font-mono " + (inferMode ? "text-slate-600" : "text-rose-600");
+  document.getElementById("pTag").textContent = dropping ? p.toFixed(2) : "0.00 (off)";
+  const dc = droppedCount();
+  document.getElementById("dropTag").textContent = dropping ? (dc.dropped + " / " + dc.total) : "0 / " + dc.total;
+  const gap = (curTrain === null) ? null : (curTrain - curVal);
+  document.getElementById("gapTag").textContent = gap === null ? "—" : (gap*100).toFixed(1)+" pts";
+
+  const v = document.getElementById("verdict");
+  if (epoch === 0){
+    v.innerHTML = 'Press <b class="text-rose-600">Train</b> with <b class="text-rose-600">Dropout ON</b> and watch a different random subset of neurons go dark each step — their edges are cut, so the net can\'t depend on any one of them. The <b class="text-slate-500">train</b> and <b class="text-rose-600">validation</b> curves rise together and the gap stays small. Now turn <b>Dropout OFF</b>: train accuracy races to ~100% but validation stalls — the gap balloons (overfitting). Flip <b class="text-rose-600">Inference mode</b> on to see all neurons switch back on with scaled outputs.';
+  } else if (inferMode){
+    v.innerHTML = 'In <b class="text-slate-600">Inference mode</b> every neuron is on — <b>nothing is dropped</b>. The activations were already scaled by <code>1/(1−p)</code> during training (inverted dropout), so the full network runs unchanged and predicts with all its learned, redundant features. Val acc ≈ <b class="text-rose-600">'+(curVal*100).toFixed(1)+'%</b>.';
+  } else if (dropping){
+    v.innerHTML = 'With <b class="text-rose-600">Dropout p='+p.toFixed(2)+'</b>, <b>'+dc.dropped+' of '+dc.total+'</b> hidden neurons are off this step (a fresh subnetwork). Train acc <b>'+(curTrain*100).toFixed(1)+'%</b> and val acc <b class="text-rose-600">'+(curVal*100).toFixed(1)+'%</b> rise together — overfit gap only <b>'+(gap*100).toFixed(1)+' pts</b>. The net learns redundant features instead of memorizing.';
+  } else {
+    v.innerHTML = 'With <b>Dropout OFF</b>, train acc races to <b>'+(curTrain*100).toFixed(1)+'%</b> but val acc stalls at <b class="text-rose-600">'+(curVal*100).toFixed(1)+'%</b> — an overfit gap of <b class="text-rose-600">'+(gap*100).toFixed(1)+' pts</b> and growing. It\'s memorizing the training set. Flip <b class="text-rose-600">Dropout ON</b> to shrink the gap.';
+  }
+}
+
+// ===== animated training loop =====
+// `anim` doubles as the running flag and the pending-timer handle. We throttle
+// with setTimeout (slower than 60fps) so the random neuron-drop flicker is
+// clearly visible; faster `speed` -> shorter delay + more epochs per frame.
+function trainFrame(){
+  const batch = Math.max(1, Math.round(speed / 20));
+  for (let i = 0; i < batch; i++) stepEpoch();
+  freshMasks();                 // a new random subnetwork every animation frame
+  drawNet(); drawAcc(); updateScoreboard();
+  if (epoch < 200 && anim !== null){
+    anim = setTimeout(trainFrame, Math.max(40, 320 - speed*4));
+  } else {
+    stopTrain();
+  }
+}
+function startTrain(){
+  if (anim){ clearTimeout(anim); }
+  document.getElementById("trainBtn").textContent = "⏸ Pause";
+  anim = setTimeout(trainFrame, 0);
+}
+function stopTrain(){
+  if (anim){ clearTimeout(anim); anim = null; }
+  document.getElementById("trainBtn").textContent = epoch >= 200 ? "▶ Train more" : "▶ Train";
+}
+function toggleTrain(){ if (anim){ stopTrain(); } else { startTrain(); } }
+
+// ===== controls =====
+document.getElementById("trainBtn").onclick = toggleTrain;
+document.getElementById("stepBtn").onclick  = () => { if (anim) stopTrain(); stepEpoch(); freshMasks(); drawNet(); drawAcc(); updateScoreboard(); };
+document.getElementById("resetBtn").onclick = () => { resetAll(); };
+document.getElementById("speed").oninput = e => { speed = +e.target.value; };
+document.getElementById("pr").oninput = e => { p = +e.target.value; document.getElementById("prNum").textContent = p.toFixed(2); freshMasks(); drawNet(); updateScoreboard(); };
+document.getElementById("dropToggle").onchange = e => {
+  dropOn = e.target.checked;
+  freshMasks(); drawNet(); updateScoreboard();
+};
+document.getElementById("inferToggle").onchange = e => {
+  inferMode = e.target.checked;
+  freshMasks(); drawNet(); updateScoreboard();
+};
+
+function resetAll(){
+  if (anim){ cancelAnimationFrame(anim); anim = null; }
+  epoch = 0; accTrain = []; accVal = []; curTrain = null; curVal = null;
+  document.getElementById("trainBtn").textContent = "▶ Train";
+  freshMasks(); drawNet(); drawAcc(); updateScoreboard();
+}
+resetAll();
+
+// ===== UNDERSTAND step engine =====
+const STEPS = [
+  { title:"1. The problem: a big network memorizes the training set", why:"A neural network with lots of parameters is powerful enough to fit almost anything, including the noise and quirks of the particular examples it was trained on. When that happens it scores beautifully on the training data but poorly on new, unseen data — it has memorized rather than learned the general pattern. This gap between training performance and validation performance is the signature of overfitting, and you can watch it open up in the demo: with dropout off, the train curve races toward 100% while the validation curve stalls far below. A related failure is co-adaptation: neurons start to depend on the exact presence and values of specific other neurons, forming brittle, intertwined detectors that only work as a fixed committee. We want each neuron to learn something useful on its own.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">train acc → ~100% &nbsp;·&nbsp; val acc stalls &nbsp; — &nbsp; <b class="text-rose-600">overfit gap grows = memorizing</b></div>`, code:`# a big net can fit the training set perfectly (memorize it)
+# but generalize poorly:  high train acc, low validation acc.
+# neurons "co-adapt": they only work as a fixed committee.` },
+  { title:"2. The idea: randomly switch off a fraction p of neurons each step", why:"Dropout attacks overfitting with a strikingly simple move. On every forward pass during training, it randomly chooses a fraction p of the units in a layer and sets their outputs to zero — effectively deleting those neurons for that one step, along with all their connections. A fresh random subset is dropped on each pass, so the network sees a constantly changing architecture. In the demo this is the flickering you see: every step a different group of hidden neurons goes gray and its edges are cut. Crucially the dropping is random and temporary, not a permanent pruning — a neuron dropped this step is very likely back the next. The parameter p (commonly 0.5 for hidden layers) controls how aggressive the switching-off is.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono text-[11px]">each step: keep unit with prob (1−p), else set its output to <b class="text-rose-600">0</b></div>`, code:`# on every training forward pass, draw a fresh mask:
+mask = (np.random.rand(*a.shape) > p)   # 1 = keep, 0 = drop
+a = a * mask                            # dropped units output 0 this step` },
+  { title:"3. Why it helps: forces redundancy and breaks co-adaptation", why:"Because any neuron might vanish at any moment, no neuron can afford to rely on a particular partner always being there. Each unit is pushed to learn a feature that is useful more or less on its own, and the network ends up with several different neurons that can each carry the load if others go missing. That redundancy is exactly what generalizes well: a robust representation doesn't hinge on a single fragile detector. In other words, dropout breaks co-adaptation — it stops neurons from forming tightly coupled cliques that only work together. The result you see in the demo is that the validation curve tracks the training curve closely instead of falling behind, because the features the network learned transfer to new data rather than being memorized shortcuts.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">no neuron can trust its neighbours → each learns a <b class="text-rose-600">useful, redundant feature</b> → robust</div>`, code:`# if any unit can disappear, none can depend on a specific partner.
+# -> features become redundant & robust (not brittle committees).
+# -> the learned representation generalizes to unseen data.` },
+  { title:"4. Another view: an ensemble of subnetworks sharing weights", why:"There is a beautiful second interpretation of dropout. Each random mask defines a different subnetwork — a thinned version of the full net that uses only the surviving neurons. Over the course of training you are sampling and training an astronomically large family of these subnetworks, one per step, and they all share the same underlying weights. Ensembles, where you train many models and average their predictions, are a classic way to reduce overfitting, but training thousands of separate networks is far too expensive. Dropout gives you the regularizing benefit of an ensemble almost for free, because the weight sharing means you only ever store one set of parameters. At test time, using the whole network with scaled weights approximates averaging over all those subnetworks at once.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">each mask = a thinned subnetwork &nbsp;→&nbsp; training samples a huge <b class="text-rose-600">ensemble that shares weights</b></div>`, code:`# every dropout mask = a different "thinned" subnetwork.
+# training many of them (sharing weights) ~ training an ensemble.
+# test time with all units on ~ averaging over the ensemble.` },
+  { title:"5. The rate p: how much to drop", why:"The dropout rate p is the fraction of units switched off, and it is the main knob you tune. A common default is 0.5 for large fully-connected hidden layers, which are the most overfit-prone, and smaller values like 0.2 for input or less risky layers. The trade-off is intuitive: too little dropout barely regularizes and overfitting persists, while too much dropout removes so much of the network each step that it can no longer learn enough — it underfits, and both training and validation accuracy sag. You can feel this in the demo: nudging p into the middle range shrinks the overfit gap nicely, but cranking it very high drags the curves down because the surviving subnetwork is too small to do the job. The right p depends on the layer size and how much data you have.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">p too low → still overfits · <b class="text-rose-600">p ≈ 0.2–0.5</b> sweet spot · p too high → underfits</div>`, code:`# typical rates:
+#   dense / fully-connected hidden layers:  p = 0.5
+#   input or smaller layers:                 p = 0.2
+# too high p -> the surviving subnetwork is too small -> underfits.` },
+  { title:"6. Train vs inference: drop during training, keep all at test", why:"Dropout is purely a training-time trick. At inference you want the network's full, deterministic capacity and a stable prediction, so you do not drop anything — every neuron is active. If you randomly dropped units at test time, the same input could produce different answers on different runs, which is usually undesirable. This is why frameworks tie dropout to a mode flag: model.train() turns dropout on, and model.eval() turns it off. Forgetting to switch to eval mode is a classic bug that makes test predictions needlessly noisy and worse. In the demo, flipping on inference mode lights every neuron back up and cuts no edges — you are now looking at the whole trained network making a clean prediction.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">train: drop a random subset · inference: <b class="text-rose-600">keep ALL neurons on</b></div>`, code:`# training: model.train()  -> dropout active (random subnetworks)
+# testing:  model.eval()   -> dropout OFF (whole network, no dropping)
+# forgetting eval() is a classic bug: noisy, worse predictions.` },
+  { title:"7. Inverted dropout: scale at train so inference needs no change", why:"Switching off a fraction p of units lowers the total signal a layer passes on — its expected output shrinks by roughly a factor of (1 − p). If we did nothing about this, the activations the next layer sees at test time, when all units are on, would be systematically larger than what it saw during training, and the network would misbehave. The standard fix is inverted dropout: during training, after zeroing the dropped units, we divide the survivors by (1 − p), scaling them back up so the expected output matches the no-dropout case. Because the correction is applied during training, inference can run the plain network with no scaling at all. This is what every modern framework implements, which is exactly why model.eval() can simply turn dropout off and otherwise leave the forward pass untouched.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono text-[11px]">train: a = a · mask / (1 − p) &nbsp;→&nbsp; <b class="text-rose-600">inference unchanged</b></div>`, code:`# inverted dropout: scale survivors UP at train time.
+mask = (np.random.rand(*a.shape) > p) / (1 - p)
+a = a * mask          # expected output now matches the no-dropout case
+# -> at inference: no scaling needed, just pass activations through.` },
+  { title:"8. Where to put it: dense layers, less in conv", why:"Dropout is usually applied right after a layer's activation function, and it is most useful on dense (fully-connected) layers because those hold the bulk of the parameters and overfit the most. Convolutional layers are a different story: they share weights across the whole image and already have far fewer free parameters per output, so they overfit less and heavy spatial dropout tends to hurt more than help — practitioners use little or none there, relying on other regularizers instead. The general advice is to add dropout where capacity is high and data is limited, and to start conservatively. As with any regularizer, the goal is just enough to close the overfit gap without starving the network of the units it needs to learn.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">put after activation, mainly on <b class="text-rose-600">dense</b> layers · little/none in conv</div>`, code:`# dense layers overfit most -> dropout helps:
+hidden = dropout(relu(linear(x)), p=0.5, training=True)
+# conv layers share weights & overfit less -> use little/no dropout.` },
+  { title:"9. It's regularization — alongside L2 and batch norm", why:"Dropout belongs to the same toolbox as other regularizers you have met: techniques that don't change what the network can represent but discourage it from overfitting. L2 weight decay, from Day 17, gently pulls weights toward zero so no single connection dominates; dropout instead injects noise by removing units. Batch normalization, from Day 19, was introduced to stabilize and speed up training, but the per-batch noise it adds also has a mild regularizing side effect. These tools are not mutually exclusive — you often combine them — but they overlap, so you tune the overall amount of regularization rather than stacking blindly. The unifying idea across all of them is the same one this whole topic is about: make it harder for the model to memorize so that it is forced to generalize.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">regularizers: <b class="text-rose-600">Dropout</b> · L2 weight decay (Day 17) · BatchNorm noise (Day 19)</div>`, code:`# dropout is one regularizer among several:
+#   L2 / weight decay  -> shrink weights        (Day 17)
+#   batch norm         -> stabilize + mild noise (Day 19)
+#   dropout            -> random unit removal    (today)
+# they overlap: tune the TOTAL amount of regularization.` },
+  { title:"10. Modern note: less needed with BN/data — still core to Transformers", why:"The role of dropout has shifted as the field matured. In modern convolutional image models, strong batch normalization plus very large datasets and heavy data augmentation already curb overfitting, so plain dropout on conv features is often reduced or dropped entirely. But it is far from obsolete: dropout remains a standard ingredient in Transformers, applied inside the self-attention weights and within the feed-forward (FFN) sublayers, where it still meaningfully improves generalization on text and beyond. There are also interesting interactions to respect — combining dropout and batch normalization carelessly can clash because dropout changes the variance that batch norm's statistics see, so a common pattern is to place dropout after batch norm, or to lean on one more than the other. The lesson of the day is durable even as the defaults change: dropout switches off neurons during training so the network learns redundant, robust features instead of memorizing, and at test time everything is back on.", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">Dropout switches off neurons during training so the net learns redundant, robust features — an ensemble of subnetworks. Less needed now with BN + big data in CNNs, but still standard in Transformers' attention &amp; FFN.</p></div>`, code:`# modern usage:
+#   CNNs: BN + big data + augmentation often reduce the need for dropout.
+#   Transformers: dropout still standard in attention & FFN blocks.
+# interaction: place dropout AFTER batch norm (it changes BN's variance).` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("autoS");
+let curStep = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curStep=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curStep-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curStep+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curStep>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curStep+1); },2800); };
+show(0);
+
+function copy(btn) {
+  const pre = btn.parentElement.querySelector("pre");
+  navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500);
+}
+</script>
+</body>
+</html>
