@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 22 — ResNet &amp; Skip Connections</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  #cv { background:#fff; border:2px solid #0f172a; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,.12); width:100%; max-width:640px; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .verdict { font-weight:800; }
+  .v-van { color:#e11d48; } .v-ok { color:#059669; } .v-exp { color:#d97706; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 22</div>
+      <h1 class="text-xl font-bold">🛣️ ResNet &amp; Skip Connections — The +1 Gradient Highway</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-4xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Yesterday the gradient died in a deep net. Add one <code>+x</code> and it survives.</h2>
+      <p class="text-slate-500 mb-4">Day 21 showed how gradients <em>vanish</em> exponentially in deep networks. ResNet's fix (2015) is almost absurdly simple: instead of a block computing <code>y = F(x)</code>, make it compute <code>y = x + F(x)</code> — add the input straight back to the output through a <strong>skip connection</strong>. In backprop that turns each block's local factor from <code>F'(x)</code> into <code>1 + F'(x)</code>, and that <strong>+1</strong> gives the gradient a highway straight back to the early layers. Compare a plain net and a ResNet at the same depth below.</p>
+      <canvas id="cv" width="640" height="300"></canvas>
+      <div class="grid grid-cols-2 gap-4 max-w-lg mx-auto mt-3 text-sm">
+        <div class="bg-white rounded-xl border border-slate-200 p-3">
+          <div class="font-bold text-slate-700">Plain net</div>
+          <div>grad→layer 1: <span id="plainG" class="stat">—</span></div>
+          <div id="plainV" class="verdict">—</div>
+        </div>
+        <div class="bg-white rounded-xl border border-rose-200 p-3">
+          <div class="font-bold text-rose-700">ResNet (skips)</div>
+          <div>grad→layer 1: <span id="resG" class="stat">—</span></div>
+          <div id="resV" class="verdict">—</div>
+        </div>
+      </div>
+      <div class="flex justify-center items-center mt-4 gap-4 flex-wrap text-sm text-slate-600">
+        <span class="font-bold">Depth</span><input id="depth" type="range" min="4" max="40" value="20" class="w-40 accent-rose-600"><span id="depthV" class="stat text-rose-600">20</span> layers
+        <span class="font-bold ml-3">Activation</span>
+        <select id="act" class="border border-slate-300 rounded px-2 py-1 text-sm"><option value="sigmoid">Sigmoid</option><option value="tanh">Tanh</option><option value="relu">ReLU</option></select>
+      </div>
+      <p class="text-xs text-slate-400 mt-3">Each bar is the gradient magnitude reaching that layer (log scale), computed as the real chain-rule product back from the output. The plain net multiplies factors ≤ 1 and collapses toward zero; the ResNet multiplies <code>(1 + f′)</code> factors that stay near or above 1, so the signal reaches layer 1 intact. This is why 152-layer networks suddenly became trainable.</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">How skip connections rescue depth</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Build it yourself</h2>
+    <p class="text-slate-500 mb-8">The whole idea is one line — add the input back. Here's a residual block in PyTorch and the gradient-product intuition it fixes.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">A plain block: y = F(x)</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A normal block transforms its input completely: two linear/conv layers with an activation. Stack many and the backward pass multiplies each block's derivative — small derivatives compound to nearly zero (vanishing).</p>
+        <div class="relative"><pre>class PlainBlock(nn.Module):
+    def __init__(self, d):
+        self.f = nn.Sequential(nn.Linear(d,d), nn.ReLU(), nn.Linear(d,d))
+    def forward(self, x):
+        return F.relu(self.f(x))       # y = F(x)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">A residual block: y = x + F(x)</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The only change: add the input back before the final activation. Now the block learns a <em>residual</em> — the small correction on top of "pass the input through unchanged" — which is far easier to learn than a full mapping, especially when the ideal is close to identity.</p>
+        <div class="relative"><pre>class ResidualBlock(nn.Module):
+    def __init__(self, d):
+        self.f = nn.Sequential(nn.Linear(d,d), nn.ReLU(), nn.Linear(d,d))
+    def forward(self, x):
+        return F.relu(x + self.f(x))   # y = x + F(x)  ← the skip</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Why the +1 saves the gradient</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Differentiate <code>y = x + F(x)</code>: <code>dy/dx = 1 + F'(x)</code>. Backprop multiplies these across blocks. The <code>1</code> means even if <code>F'(x)</code> is tiny, the factor stays near 1 instead of near 0 — so the product doesn't collapse. The gradient flows through the identity path like a highway.</p>
+        <div class="relative"><pre>// plain:    dL/dx₁ = Π f'(zₗ)          → 0   (each f' ≤ ~0.25)
+// residual: dL/dx₁ = Π (1 + f'(zₗ))    → stays ~O(1)
+//                          ↑ the identity path never vanishes</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">When dimensions change: projection shortcut</h3></div>
+        <p class="text-sm text-slate-600 mb-3">If a block changes the feature size (e.g. a conv that halves spatial size / doubles channels), <code>x</code> and <code>F(x)</code> no longer match, so you can't just add them. Use a 1×1 conv (or linear) on the skip to project <code>x</code> into the new shape before adding — the "projection shortcut" from the ResNet paper.</p>
+        <div class="relative"><pre>def forward(self, x):
+    identity = self.proj(x) if self.proj else x   # 1x1 conv if shapes differ
+    return F.relu(identity + self.f(x))</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 22 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">You saw how a single skip connection — <code>y = x + F(x)</code> — turns each block's backward factor into <code>1 + F'(x)</code>, giving gradients an identity highway that defeats vanishing and made 100+ layer networks trainable. Skip connections are now everywhere: ResNets, U-Nets, and every Transformer block. <strong>👉 Tomorrow — Day 23: Word2Vec.</strong></p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== GRADIENT-FLOW DEMO =====
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+const W = cv.width, H = cv.height;
+const depthR = document.getElementById("depth"), depthV = document.getElementById("depthV");
+const actSel = document.getElementById("act");
+
+// average |f'| for each activation (order-of-magnitude honest)
+function meanDeriv(act){
+  if (act === "sigmoid") return 0.25;   // max of sigmoid'
+  if (act === "tanh")    return 0.42;   // typical operating value
+  return 0.9;                            // ReLU: 1 for active units, some dead
+}
+function compute(){
+  const N = +depthR.value;
+  const f = meanDeriv(actSel.value);
+  // plain: product of f each layer ; resnet: product of (1 + f) but the
+  // residual branch is scaled so a healthy net hovers near 1 (identity dominates)
+  const plain = [], res = [];
+  let gp = 1, gr = 1;
+  for (let l = 0; l < N; l++){
+    gp *= f;                       // plain factor
+    // residual: identity(1) + small branch(f * 0.6 damping) → ~1
+    gr *= (1 + f) * 0.62;          // 0.62 keeps a healthy resnet near 1, not exploding
+    plain.push(gp); res.push(gr);
+  }
+  return { plain, res, N };
+}
+function verdict(v){
+  if (v < 1e-4) return {t:"VANISHED", c:"v-van"};
+  if (v > 50)   return {t:"EXPLODED", c:"v-exp"};
+  return {t:"STABLE ✓", c:"v-ok"};
+}
+function draw(){
+  const { plain, res, N } = compute();
+  depthV.textContent = N;
+  ctx.clearRect(0,0,W,H);
+  const pad = 40, bw = (W - pad*2) / N;
+  const logScale = v => { const lv = Math.log10(Math.max(v, 1e-12)); return (lv + 12) / 14; }; // map 1e-12..~1e2
+  // baseline for magnitude 1
+  ctx.strokeStyle = "#cbd5e1"; ctx.setLineDash([4,4]);
+  const y1 = H - 30 - logScale(1)*(H-60);
+  ctx.beginPath(); ctx.moveTo(pad,y1); ctx.lineTo(W-pad,y1); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle="#94a3b8"; ctx.font="10px monospace"; ctx.fillText("magnitude 1", W-pad-70, y1-4);
+  for (let l = 0; l < N; l++){
+    const x = pad + l*bw;
+    // plain (rose light)
+    const hp = logScale(plain[l])*(H-60);
+    ctx.fillStyle = "rgba(148,163,184,.85)";
+    ctx.fillRect(x+1, H-30-hp, bw*0.42, hp);
+    // resnet (rose)
+    const hr = logScale(res[l])*(H-60);
+    ctx.fillStyle = "#f43f5e";
+    ctx.fillRect(x+1+bw*0.46, H-30-hr, bw*0.42, hr);
+  }
+  ctx.fillStyle="#64748b"; ctx.font="11px sans-serif";
+  ctx.fillText("layer 1 (input)", pad, H-12); ctx.fillText("output →", W-pad-50, H-12);
+  ctx.fillStyle="rgba(148,163,184,1)"; ctx.fillRect(pad, 12, 12, 12); ctx.fillStyle="#475569"; ctx.fillText("plain", pad+16, 22);
+  ctx.fillStyle="#f43f5e"; ctx.fillRect(pad+70, 12, 12, 12); ctx.fillStyle="#475569"; ctx.fillText("resnet", pad+86, 22);
+  // readouts
+  const pv = plain[0] !== undefined ? plain[plain.length-1] : 0; // grad reaching layer 1 = full product
+  const rv = res[res.length-1];
+  document.getElementById("plainG").textContent = pv.toExponential(2);
+  document.getElementById("resG").textContent   = rv.toExponential(2);
+  const pV = verdict(pv), rV = verdict(rv);
+  const pe = document.getElementById("plainV"), re = document.getElementById("resV");
+  pe.textContent = pV.t; pe.className = "verdict "+pV.c;
+  re.textContent = rV.t; re.className = "verdict "+rV.c;
+}
+depthR.oninput = draw; actSel.onchange = draw; draw();
+
+// ===== UNDERSTAND step engine =====
+const STEPS = [
+ { title:"1. Recap: gradients vanish with depth", why:"Yesterday's page showed the problem: backpropagation multiplies one factor per layer, and when those factors are less than one (as sigmoid and tanh derivatives always are), the product shrinks exponentially. By the time the gradient reaches the early layers of a deep network it's effectively zero, so those layers barely learn. Worse, researchers found that simply stacking more plain layers made networks perform WORSE, not better — a 56-layer plain net had higher training error than a 20-layer one. Depth had hit a wall.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">plain deep net: Π f'(z) → 0<br>early layers stop learning<br>56 layers WORSE than 20 (paper, 2015)<br>depth hit a wall</div>`, code:`// Plain deep net backprop:
+// dL/dx₁ = f'(z_N) · f'(z_{N-1}) · ... · f'(z₁)
+// each f' ≤ 1  →  product → 0  (vanishing)` },
+ { title:"2. The degradation puzzle", why:"Here's the paradox the ResNet authors highlighted: a deeper network should be able to match a shallower one just by making the extra layers do nothing (identity). So a deep net should never be WORSE than a shallow one. Yet in practice it was — optimisation couldn't find that identity solution through many nonlinear layers. The insight: if learning an identity mapping is hard, change the architecture so identity is the easy default and the layers only have to learn the difference from it.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">deeper net could just copy shallow + identity<br>...but optimisation can't find identity<br>fix: make identity the DEFAULT</div>`, code:`// A deep net should be ≥ a shallow one
+// (extra layers = identity). But plain nets
+// can't easily LEARN identity through nonlinearities.
+// ResNet makes identity the starting point.` },
+ { title:"3. The residual reformulation", why:"Instead of asking a block to learn the full desired mapping H(x), ResNet asks it to learn the residual F(x) = H(x) − x, and then adds x back: output = x + F(x). If the ideal mapping is close to identity, F(x) just needs to be near zero — trivially easy (push the weights toward zero). The block only has to learn the small correction on top of passing the input through. That reframing is the entire idea, and it's why it's called a 'residual' network.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">want: H(x)<br>learn instead: F(x) = H(x) − x<br>output = x + F(x)<br>ideal ≈ identity → F(x) ≈ 0 (easy!)</div>`, code:`// Reformulate the goal:
+//   plain block:   learn H(x)          (hard)
+//   residual block: learn F(x)=H(x)-x  (easy if H≈identity)
+//   output = x + F(x)` },
+ { title:"4. The skip connection", why:"Mechanically, the residual idea is implemented with a skip (or shortcut) connection: a wire that carries the block's input x directly to its output, bypassing the transformation, where it's added. No extra parameters, no extra computation — just an addition. That tiny wire is what people mean by 'skip connection', and it's the defining feature of a ResNet block. When the shapes match it's literally identity + F(x); when they differ you project x first.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">x ──────────────┐ (skip)<br>&nbsp;└─ F(x) [layers] ─(+)→ y<br>y = x + F(x) · no extra params</div>`, code:`def forward(self, x):
+    return F.relu(x + self.f(x))   # skip = "x +"` },
+ { title:"5. Why the +1 defeats vanishing", why:"This is the mathematical payoff. Differentiate the block: d(x + F(x))/dx = 1 + F'(x). During backprop, the gradient through a stack of residual blocks multiplies these (1 + F'(x)) terms instead of bare F'(x). Even when F'(x) is tiny, each factor is about 1, so the product stays near 1 rather than collapsing to zero. The identity path acts as a gradient highway that carries the signal straight back to the earliest layers, so they keep learning even at extreme depth.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">d(x + F(x))/dx = 1 + F'(x)<br>backprop multiplies (1 + F') not F'<br>tiny F' → factor ≈ 1 → product survives<br>identity = gradient highway 🛣️</div>`, code:`// residual gradient:
+// dL/dx₁ = Π (1 + F'(zₗ))
+//              ↑ the +1 keeps each factor near 1,
+//                so the product doesn't vanish.` },
+ { title:"6. Shape changes & projection shortcuts", why:"Real networks periodically change the feature dimensions — a conv might halve the spatial resolution and double the channels. Then x and F(x) have different shapes and can't be added directly. The solution is a projection shortcut: put a 1×1 convolution (or a linear layer) on the skip path to reshape x to match F(x) before the addition. It adds a few parameters but preserves the residual structure. Most of a ResNet's shortcuts are plain identity; only the dimension-changing ones need projection.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">shapes match → identity skip<br>shapes differ → 1×1 conv on the skip<br>(projection shortcut) → then add</div>`, code:`identity = x
+if in_dim != out_dim:
+    identity = self.proj(x)      # 1x1 conv / linear
+return F.relu(identity + self.f(x))` },
+ { title:"7. The impact: depth unlocked", why:"With residual blocks, the 2015 ResNet paper trained networks 152 layers deep — an order of magnitude deeper than what worked before — and won the ImageNet competition by a large margin. Deeper finally meant better again. It also made training more stable and faster to converge. ResNet became one of the most influential architectures in deep learning history, and the residual block is now a default building block, not an exotic trick.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">ResNet-152 (2015) trained fine<br>won ImageNet, deeper = better again<br>stable, faster convergence<br>a landmark architecture</div>`, code:`// ResNet-18/34/50/101/152 — the number = depth.
+// Before ResNet, ~20 layers was a practical limit.
+// After: 100+ layers routine.` },
+ { title:"8. Skip connections are everywhere now", why:"The residual idea escaped image models. U-Net uses skip connections to carry fine detail across an encoder-decoder for segmentation. Highway networks used learned gates for a similar effect. Most importantly, every Transformer block — the backbone of modern LLMs — wraps its attention and feed-forward sublayers in residual connections (x + Sublayer(x)) plus layer normalisation. So the same +1 trick you saw here is quietly keeping gradients healthy inside GPT-scale models with hundreds of layers. One line of arithmetic, enormous consequences.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">ResNets · U-Nets · Highway nets<br>Transformers: x + Sublayer(x) in EVERY block<br>same +1 trick powering modern LLMs</div>`, code:`# Transformer block (simplified):
+x = x + attention(layernorm(x))     # residual
+x = x + feedforward(layernorm(x))   # residual
+# skip connections keep 100+ layers trainable` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },3000); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>
