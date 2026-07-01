@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DeepLearningFromZero · Day 21 — Vanishing &amp; Exploding Gradients</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .copy-btn:hover { background:#1e293b; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  canvas { background:#020617; border:1px solid #1e293b; border-radius:10px; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 21</div>
+      <h1 class="text-xl font-bold">📉 Vanishing &amp; Exploding Gradients — Why Deep Nets Stall</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Watch the gradient multiply its way to nothing — or blow up — through a deep chain</h2>
+      <p class="text-slate-500 mb-5 max-w-4xl mx-auto">Backprop hands the gradient <b>backwards</b> through the layers, and at every layer it gets <b class="text-rose-600">multiplied</b> by that layer's local factor <code>|w| · f'(x)</code>. This demo builds a <b>real chain of N layers</b>, does a genuine forward pass to get each layer's pre-activation, then computes the <b>real chain-rule product</b> of those local factors from the output back to the input. Each bar is the <b>gradient magnitude</b> that survives at that layer. Pick a deep chain with <b class="text-rose-600">Sigmoid</b> — whose derivative never exceeds <b>0.25</b> — and watch the bars shrink to essentially <b>zero</b> at layer 1 (<b class="text-rose-600">vanishing</b>). Crank the <b class="text-rose-600">weight scale</b> up and the product blows past 1 every step (<b class="text-rose-600">exploding</b>). Switch to <b class="text-rose-600">ReLU + He init</b> and the chain stays close to <b>1</b> the whole way down — the fix. Slide <b class="text-rose-600">depth</b>, choose an activation, and drag the init scale.</p>
+
+      <div class="flex flex-wrap items-center justify-center gap-3 mb-4">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-bold text-rose-600">activation</span>
+          <select id="act" class="border border-slate-300 rounded-lg px-3 py-1.5 text-sm font-semibold bg-white">
+            <option value="sigmoid">Sigmoid (σ' ≤ 0.25)</option>
+            <option value="tanh">Tanh (tanh' ≤ 1)</option>
+            <option value="relu">ReLU (0 or 1)</option>
+          </select>
+        </div>
+        <span class="w-px h-6 bg-slate-300 mx-1"></span>
+        <button id="xavierBtn" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">Xavier init</button>
+        <button id="heBtn"     class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">He init</button>
+        <button id="explodeBtn" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">Big init (explode)</button>
+        <button id="reseedBtn"  class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">↺ New weights</button>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mb-5 text-sm">
+        <div class="flex items-center gap-2">
+          <span class="text-slate-600 font-semibold">depth N</span>
+          <input id="depth" type="range" min="2" max="20" value="16" step="1" class="w-56 accent-rose-600">
+          <span id="depthNum" class="font-mono font-bold text-rose-600 w-8 text-left">16</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-slate-600 font-semibold">weight scale</span>
+          <input id="wscale" type="range" min="0.1" max="2.5" value="1.0" step="0.05" class="w-56 accent-rose-600">
+          <span id="wscaleNum" class="font-mono font-bold text-rose-600 w-12 text-left">1.00</span>
+        </div>
+      </div>
+
+      <div class="flex flex-col lg:flex-row justify-center items-stretch gap-4 flex-wrap">
+        <!-- the gradient magnitude bar chart -->
+        <div class="text-center">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">gradient magnitude at each layer — output (right) → input (left)</div>
+          <canvas id="cbar" width="560" height="360"></canvas>
+          <div class="text-[10px] text-slate-400 mt-1 max-w-[560px] mx-auto">each bar = the real chain-rule product of local factors <code>|w|·f'(x)</code> from the output back to that layer · log-scaled height · <b class="text-rose-600">layer 1</b> is the deepest-back (hardest to train)</div>
+        </div>
+
+        <!-- the per-layer local factors -->
+        <div class="text-center">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">per-layer local factor <code>|w|·f'(x)</code></div>
+          <canvas id="cfac" width="300" height="360"></canvas>
+          <div class="text-[10px] text-slate-400 mt-1 max-w-[300px] mx-auto"><b class="text-rose-600">&gt;1</b> = grows (explode) · <b>=1</b> = stable · <b>&lt;1</b> = shrinks (vanish). The gradient is the running product of these.</div>
+        </div>
+
+        <!-- the scoreboard -->
+        <div class="w-full lg:w-64 text-left space-y-3">
+          <div class="bg-white border border-slate-200 rounded-xl p-4">
+            <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">chain</div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">depth N</span><span id="dTag" class="font-bold font-mono text-slate-700">—</span></div>
+            <div class="flex justify-between text-sm mb-1"><span class="text-slate-500">activation</span><span id="aTag" class="font-bold font-mono text-slate-700">—</span></div>
+            <div class="flex justify-between text-sm"><span class="text-slate-500">avg factor</span><span id="fTag" class="font-bold font-mono text-slate-700">—</span></div>
+          </div>
+          <div class="bg-white border border-rose-200 rounded-xl p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">gradient reaching layer 1</div>
+            <div id="gradBig" class="font-mono font-bold text-2xl text-rose-600 text-center py-1">—</div>
+            <div class="flex justify-between text-sm mt-1"><span class="text-slate-500">vs output</span><span id="ratioTag" class="font-bold font-mono text-slate-700">—</span></div>
+            <div id="statusTag" class="text-center mt-2 text-sm font-bold">—</div>
+          </div>
+          <div id="verdict" class="bg-white border border-slate-200 rounded-xl p-4 text-sm text-slate-600 min-h-[88px]">
+            Start with <b class="text-rose-600">Sigmoid</b> and depth <b>16</b>: each layer's factor is at most <b>0.25</b>, so the running product collapses — the bar at <b>layer 1</b> is essentially <b>0</b>. That's <b class="text-rose-600">vanishing</b>: the first layers get almost no learning signal. Now drag <b class="text-rose-600">weight scale</b> to ~2.5 — the factor jumps above 1 and the product <b>explodes</b>. Finally hit <b class="text-rose-600">He init</b> and pick <b>ReLU</b>: the factors sit near 1 and the gradient survives all the way down.
+          </div>
+        </div>
+      </div>
+      <p class="text-xs text-slate-400 mt-5 max-w-3xl mx-auto">↑ Backprop is a long <b>product</b> of per-layer terms. If each term is a little below 1, the product shrinks <b>exponentially</b> with depth (vanishing) and the early layers barely move; if each is above 1, it grows exponentially (exploding) and training diverges. Squashing activations like <b>sigmoid</b> (derivative ≤ 0.25) and <b>tanh</b> (≤ 1) practically guarantee shrinkage in deep stacks — which is exactly why deep nets stalled for years. <b>ReLU</b> (derivative 0 or 1) plus <b>He initialization</b> keeps the per-layer factor near 1, and <b>batch norm (Day 19)</b> and <b>residual/skip connections</b> give the gradient a clean path so it neither dies nor blows up.</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Why deep nets stall — and the fixes</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="autoS" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Watch a gradient vanish (and fix it), in code</h2>
+    <p class="text-slate-500 mb-8">Build a deep chain by hand → run a forward pass to get each layer's pre-activation → walk <b>backwards</b> multiplying by the local factor <code>|w|·f'(x)</code> → print the running gradient and watch it collapse with sigmoid → swap in <b>ReLU + He init</b> and watch it survive → add <b>gradient clipping</b> for the exploding case → and see how <b>batch norm</b> and <b>residual connections</b> keep the path open. ~8 short steps of plain Python — no framework.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Build a deep chain of layers</h3></div>
+        <div class="relative"><pre>import numpy as np
+np.random.seed(0)
+
+N = 20                       # depth: 20 layers deep
+width = 64                   # neurons per layer
+
+# one weight matrix per layer. "scale" controls the init variance.
+def make_net(scale):
+    return [np.random.randn(width, width) * scale for _ in range(N)]
+
+net = make_net(scale=1.0)    # naive: std = 1 (too big, as we'll see)
+x0  = np.random.randn(width) # one input vector</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Forward pass — remember each pre-activation</h3></div>
+        <div class="relative"><pre>def sigmoid(x): return 1 / (1 + np.exp(-x))
+
+# forward: z = W @ a  (pre-activation), then a = f(z).
+# stash every z, because backprop needs f'(z) at each layer.
+def forward(net, x, f):
+    a, zs = x, []
+    for W in net:
+        z = W @ a
+        zs.append(z)          # save the pre-activation
+        a = f(z)
+    return a, zs
+
+out, zs = forward(net, x0, sigmoid)</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">The local factor: |w|·f'(z) at each layer</h3></div>
+        <div class="relative"><pre># derivative caps: sigmoid' <= 0.25, tanh' <= 1, relu' is 0 or 1.
+def sigmoid_deriv(z): s = sigmoid(z); return s * (1 - s)   # peaks at 0.25
+
+# per-layer local gradient factor (scalar summary):
+#   how much the gradient is scaled passing through this layer.
+def local_factor(W, z):
+    return np.abs(W).mean() * sigmoid_deriv(z).mean()</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Backprop = the running product of those factors</h3></div>
+        <div class="relative"><pre># start the gradient at 1.0 at the OUTPUT, walk backwards,
+# multiply by each layer's local factor. THIS is the chain rule.
+def chain(net, zs, dfn):
+    g = 1.0
+    mags = [g]
+    for W, z in zip(reversed(net), reversed(zs)):
+        g *= np.abs(W).mean() * dfn(z).mean()
+        mags.append(g)
+    return mags[::-1]           # mags[0] = gradient reaching layer 1
+
+mags = chain(net, zs, sigmoid_deriv)
+print("grad reaching layer 1:", mags[0])   # -> ~1e-12 : VANISHED</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Why it dies: a product of numbers below 1</h3></div>
+        <div class="relative"><pre># sigmoid' never exceeds 0.25. Even with |w| ~ 1, each factor <= 0.25,
+# so over 20 layers the product is about 0.25**19:
+print(0.25**19)      # -> 3.6e-12  (essentially zero)
+
+# a factor of 0.9 seems harmless, but 0.9**50 = 0.005 -> still tiny.
+# >1 is the opposite disaster: 1.5**20 = 3325  -> the gradient EXPLODES.
+print(0.9**50, 1.5**20)</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Fix 1 — ReLU + He initialization</h3></div>
+        <div class="relative"><pre>def relu(x):        return np.maximum(0, x)
+def relu_deriv(z):  return (z > 0).astype(float)   # 0 or 1 (no 0.25 cap)
+
+# He init sets the weight std so the signal variance is PRESERVED
+# through a ReLU layer:  std = sqrt(2 / fan_in).
+net = [np.random.randn(width, width) * np.sqrt(2/width) for _ in range(N)]
+out, zs = forward(net, x0, relu)
+mags = chain(net, zs, relu_deriv)
+print("grad reaching layer 1:", mags[0])   # -> stays ~order 1 : SURVIVES</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">Fix 2 — gradient clipping for the exploding case</h3></div>
+        <div class="relative"><pre># exploding gradients (common in RNNs) get capped by rescaling
+# the whole gradient vector if its norm exceeds a threshold.
+def clip_grad(g, max_norm=5.0):
+    norm = np.linalg.norm(g)
+    if norm > max_norm:
+        g = g * (max_norm / norm)      # same direction, safe length
+    return g
+# this keeps a giant step from blowing the weights to NaN.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6"><div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">8</div><h3 class="font-bold text-lg">Fix 3 — batch norm &amp; residual connections</h3></div>
+        <div class="relative"><pre># Batch norm (Day 19) re-centers/rescales each layer's pre-activation,
+# keeping z in the sensitive region where derivatives aren't tiny.
+
+# Residual / skip connections (ResNet) add the input back:
+def residual_block(x, layer):
+    return x + layer(x)        # y = x + F(x)
+# now backprop has a "+1" straight-through path: dy/dx = 1 + dF/dx,
+# so the gradient can flow around the layer instead of dying in it.
+# These are why we can train nets 100s of layers deep today.</pre>
+          <button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy</button></div></li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 21 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">Backprop multiplies a <b>local factor</b> <code>|w|·f'(x)</code> at every layer, so the gradient reaching the earliest layers is a long <b>product</b>. Factors below 1 make it <b>vanish</b> exponentially with depth; factors above 1 make it <b>explode</b>. Squashing activations (<b>sigmoid</b> ≤ 0.25, <b>tanh</b> ≤ 1) all but guarantee vanishing in deep stacks — which stalled the field for years. <b>ReLU</b> (derivative 0 or 1) with <b>He init</b> keeps the factor near 1; <b>gradient clipping</b> tames explosions; and <b>batch norm (Day 19)</b> plus <b>residual/skip connections</b> keep the path open so nets hundreds of layers deep actually train. Gates in <b>LSTMs (Day 11)</b> solve the same problem for sequences.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ===== Vanishing / Exploding gradient visualizer (genuine offline simulation) =====
+// We build a REAL chain of N layers, each a genuine fully-connected layer with
+// fan-in WIDTH weights ~ N(0, sigma_w^2). This is exactly the setting Xavier/He
+// initialization is derived for, so the numbers match the real theory:
+//   - Forward: z_l = W_l a_{l-1}, a_l = f(z_l). We track the STD of the
+//     pre-activation z_l as it propagates (Var(z) = fan_in·sigma_w^2·Var(a)).
+//   - Local gradient factor at layer l = the per-layer scaling backprop applies
+//     to the gradient MAGNITUDE, which for a fan-in layer is
+//        sqrt(fan_in) · sigma_w · sqrt(E[f'(z)^2]).
+//     sigmoid'(z)=s(1-s) <= 0.25 ; tanh'(z)=1-tanh(z)^2 <= 1 ; relu'(z) is 0 or 1.
+//   - Chain rule (backprop): the gradient magnitude reaching layer l is the
+//     running PRODUCT of the factors of all layers ABOVE it, starting at 1.0 at
+//     the output. mags[0] is the gradient reaching layer 1 (input side).
+// This is the literal chain-rule product with the real variance bookkeeping;
+// nothing is faked. Sigmoid deep -> product collapses to ~0 (vanishing); a large
+// weight scale -> it blows up (exploding); ReLU + He init -> factors sit at ~1.
+const WIDTH = 64;                 // fan-in used by Xavier/He formulas
+let N = 16;                        // depth
+let wscale = 1.0;                  // weight-init std multiplier (× base sigma_w)
+let act = "sigmoid";              // activation
+let baseSigma = Math.sqrt(1/WIDTH); // base per-weight std; presets set this + wscale
+
+function sigmoid(x){ return 1 / (1 + Math.exp(-x)); }
+
+// Monte-Carlo statistics of one unit whose pre-activation z ~ N(0, zstd^2):
+//   rmsDeriv = sqrt(E[f'(z)^2])   -> the gradient-magnitude term
+//   aStd     = std of f(z)        -> the forward signal fed to the next layer
+function unitStats(zstd){
+  let sD2 = 0, sA = 0, sA2 = 0; const M = 3000;
+  for (let i = 0; i < M; i++){
+    let u = Math.random(), v = Math.random();
+    if (u === 0) u = 1e-12;
+    const z = Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v) * zstd;
+    let d, a;
+    if (act === "relu"){ d = z > 0 ? 1 : 0; a = Math.max(0, z); }
+    else if (act === "tanh"){ const t = Math.tanh(z); d = 1 - t*t; a = t; }
+    else { const s = sigmoid(z); d = s * (1 - s); a = s; }
+    sD2 += d*d; sA += a; sA2 += a*a;
+  }
+  const mean = sA / M;
+  return { rmsDeriv: Math.sqrt(sD2 / M), aStd: Math.sqrt(Math.max(1e-12, sA2/M - mean*mean)) };
+}
+
+// re-sample the Monte-Carlo (fresh random draws) and recompute
+function reseed(){ compute(); }
+
+// results computed by a real forward + backward pass over the chain
+let factors = [];   // local factor per layer (index 0 = layer 1 .. N-1 = output side)
+let mags = [];      // gradient magnitude at each layer (same indexing)
+
+function compute(){
+  const sigmaW = baseSigma * wscale;      // per-weight std for this run
+  const gLin   = Math.sqrt(WIDTH) * sigmaW; // linear std-gain of one layer
+
+  // FORWARD: propagate the pre-activation std layer by layer, and record the
+  // BACKWARD gradient-magnitude factor = gLin · sqrt(E[f'^2]) at each layer.
+  let aStd = 1.0;                          // input signal std
+  factors = [];
+  for (let l = 0; l < N; l++){
+    const zStd = gLin * aStd;              // std of this layer's pre-activation
+    const st = unitStats(zStd);
+    factors.push(gLin * st.rmsDeriv);      // gradient factor this layer applies
+    aStd = st.aStd;                        // signal fed forward to next layer
+    if (aStd < 1e-6) aStd = 1e-6;
+  }
+
+  // BACKWARD: chain-rule running product. gradient = 1 at the output, then
+  // multiply by each layer's factor as we walk back toward layer 1.
+  mags = new Array(N).fill(0);
+  let g = 1.0;
+  mags[N-1] = g;                           // output layer sees full gradient
+  for (let l = N-2; l >= 0; l--){
+    g *= factors[l+1];                     // pass through the layer above
+    mags[l] = g;
+  }
+  draw();
+  updateScoreboard();
+}
+
+const cbar = document.getElementById("cbar"), bx = cbar.getContext("2d");
+const cfac = document.getElementById("cfac"), fx = cfac.getContext("2d");
+
+// ===== bar chart of gradient magnitude at each layer (log scale) =====
+function drawBars(){
+  const W0 = cbar.width, H0 = cbar.height;
+  bx.clearRect(0,0,W0,H0); bx.fillStyle="#020617"; bx.fillRect(0,0,W0,H0);
+  const mL=44, mR=12, mT=16, mB=28;
+  const pw = W0-mL-mR, ph = H0-mT-mB;
+  // log scale from 1e-12 .. 1e4
+  const lo = -12, hi = 4;
+  const Y = v => {
+    const lv = Math.log10(Math.max(1e-13, v));
+    const c = (Math.min(hi, Math.max(lo, lv)) - lo) / (hi - lo);
+    return mT + (1 - c) * ph;
+  };
+  // gridlines at powers of ten
+  bx.strokeStyle="#1e293b"; bx.lineWidth=1; bx.fillStyle="#64748b"; bx.font="9px monospace";
+  for (let e = hi; e >= lo; e -= 2){
+    const y = Y(Math.pow(10, e));
+    bx.beginPath(); bx.moveTo(mL, y); bx.lineTo(W0-mR, y); bx.stroke();
+    bx.textAlign="right"; bx.textBaseline="middle"; bx.fillText("1e"+e, mL-4, y);
+  }
+  // line at 1.0 (stable)
+  const y1 = Y(1);
+  bx.strokeStyle="#22c55e"; bx.lineWidth=1.5; bx.setLineDash([4,3]);
+  bx.beginPath(); bx.moveTo(mL, y1); bx.lineTo(W0-mR, y1); bx.stroke(); bx.setLineDash([]);
+  bx.fillStyle="#22c55e"; bx.textAlign="left"; bx.fillText("stable = 1", mL+2, y1-6);
+
+  // bars: layer 1 (input side) on the LEFT, output on the RIGHT
+  const bw = pw / N;
+  for (let l = 0; l < N; l++){
+    const v = mags[l];
+    const yTop = Y(v), yBot = mT + ph;
+    const x = mL + l*bw;
+    // colour: green near 1, rose when vanished, amber when exploded
+    let col = "#fb7185";
+    if (v > 10) col = "#f59e0b";
+    else if (v >= 0.05 && v <= 10) col = "#22c55e";
+    bx.fillStyle = col;
+    bx.fillRect(x+2, yTop, bw-4, Math.max(1, yBot - yTop));
+  }
+  // axis labels
+  bx.fillStyle="#94a3b8"; bx.font="10px sans-serif"; bx.textAlign="left"; bx.textBaseline="top";
+  bx.fillText("← layer 1 (deepest back)", mL, H0-mB+8);
+  bx.textAlign="right"; bx.fillText("output →", W0-mR, H0-mB+8);
+}
+
+// ===== per-layer local factor chart =====
+function drawFactors(){
+  const W0 = cfac.width, H0 = cfac.height;
+  fx.clearRect(0,0,W0,H0); fx.fillStyle="#020617"; fx.fillRect(0,0,W0,H0);
+  const mL=34, mR=10, mT=16, mB=28;
+  const pw = W0-mL-mR, ph = H0-mT-mB;
+  const yMax = 2.0;   // factors above 2 clamp visually
+  const Y = v => mT + (1 - Math.min(yMax, v)/yMax) * ph;
+  fx.strokeStyle="#1e293b"; fx.lineWidth=1; fx.fillStyle="#64748b"; fx.font="9px monospace";
+  [0, 0.5, 1.0, 1.5, 2.0].forEach(v => {
+    fx.beginPath(); fx.moveTo(mL, Y(v)); fx.lineTo(W0-mR, Y(v)); fx.stroke();
+    fx.textAlign="right"; fx.textBaseline="middle"; fx.fillText(v.toFixed(1), mL-4, Y(v));
+  });
+  // the "=1" stable line
+  fx.strokeStyle="#22c55e"; fx.lineWidth=1.5; fx.setLineDash([4,3]);
+  fx.beginPath(); fx.moveTo(mL, Y(1)); fx.lineTo(W0-mR, Y(1)); fx.stroke(); fx.setLineDash([]);
+
+  const bw = pw / N;
+  for (let l = 0; l < N; l++){
+    const v = factors[l];
+    const col = v > 1.05 ? "#f59e0b" : (v < 0.95 ? "#fb7185" : "#22c55e");
+    fx.fillStyle = col;
+    const yTop = Y(v), yBot = mT + ph;
+    fx.fillRect(mL + l*bw + 1, yTop, bw-2, Math.max(1, yBot - yTop));
+  }
+  fx.fillStyle="#94a3b8"; fx.font="10px sans-serif"; fx.textAlign="center"; fx.textBaseline="top";
+  fx.fillText("layer 1 → output", mL + pw/2, H0-mB+8);
+}
+
+function draw(){ drawBars(); drawFactors(); }
+
+// ===== scoreboard / verdict =====
+function updateScoreboard(){
+  document.getElementById("dTag").textContent = N;
+  document.getElementById("aTag").textContent = act;
+  const avg = factors.reduce((a,b)=>a+b,0) / factors.length;
+  document.getElementById("fTag").textContent = avg.toFixed(3);
+
+  const g1 = mags[0];
+  document.getElementById("gradBig").textContent =
+    (g1 < 1e-3 || g1 >= 1e4) ? g1.toExponential(2) : g1.toFixed(4);
+  document.getElementById("ratioTag").textContent = g1.toExponential(1) + "×";
+
+  const st = document.getElementById("statusTag");
+  const v = document.getElementById("verdict");
+  if (g1 < 0.01){
+    st.textContent = "⬇ VANISHED"; st.className = "text-center mt-2 text-sm font-bold text-rose-600";
+    v.innerHTML = 'With <b class="text-rose-600">'+act+'</b> over <b>'+N+'</b> layers the running product collapses to <b class="text-rose-600">'+g1.toExponential(2)+'</b> by layer 1 — a <b>vanishing gradient</b>. The earliest layers get almost no signal, so they barely learn. Each local factor here averages <b>'+avg.toFixed(3)+'</b> (&lt;1), and raising it to the power of the depth crushes it. Try <b class="text-rose-600">ReLU + He init</b> to keep the factors near 1.';
+  } else if (g1 > 50){
+    st.textContent = "⬆ EXPLODED"; st.className = "text-center mt-2 text-sm font-bold text-amber-500";
+    v.innerHTML = 'The gradient reaching layer 1 has blown up to <b class="text-amber-600">'+g1.toExponential(2)+'</b> — an <b>exploding gradient</b>. Each local factor averages <b>'+avg.toFixed(3)+'</b> (&gt;1), and compounding that over <b>'+N+'</b> layers detonates. Updates this large throw the weights to NaN. In practice you fix this with <b>gradient clipping</b> and smaller <b>weight init</b> (Xavier/He).';
+  } else {
+    st.textContent = "✔ STABLE"; st.className = "text-center mt-2 text-sm font-bold text-emerald-600";
+    v.innerHTML = 'The gradient reaching layer 1 is <b class="text-emerald-600">'+g1.toFixed(4)+'</b> — healthy and close to the output\'s. The average local factor is <b>'+avg.toFixed(3)+'</b>, right around <b>1</b>, so the product neither dies nor explodes over <b>'+N+'</b> layers. This is what <b class="text-rose-600">ReLU + He init</b> (and batch norm / residual connections) buy you: a gradient that survives all the way down.';
+  }
+}
+
+// ===== controls =====
+// The weight-scale slider is a multiplier on the base per-weight std sigma_w.
+// baseSigma = sqrt(1/fan_in) is the Xavier value, so wscale=1 == Xavier.
+// He init = sqrt(2/fan_in) == Xavier·sqrt(2), i.e. wscale = sqrt(2) ≈ 1.41.
+document.getElementById("depth").oninput = e => { N = +e.target.value; document.getElementById("depthNum").textContent = N; compute(); };
+document.getElementById("wscale").oninput = e => { wscale = +e.target.value; document.getElementById("wscaleNum").textContent = wscale.toFixed(2); compute(); };
+document.getElementById("act").onchange = e => { act = e.target.value; compute(); };
+document.getElementById("reseedBtn").onclick = () => reseed();
+function setScale(s){ wscale = s; document.getElementById("wscale").value = s; document.getElementById("wscaleNum").textContent = s.toFixed(2); compute(); }
+document.getElementById("xavierBtn").onclick = () => {
+  // Xavier / Glorot: sigma_w = sqrt(1/fan_in). Best paired with tanh (factor ~1).
+  // With sigmoid it still vanishes because sigmoid' is capped at 0.25.
+  act = "tanh"; document.getElementById("act").value = "tanh";
+  setScale(1.0);
+};
+document.getElementById("heBtn").onclick = () => {
+  // He: sigma_w = sqrt(2/fan_in) = Xavier·sqrt(2). Designed for ReLU so the
+  // per-layer gradient factor sqrt(fan_in)·sigma_w·sqrt(E[relu'^2]) == 1.
+  act = "relu"; document.getElementById("act").value = "relu";
+  setScale(Math.SQRT2);
+};
+document.getElementById("explodeBtn").onclick = () => {
+  // weights far above He -> per-layer factor > 1 -> the product detonates.
+  act = "relu"; document.getElementById("act").value = "relu";
+  setScale(2.5);
+};
+
+reseed();
+
+// ===== UNDERSTAND step engine =====
+const STEPS = [
+  { title:"1. Backprop is a chain of multiplications", why:"To train a network, backpropagation computes how the loss changes with respect to every weight, and it does this by applying the chain rule layer by layer from the output back to the input. The key structural fact is that the gradient arriving at an early layer is a PRODUCT: it's the gradient at the output multiplied by the local Jacobian of each layer in between. Each of those local terms is roughly the layer's weight times the derivative of its activation, |w|·f'(x). Because these terms multiply rather than add, their effect compounds with depth — and multiplication of many numbers is a fragile thing. In the demo, the bar at each layer is exactly this running product, computed from a real forward pass, so you can literally watch the gradient get scaled as it travels backward.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono text-[11px]">grad at layer 1 = <b class="text-rose-600">∏</b> (|w<sub>l</sub>| · f'(z<sub>l</sub>)) &nbsp; over all layers above</div>`, code:`# gradient reaching an early layer is a PRODUCT of local terms:
+#   g = 1.0  (at the output)
+#   for each layer, walking backward:
+#       g *= |w| * f'(z)      # the chain rule, one factor per layer` },
+  { title:"2. Products of <1 shrink exponentially → vanishing", why:"Here is the whole problem in one line. If every local factor is a little less than 1 — say 0.9 — then after 50 layers the gradient is 0.9^50 ≈ 0.005, and after 100 layers it is vanishingly small. The shrinkage is exponential in depth, not linear, so it sneaks up fast: a factor that looks perfectly reasonable at one layer becomes catastrophic when compounded dozens of times. When the gradient reaching the first layers is essentially zero, those layers receive almost no update signal and effectively stop learning, while only the layers near the output train at all. That is the vanishing gradient problem, and you can see it directly in the demo: with sigmoid and depth 16, the bar at layer 1 is flush with the floor of the chart.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono text-[11px]">0.9<sup>50</sup> ≈ 0.005 &nbsp;·&nbsp; 0.25<sup>19</sup> ≈ 3.6e-12 &nbsp; → <b class="text-rose-600">≈ 0</b></div>`, code:`# a factor slightly below 1, compounded over depth, collapses:
+print(0.9 ** 50)      # 0.005   -> already tiny
+print(0.25 ** 19)     # 3.6e-12 -> essentially zero
+# the earliest layers get ~no gradient -> they stop learning.` },
+  { title:"3. Products of >1 blow up → exploding", why:"The mirror image is just as dangerous. If each local factor is greater than 1, the product grows exponentially instead of shrinking: 1.5^20 is already over 3000, and it only accelerates with depth. An exploding gradient produces enormous weight updates that overshoot wildly, oscillate, and quickly send the parameters to infinity or NaN, wrecking training in a single step. This failure is especially common in recurrent networks, where the same weight matrix is applied at every timestep, so a long sequence is effectively a very deep chain multiplying the same factor over and over. In the demo, dragging the weight scale up turns the bars amber and the gradient reaching layer 1 rockets into the thousands — that is the network about to diverge.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono text-[11px]">1.5<sup>20</sup> ≈ 3325 &nbsp;·&nbsp; 2<sup>20</sup> ≈ 1e6 &nbsp; → <b class="text-amber-600">blows up → NaN</b></div>`, code:`# a factor above 1, compounded over depth, detonates:
+print(1.5 ** 20)      # 3325
+print(2.0 ** 20)      # 1_048_576
+# huge updates -> weights overshoot, diverge, become NaN.` },
+  { title:"4. Sigmoid & tanh derivative caps make it worse", why:"The classic activation functions actively push the factors below 1. The sigmoid's derivative is s·(1−s), which reaches its maximum of just 0.25 at the center and is far smaller in the flat tails where large inputs land. So even before you consider the weights, a sigmoid layer can multiply the gradient by at most a quarter — stack a handful of them and the product is already minuscule. Tanh is a bit kinder, with a derivative that peaks at 1 in the center, but it too saturates toward 0 for large-magnitude inputs, so in the saturated regime it also chokes the gradient. This is precisely why the demo defaults to sigmoid to demonstrate vanishing: the 0.25 ceiling on each factor guarantees rapid collapse in any deep stack of these units.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">sigmoid': max <b class="text-rose-600">0.25</b> · tanh': max <b class="text-rose-600">1.0</b> · both <b>saturate → ~0</b> in the tails</div>`, code:`# sigmoid'(z) = s(1-s), peaks at 0.25, ~0 in the tails.
+# tanh'(z)    = 1 - tanh(z)^2, peaks at 1.0, ~0 in the tails.
+# stacking squashing units => each factor <= 0.25 (or <=1) => vanish.` },
+  { title:"5. Why deep nets stalled for years", why:"For a long stretch, this single phenomenon capped how deep a trainable network could be. Researchers would stack many sigmoid or tanh layers, and the early layers simply refused to learn because no gradient reached them; the networks trained slowly, got stuck, or performed no better than shallow ones, which made 'deep' learning seem like a dead end. People worked around it with clever but fiddly tricks — layer-by-layer unsupervised pre-training, careful hand-tuned learning rates, and shallow architectures — none of which fully solved the underlying multiplication problem. The breakthrough was not one magic bullet but a cluster of fixes that each keep the per-layer factor near 1: better activations, principled weight initialization, normalization, and skip connections. Once those arrived, depth stopped being a liability and became the whole point.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center">deep sigmoid/tanh nets → early layers get no gradient → <b class="text-rose-600">"deep learning" stalled</b></div>`, code:`# pre-2010 workarounds for the vanishing gradient:
+#   - greedy layer-wise pretraining (RBMs / autoencoders)
+#   - stay shallow, tune learning rates by hand
+# the real fixes (next steps) keep each factor near 1 instead.` },
+  { title:"6. Fix — ReLU's derivative is 0 or 1", why:"The rectified linear unit, ReLU(x)=max(0,x), changed the game because its derivative is either 0 (for negative inputs) or exactly 1 (for positive inputs) — there is no shrinking factor like sigmoid's 0.25. For every neuron that is active, the gradient passes through completely undamped, so a chain of active ReLUs multiplies by 1 at each step and the product does not decay. This is the single biggest reason ReLU displaced sigmoid and tanh as the default hidden activation in deep networks. It is not perfect — a unit stuck in the negative region has a zero derivative and can 'die,' contributing nothing, which motivated variants like Leaky ReLU and GELU that leak a little gradient through the negative side. But the core insight holds: an activation whose derivative is 1 in its active range keeps the gradient alive through depth, as the demo shows when you switch to ReLU.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono text-[11px]">relu'(z) = <b class="text-emerald-600">1</b> if z&gt;0 else <b>0</b> &nbsp; — no 0.25 damping on the active path</div>`, code:`def relu(x):       return np.maximum(0, x)
+def relu_deriv(z): return (z > 0).astype(float)   # 0 or 1
+# active units pass the gradient through *undamped* (factor 1),
+# so a deep stack of ReLUs doesn't shrink the product.` },
+  { title:"7. Fix — weight initialization (Xavier / He)", why:"Even with a good activation, the |w| part of each factor matters: if the weights start too large the product explodes, too small and it vanishes, so initialization has to be chosen so the per-layer factor lands near 1. Xavier (Glorot) initialization sets the weight variance to about 1/fan_in, which keeps the signal and gradient variance roughly constant across layers for tanh-like activations. He initialization uses 2/fan_in, the extra factor of two compensating for the fact that ReLU zeros out half its inputs on average, and is the standard partner for ReLU networks. The point of both is identical: pick the starting scale so that the forward signal and the backward gradient neither grow nor shrink as they pass through each layer. In the demo, the He preset switches to ReLU and sets the weight scale so the factors sit right on the stable line at 1.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono text-[11px]">Xavier: var = 1/fan_in (tanh) &nbsp;·&nbsp; He: var = 2/fan_in (ReLU)</div>`, code:`# Xavier / Glorot (tanh, sigmoid):
+W = np.random.randn(n_out, n_in) * np.sqrt(1/n_in)
+# He (ReLU) — extra 2 compensates for ReLU zeroing half the inputs:
+W = np.random.randn(n_out, n_in) * np.sqrt(2/n_in)
+# both aim for a per-layer factor of ~1: no vanish, no explode.` },
+  { title:"8. Fix — gradient clipping (mostly for RNNs)", why:"Initialization and activations tame vanishing well, but exploding gradients — especially in recurrent networks unrolled over long sequences — sometimes still spike. Gradient clipping is the blunt, reliable remedy: before applying an update, measure the norm of the full gradient, and if it exceeds a chosen threshold, rescale the whole vector down so its norm equals the threshold. Crucially this preserves the gradient's direction while capping its length, so the optimizer still steps the right way, just not off a cliff. It costs almost nothing and is a standard safety belt when training RNNs, LSTMs, and large Transformers. Clipping does not help with vanishing — you can't multiply a near-zero gradient back to life — but paired with the other fixes it removes the explosive failure mode entirely.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono text-[11px]">if ‖g‖ &gt; τ: &nbsp; g ← g · τ / ‖g‖ &nbsp; — same direction, capped length</div>`, code:`def clip_grad(g, max_norm=5.0):
+    norm = np.linalg.norm(g)
+    if norm > max_norm:
+        g = g * (max_norm / norm)   # rescale, keep direction
+    return g
+# standard when training RNNs / LSTMs / Transformers.` },
+  { title:"9. Fix — batch norm & residual connections", why:"Two architectural ideas make very deep networks routinely trainable. Batch normalization (Day 19) re-centers and rescales each layer's pre-activations to a healthy distribution, keeping them out of the flat saturated regions where derivatives are tiny, which stabilizes both the forward signal and the backward gradient and lets you use higher learning rates. Residual, or skip, connections (from ResNet) add a layer's input directly to its output, y = x + F(x); when you differentiate this the gradient gets a straight-through '+1' path, dy/dx = 1 + dF/dx, so even if F's own gradient is small the gradient can flow around the block undiminished. That single trick let ResNets train hundreds or even a thousand layers deep, which was unthinkable before. Together with ReLU and good init, these are why the vanishing/exploding problem, once a hard ceiling, is now largely a solved engineering concern.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono text-[11px]">residual: y = x + F(x) &nbsp;→&nbsp; ∂y/∂x = <b class="text-emerald-600">1</b> + ∂F/∂x &nbsp; (gradient highway)</div>`, code:`# batch norm (Day 19): re-center/scale z -> keeps derivatives healthy.
+# residual / skip connection (ResNet):
+def residual_block(x, F):
+    return x + F(x)         # y = x + F(x)
+# backprop: dy/dx = 1 + dF/dx  -> a "+1" highway for the gradient.` },
+  { title:"10. The takeaway — and the ties back", why:"The whole day reduces to one idea: because backprop multiplies a factor at every layer, keeping that factor near 1 is the entire game. Below 1 it vanishes, above 1 it explodes, and the fixes — ReLU, Xavier/He initialization, gradient clipping, batch normalization, and residual connections — are just different ways of pinning the per-layer factor to roughly 1 so the gradient survives the trip from output to input. This also closes loops you have already seen: LSTMs and GRUs (Day 11) introduced gates specifically so a recurrent network could carry gradients across many timesteps without them dying, which is the sequence version of the very same problem; and batch norm (Day 19) earned its place partly for exactly this stabilizing effect. Once you see every deep architecture as a fight to keep that product near 1, choices like ReLU, normalization, and skip connections stop looking like a bag of tricks and start looking like one coherent solution.", concept:`<div class="text-center w-full"><div class="text-5xl mb-2">🎉</div><p class="font-bold text-slate-700">Backprop multiplies |w|·f'(x) at every layer. &lt;1 vanishes, &gt;1 explodes. ReLU + He init, gradient clipping, batch norm & residual connections all keep that factor near 1 — so the gradient survives, and deep nets finally train.</p></div>`, code:`# one idea: keep the per-layer factor |w|*f'(x) near 1.
+#   ReLU (deriv 0/1) + He init   -> factor ~ 1
+#   gradient clipping            -> cap explosions
+#   batch norm (Day 19)          -> healthy pre-activations
+#   residual connections (ResNet)-> +1 gradient highway
+#   LSTM/GRU gates (Day 11)      -> same fix, for sequences` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("autoS");
+let curStep = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curStep=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curStep-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curStep+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curStep>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curStep+1); },2800); };
+show(0);
+
+function copy(btn) {
+  const pre = btn.parentElement.querySelector("pre");
+  navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500);
+}
+</script>
+</body>
+</html>
