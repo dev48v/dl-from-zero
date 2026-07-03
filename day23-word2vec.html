@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 23 — Word2Vec (skip-gram)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  #cv { background:#fff; border:2px solid #0f172a; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,.12); width:100%; max-width:640px; cursor:crosshair; }
+  #lossCv { background:#0f172a; border-radius:8px; width:100%; max-width:640px; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 23</div>
+      <h1 class="text-xl font-bold">🧭 Word2Vec (skip-gram) — king − man + woman ≈ queen</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-5xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Words have no meaning to a computer — until you <em>train</em> vectors for them.</h2>
+      <p class="text-slate-500 mb-4 max-w-3xl mx-auto">This trains a <strong>real skip-gram model with negative sampling</strong> — right here in your browser, no libraries. It reads a tiny toy corpus about royalty, animals and food, and for every <em>(center word, context word)</em> pair it nudges their vectors together and pushes a few random "negative" words apart, using actual gradient updates. Watch the loss fall, then see the learned <strong>12-dimensional</strong> vectors projected to 2D: related words cluster. Finally the analogy box computes <code>king − man + woman</code> and finds the nearest word — aiming for <strong>queen</strong>.</p>
+
+      <div class="flex justify-center gap-3 mb-4 flex-wrap">
+        <button id="trainBtn" class="bg-rose-600 hover:bg-rose-700 text-white px-5 py-2 rounded-lg font-semibold text-sm">▶ Train skip-gram</button>
+        <button id="resetBtn" class="bg-slate-200 hover:bg-slate-300 px-5 py-2 rounded-lg font-semibold text-sm">↺ Reset vectors</button>
+        <span class="text-sm text-slate-600 self-center">epoch <span id="epochN" class="stat font-bold text-rose-600">0</span>/220 · loss <span id="lossN" class="stat font-bold">—</span></span>
+      </div>
+
+      <canvas id="lossCv" width="640" height="90" class="mx-auto mb-4"></canvas>
+
+      <div class="grid lg:grid-cols-2 gap-4 items-start">
+        <div>
+          <canvas id="cv" width="640" height="380"></canvas>
+          <p class="text-xs text-slate-400 mt-2">2D <strong>PCA projection</strong> of the learned vectors. <strong>Click any word</strong> to see its nearest neighbours (cosine similarity). Colours are just clusters found by the model — you never told it "king" and "queen" are related.</p>
+        </div>
+        <div class="space-y-4">
+          <div class="bg-white rounded-xl border border-slate-200 p-4 text-left">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">Nearest neighbours</div>
+            <div class="text-sm text-slate-500 mb-1">Clicked: <span id="nnWord" class="font-bold text-slate-800">— (click a word in the plot)</span></div>
+            <div id="nnList" class="text-sm space-y-1"></div>
+          </div>
+          <div class="bg-white rounded-xl border border-rose-200 p-4 text-left">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">Analogy · vector arithmetic</div>
+            <div class="flex items-center gap-2 text-sm mb-2 flex-wrap">
+              <select id="aWord" class="border rounded px-2 py-1"></select><span>−</span>
+              <select id="bWord" class="border rounded px-2 py-1"></select><span>+</span>
+              <select id="cWord" class="border rounded px-2 py-1"></select><span>=</span>
+              <button id="analogyBtn" class="bg-rose-600 text-white px-3 py-1 rounded font-semibold">solve →</button>
+            </div>
+            <div id="analogyOut" class="text-sm text-slate-500">Train first, then solve. Default: king − man + woman.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">How words become geometry</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Build it yourself</h2>
+    <p class="text-slate-500 mb-8">You just watched a from-scratch skip-gram train in JS. In practice you'd reach for a battle-tested library. Here's the whole path — from raw text to trained embeddings to the analogy — in a few lines of gensim.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Prepare a corpus of tokenised sentences</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Word2Vec learns from co-occurrence, so it just needs a list of sentences, each a list of lowercased tokens. Real training uses millions of sentences (Wikipedia, news dumps); the more text, the sharper the vectors. No labels — it's fully self-supervised from raw text.</p>
+        <div class="relative"><pre>sentences = [
+    "the king rules the kingdom".split(),
+    "the queen rules the kingdom".split(),
+    "the man is a king".split(),
+    "the woman is a queen".split(),
+    # ... thousands more, ideally millions
+]</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Train Word2Vec (skip-gram + negative sampling)</h3></div>
+        <p class="text-sm text-slate-600 mb-3"><code>sg=1</code> selects skip-gram (predict context from center); <code>negative=5</code> turns on negative sampling instead of the full softmax; <code>vector_size</code> is the embedding dimension and <code>window</code> the context radius. This is exactly the algorithm the LOOK demo runs, just in optimised C.</p>
+        <div class="relative"><pre>from gensim.models import Word2Vec
+
+model = Word2Vec(
+    sentences,
+    vector_size=100,   # embedding dimension
+    window=5,          # context radius
+    sg=1,              # 1 = skip-gram, 0 = CBOW
+    negative=5,        # negative samples per positive
+    min_count=1,
+    epochs=50,
+)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Inspect vectors &amp; nearest neighbours</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Every word now has a dense vector. <code>most_similar</code> ranks the vocabulary by cosine similarity — the same operation the demo does when you click a word. Semantically related words come out on top, even though you never told the model they were related.</p>
+        <div class="relative"><pre>vec = model.wv["king"]          # a 100-d numpy array
+print(vec.shape)                # (100,)
+
+print(model.wv.most_similar("king", topn=5))
+# [('queen', 0.78), ('prince', 0.71), ('kingdom', 0.66), ...]
+
+print(model.wv.similarity("dog", "cat"))   # cosine, ~0.8</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">The analogy: king − man + woman ≈ queen</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Because gender is encoded as a roughly constant direction in vector space, subtracting "man" and adding "woman" shifts "king" along that direction and lands near "queen". <code>most_similar(positive=..., negative=...)</code> does the vector arithmetic and returns the closest word.</p>
+        <div class="relative"><pre>print(model.wv.most_similar(
+    positive=["king", "woman"],
+    negative=["man"],
+    topn=1,
+))
+# [('queen', 0.71)]   ← the famous analogy
+
+# same trick works for others:
+# paris - france + italy ≈ rome</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Save, reload, or grab pretrained vectors</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Training is a one-time cost — persist the vectors and load them anywhere. Or skip training entirely and download Google's original 300-d Word2Vec (trained on 100B words of news) via gensim's downloader. These static vectors were the standard NLP input feature for years, until contextual models (ELMo, BERT) took over.</p>
+        <div class="relative"><pre>model.wv.save_word2vec_format("vecs.txt")   # save
+# ...later
+from gensim.models import KeyedVectors
+wv = KeyedVectors.load_word2vec_format("vecs.txt")
+
+# or pretrained, no training needed:
+import gensim.downloader as api
+wv = api.load("word2vec-google-news-300")</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 23 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">You trained a real skip-gram model with negative sampling, watched dense embeddings emerge from raw co-occurrence, and saw <code>king − man + woman ≈ queen</code> fall straight out of vector arithmetic. These static word vectors were the foundation of modern NLP — one vector per word, no matter the sentence. <strong>👉 Tomorrow — Day 24: Seq2Seq &amp; the Encoder–Decoder</strong>, where we start turning sequences into other sequences (translation, summarisation).</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ============================================================
+// REAL SKIP-GRAM WITH NEGATIVE SAMPLING (vanilla JS)
+// ============================================================
+const CORPUS = [
+  "the king rules the kingdom","the queen rules the kingdom",
+  "the king is a powerful man","the queen is a powerful woman",
+  "the man is a king","the woman is a queen",
+  "the prince is a young man","the princess is a young woman",
+  "the prince will become a king","the princess will become a queen",
+  "the king loves the queen","the queen loves the king",
+  "a man and a woman","the boy is a young man","the girl is a young woman",
+  "the boy will become a man","the girl will become a woman",
+  "the king wears a golden crown","the queen wears a golden crown",
+  "the prince rides a fast horse","the princess rides a fast horse",
+  "the dog eats the meat","the cat eats the fish",
+  "the dog is a loyal animal","the cat is a quiet animal","the horse is a strong animal",
+  "the dog runs in the field","the cat sleeps in the house","the horse runs in the field",
+  "people eat bread and meat","people eat fish and rice",
+  "the man eats bread","the woman eats rice",
+  "the king eats meat and bread","the queen eats fish and rice",
+  "bread and rice are food","meat and fish are food",
+  "the man drinks water","the woman drinks water","the animal drinks water"
+];
+const D = 12, WINDOW = 2, NEG = 5, LR = 0.05, TOTAL_EPOCHS = 220;
+
+const sentences = CORPUS.map(s => s.toLowerCase().split(/\s+/).filter(Boolean));
+const counts = {};
+sentences.forEach(s => s.forEach(w => counts[w] = (counts[w]||0)+1));
+const vocab = Object.keys(counts).sort();
+const w2i = {}; vocab.forEach((w,i)=> w2i[w]=i);
+const V = vocab.length;
+// words worth plotting (drop pure stopwords so the scatter is readable)
+const STOP = new Set(["the","a","is","and","in","are","will","become","of"]);
+const plotWords = vocab.filter(w => !STOP.has(w));
+
+// unigram^0.75 negative-sampling table
+const negProbs = vocab.map(w => Math.pow(counts[w], 0.75));
+const negSum = negProbs.reduce((a,b)=>a+b,0);
+const cum = []; { let acc=0; for (const p of negProbs){ acc += p/negSum; cum.push(acc); } }
+function sampleNeg(){ const r=Math.random(); let lo=0,hi=cum.length-1; while(lo<hi){ const m=(lo+hi)>>1; if(cum[m]<r) lo=m+1; else hi=m; } return lo; }
+
+// (center, context) pairs
+const pairs = [];
+sentences.forEach(s => { for (let i=0;i<s.length;i++) for (let j=Math.max(0,i-WINDOW); j<=Math.min(s.length-1,i+WINDOW); j++){ if(i!==j) pairs.push([w2i[s[i]], w2i[s[j]]]); } });
+
+let Win, Wout, epoch, lossHist;
+function initVectors(){
+  const rnd = ()=> (Math.random()-0.5)/D;
+  Win  = Array.from({length:V}, ()=>Array.from({length:D}, rnd));
+  Wout = Array.from({length:V}, ()=>Array.from({length:D}, rnd));
+  epoch = 0; lossHist = [];
+}
+initVectors();
+
+function sigmoid(x){ return 1/(1+Math.exp(-x)); }
+function dot(a,b){ let s=0; for(let k=0;k<D;k++) s+=a[k]*b[k]; return s; }
+
+function trainOneEpoch(){
+  for (let i=pairs.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [pairs[i],pairs[j]]=[pairs[j],pairs[i]]; }
+  let loss=0;
+  for (const [c,o] of pairs){
+    const vc = Win[c];
+    const targets = [[o,1]];
+    for (let n=0;n<NEG;n++){ let neg=sampleNeg(); while(neg===o) neg=sampleNeg(); targets.push([neg,0]); }
+    const gc = new Array(D).fill(0);
+    for (const [t,label] of targets){
+      const uo = Wout[t];
+      const score = sigmoid(dot(vc,uo));
+      const g = score - label;                          // gradient of the loss wrt score
+      loss += -(label*Math.log(score+1e-9) + (1-label)*Math.log(1-score+1e-9));
+      for (let k=0;k<D;k++){ gc[k] += g*uo[k]; uo[k] -= LR*g*vc[k]; }   // update context vec
+    }
+    for (let k=0;k<D;k++) vc[k] -= LR*gc[k];             // update center vec
+  }
+  return loss/pairs.length;
+}
+
+// ---- vector maths ----
+function norm(v){ return Math.sqrt(dot(v,v)); }
+function cos(a,b){ const d=norm(a)*norm(b); return d===0?0:dot(a,b)/d; }
+function vec(w){ return Win[w2i[w]]; }
+function nearest(v, exclude, n){
+  const ex = new Set(exclude||[]);
+  return vocab.map((w,i)=>[w, cos(v, Win[i])]).filter(([w])=>!ex.has(w)).sort((a,b)=>b[1]-a[1]).slice(0,n||5);
+}
+
+// ---- PCA to 2D (power iteration for top-2 components) ----
+function pca2D(words){
+  const X = words.map(w => vec(w).slice());
+  const mean = new Array(D).fill(0);
+  X.forEach(r => r.forEach((v,k)=> mean[k]+=v/X.length));
+  const C = X.map(r => r.map((v,k)=> v-mean[k]));       // centered
+  function topComponent(rows){
+    let p = Array.from({length:D}, ()=> Math.random()-0.5);
+    for (let it=0; it<80; it++){
+      const np = new Array(D).fill(0);
+      for (const r of rows){ const d = dot(r,p); for (let k=0;k<D;k++) np[k]+=d*r[k]; }
+      const nrm = Math.sqrt(dot(np,np))||1; for (let k=0;k<D;k++) np[k]/=nrm; p=np;
+    }
+    return p;
+  }
+  const p1 = topComponent(C);
+  const C2 = C.map(r => { const d=dot(r,p1); return r.map((v,k)=> v - d*p1[k]); }); // deflate
+  const p2 = topComponent(C2);
+  return C.map(r => [dot(r,p1), dot(r,p2)]);
+}
+
+// ---- clustering colour by simple theme (for readability only) ----
+const THEME = {};
+["king","queen","prince","princess","kingdom","crown","golden","boy","girl","man","woman","powerful","young"].forEach(w=>THEME[w]="royal");
+["dog","cat","horse","animal","loyal","quiet","strong","field","house","runs","sleeps","rides","fast"].forEach(w=> THEME[w]=THEME[w]||"animal");
+["bread","rice","meat","fish","food","water","eat","eats","drinks","people"].forEach(w=> THEME[w]=THEME[w]||"food");
+const THEME_COLOR = { royal:"#e11d48", animal:"#2563eb", food:"#059669", other:"#64748b" };
+
+// ============================================================
+// RENDER
+// ============================================================
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+const lossCv = document.getElementById("lossCv"), lctx = lossCv.getContext("2d");
+let coords = [], selected = null;
+
+function drawLoss(){
+  const W=lossCv.width,H=lossCv.height; lctx.clearRect(0,0,W,H);
+  if (!lossHist.length){ lctx.fillStyle="#64748b"; lctx.font="12px monospace"; lctx.fillText("loss curve — press Train", 12, H/2); return; }
+  const mx = Math.max(...lossHist), mn = Math.min(...lossHist);
+  lctx.strokeStyle="#f43f5e"; lctx.lineWidth=2; lctx.beginPath();
+  lossHist.forEach((l,i)=>{ const x=10+(i/(TOTAL_EPOCHS-1))*(W-20); const y=H-10-((l-mn)/((mx-mn)||1))*(H-20); i?lctx.lineTo(x,y):lctx.moveTo(x,y); });
+  lctx.stroke();
+  lctx.fillStyle="#94a3b8"; lctx.font="10px monospace";
+  lctx.fillText("loss "+lossHist[lossHist.length-1].toFixed(3), 12, 14);
+  lctx.fillText("↓ lower = vectors predict context better", W-230, H-4);
+}
+
+function drawScatter(){
+  const W=cv.width,H=cv.height; ctx.clearRect(0,0,W,H);
+  if (epoch === 0){
+    coords = plotWords.map(()=>[0,0]);
+    ctx.fillStyle="#94a3b8"; ctx.font="14px sans-serif";
+    ctx.fillText("Vectors are random — press Train to learn structure.", 90, H/2); return;
+  }
+  const raw = pca2D(plotWords);
+  const xs = raw.map(p=>p[0]), ys = raw.map(p=>p[1]);
+  const minx=Math.min(...xs),maxx=Math.max(...xs),miny=Math.min(...ys),maxy=Math.max(...ys);
+  const pad=40;
+  coords = raw.map(([x,y])=>[
+    pad + (x-minx)/((maxx-minx)||1)*(W-2*pad),
+    pad + (y-miny)/((maxy-miny)||1)*(H-2*pad)
+  ]);
+  plotWords.forEach((w,i)=>{
+    const [x,y]=coords[i]; const theme=THEME[w]||"other"; const col=THEME_COLOR[theme];
+    const isSel = w===selected;
+    ctx.beginPath(); ctx.arc(x,y,isSel?6:4,0,7); ctx.fillStyle=col; ctx.fill();
+    if (isSel){ ctx.strokeStyle="#0f172a"; ctx.lineWidth=2; ctx.stroke(); }
+    ctx.fillStyle= isSel ? "#0f172a" : "#334155";
+    ctx.font = (isSel?"bold ":"")+"11px sans-serif";
+    ctx.fillText(w, x+7, y+3);
+  });
+  // legend
+  const leg=[["royal","royalty"],["animal","animals"],["food","food"]]; let lx=pad;
+  leg.forEach(([k,lab])=>{ ctx.fillStyle=THEME_COLOR[k]; ctx.beginPath(); ctx.arc(lx,16,4,0,7); ctx.fill(); ctx.fillStyle="#475569"; ctx.font="11px sans-serif"; ctx.fillText(lab, lx+8, 20); lx+=90; });
+}
+
+cv.onclick = (e)=>{
+  if (epoch===0) return;
+  const r = cv.getBoundingClientRect();
+  const mx = (e.clientX-r.left)*(cv.width/r.width), my=(e.clientY-r.top)*(cv.height/r.height);
+  let best=-1,bd=1e9;
+  coords.forEach((c,i)=>{ const d=(c[0]-mx)**2+(c[1]-my)**2; if(d<bd){bd=d;best=i;} });
+  if (best>=0 && bd<900){ selected = plotWords[best]; showNeighbours(selected); drawScatter(); }
+};
+
+function showNeighbours(w){
+  document.getElementById("nnWord").textContent = w;
+  const list = nearest(vec(w), [w], 5);
+  document.getElementById("nnList").innerHTML = list.map(([nw,c])=>{
+    const pct=Math.max(0,c)*100;
+    return `<div class="flex items-center gap-2"><span class="w-16 font-semibold">${nw}</span>
+      <span class="flex-1 bg-slate-100 rounded h-3 overflow-hidden"><span style="display:block;height:100%;width:${pct.toFixed(0)}%;background:#f43f5e"></span></span>
+      <span class="stat text-slate-500 w-12 text-right">${c.toFixed(2)}</span></div>`;
+  }).join("");
+}
+
+function solveAnalogy(){
+  if (epoch===0){ document.getElementById("analogyOut").innerHTML = '<span class="text-rose-600">Train the model first.</span>'; return; }
+  const a=aSel.value,b=bSel.value,c=cSel.value;
+  const av=vec(a),bv=vec(b),cv2=vec(c);
+  const target = av.map((_,k)=> av[k]-bv[k]+cv2[k]);
+  const rank = nearest(target,[a,b,c],3);
+  const [best,bc]=rank[0];
+  document.getElementById("analogyOut").innerHTML =
+    `<div class="mb-1"><code>${a} − ${b} + ${c}</code> ≈ <span class="pill bg-rose-600 text-white">${best}</span> <span class="text-slate-400">(cos ${bc.toFixed(2)})</span></div>`+
+    `<div class="text-xs text-slate-500">runners-up: ${rank.slice(1).map(([w,c])=>w+" ("+c.toFixed(2)+")").join(", ")}</div>`;
+}
+
+// analogy dropdowns
+const aSel=document.getElementById("aWord"),bSel=document.getElementById("bWord"),cSel=document.getElementById("cWord");
+plotWords.forEach(w=>{ [aSel,bSel,cSel].forEach(sel=>{ const o=document.createElement("option"); o.value=w; o.textContent=w; sel.appendChild(o); }); });
+aSel.value="king"; bSel.value="man"; cSel.value="woman";
+document.getElementById("analogyBtn").onclick=solveAnalogy;
+
+// ---- training loop (animated) ----
+const trainBtn=document.getElementById("trainBtn"), resetBtn=document.getElementById("resetBtn");
+let running=false;
+function loop(){
+  if (!running || epoch>=TOTAL_EPOCHS){ running=false; trainBtn.textContent="▶ Train skip-gram"; if(epoch>=TOTAL_EPOCHS){ selected="king"; showNeighbours("king"); solveAnalogy(); } return; }
+  // a few epochs per frame for speed
+  for (let k=0;k<3 && epoch<TOTAL_EPOCHS;k++){ const l=trainOneEpoch(); lossHist.push(l); epoch++; }
+  document.getElementById("epochN").textContent=epoch;
+  document.getElementById("lossN").textContent=lossHist[lossHist.length-1].toFixed(3);
+  drawLoss(); drawScatter();
+  requestAnimationFrame(loop);
+}
+trainBtn.onclick=()=>{ if(running){ running=false; return; } if(epoch>=TOTAL_EPOCHS){ initVectors(); } running=true; trainBtn.textContent="⏸ Pause"; loop(); };
+resetBtn.onclick=()=>{ running=false; initVectors(); selected=null; document.getElementById("epochN").textContent=0; document.getElementById("lossN").textContent="—"; document.getElementById("nnWord").textContent="— (click a word in the plot)"; document.getElementById("nnList").innerHTML=""; document.getElementById("analogyOut").textContent="Train first, then solve. Default: king − man + woman."; trainBtn.textContent="▶ Train skip-gram"; drawLoss(); drawScatter(); };
+drawLoss(); drawScatter();
+
+// ============================================================
+// UNDERSTAND step engine
+// ============================================================
+const STEPS = [
+ { title:"1. One-hot vectors are meaningless", why:"The naive way to feed a word to a network is a one-hot vector: a slot per word in the vocabulary, all zeros except a single 1. But every one-hot vector is exactly the same distance from every other — 'king' is no closer to 'queen' than to 'banana'. The representation carries zero information about meaning, and its size equals the whole vocabulary (tens of thousands of dimensions, almost all zero). We need something dense and meaningful instead.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">king  = [0,0,1,0,0,...,0]<br>queen = [0,1,0,0,0,...,0]<br>distance(king,queen) == distance(king,banana)<br>❌ no notion of meaning</div>`, code:`# one-hot: sparse, huge, meaningless
+king  = [0,0,1,0, ...,0]   # length = |vocab|
+queen = [0,1,0,0, ...,0]
+# every pair is equidistant → no similarity` },
+ { title:"2. The distributional hypothesis", why:"Linguist J.R. Firth put it as 'you shall know a word by the company it keeps.' Words that appear in similar contexts tend to have similar meanings — 'king' and 'queen' both show up near 'rules', 'crown', 'royal'. Word2Vec turns this idea into an algorithm: learn a vector for each word such that words appearing in similar surroundings end up with similar vectors. Meaning is inferred purely from co-occurrence in raw text, with no dictionary and no labels.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">"you shall know a word<br>by the company it keeps"<br>king / queen → seen near {rules, crown, royal}<br>⇒ similar contexts → similar vectors</div>`, code:`# Distributional hypothesis:
+#   similar context  ⇒  similar meaning
+# "the ___ rules the kingdom"
+#   fits both king and queen → they should be close` },
+ { title:"3. Skip-gram: predict context from the center word", why:"Skip-gram frames learning as a prediction game. Slide a window over the text; take the center word and try to predict each of its surrounding context words. In our corpus, from center 'king' the model must predict neighbours like 'the', 'rules', 'kingdom'. It's self-supervised — the text itself provides the training pairs, no human labels. To predict context well, the center word's vector must capture what kind of company it keeps, which is exactly the meaning we want.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">"the [king] rules the kingdom"<br>center = king<br>predict → the, rules, kingdom<br>(window = 2 each side)</div>`, code:`# For each center word, form (center, context) pairs:
+# "the king rules the kingdom", window=2
+#   (king, the) (king, rules) (king, the) (king, kingdom)
+# maximise P(context | center)` },
+ { title:"4. Embeddings: two dense matrices", why:"Each word gets two learned vectors of, say, 100 dimensions: one 'input' vector used when the word is the center, and one 'output' vector used when it's a context word. These live in two matrices of shape (vocab × dim). Prediction is a dot product between a center's input vector and a candidate context's output vector, squashed to a probability. After training we keep the input matrix — those rows are the word embeddings. Dense means every dimension is used to encode some latent feature (royalty-ness, animacy, plurality...).", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">W_in  : vocab × dim   (center vectors)<br>W_out : vocab × dim   (context vectors)<br>score(c,o) = v_c · u_o<br>keep W_in as the embeddings</div>`, code:`import numpy as np
+V, D = len(vocab), 100
+W_in  = np.random.randn(V, D) * 0.01   # center vectors
+W_out = np.random.randn(V, D) * 0.01   # context vectors
+score = W_in[center] @ W_out[context]  # a dot product` },
+ { title:"5. Negative sampling: skip the giant softmax", why:"A proper probability over context words needs a softmax over the entire vocabulary — one dot product per word, per training pair. With a 100k-word vocabulary that's crushingly slow. Negative sampling replaces it with a much cheaper task: for each true (center, context) pair, treat it as a positive example, then draw a handful (say 5) of random 'negative' words and treat those as negatives. Now it's a tiny binary classification — is this pair real or fake? — instead of a 100k-way choice. Negatives are drawn from a unigram^0.75 distribution so common words appear as negatives more often, but not overwhelmingly.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">full softmax: score vs ALL 100k words 😵<br>negative sampling: 1 real + 5 fake<br>"is (king, rules) a real pair?" → yes<br>"is (king, banana) real?" → no × 5<br>O(6) instead of O(100000)</div>`, code:`# Instead of softmax over |vocab|:
+pos = (center, context)              # label 1
+negs = [(center, sample()) for _ in range(5)]  # label 0
+# sample() ~ unigram_freq ** 0.75
+# turn it into cheap binary logistic regression` },
+ { title:"6. The gradient update: pull together, push apart", why:"Each pair runs through a sigmoid to give a probability that the pair is 'real'. The loss is binary cross-entropy. Its gradient is beautifully simple: (predicted − label). For the positive pair the update nudges the center and context vectors toward each other (increasing their dot product); for each negative pair it nudges them apart. Repeat over millions of pairs and co-occurring words are dragged close together in the space while unrelated words drift apart. That tug-of-war, nothing more, is what carves out the geometry.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">p = σ(v_c · u_o)<br>g = p − label<br>positive (label 1): pull v_c, u_o together<br>negative (label 0): push them apart<br>repeat millions of times</div>`, code:`p = sigmoid(v_c @ u_o)
+g = p - label            # 0 wants closer, 1 wants apart
+grad_c = g * u_o
+u_o  -= lr * g * v_c     # move context vector
+v_c  -= lr * grad_c      # move center vector
+# positive → dot ↑ (together); negative → dot ↓ (apart)` },
+ { title:"7. Cosine similarity: measuring closeness", why:"Once trained, we compare words by the angle between their vectors, not their raw distance — cosine similarity, the normalised dot product. It ranges from 1 (same direction, very similar) through 0 (unrelated) to −1 (opposite). Direction, not magnitude, carries the meaning, so cosine is the natural metric. 'Nearest neighbours' means ranking every word by cosine to a query vector; that's exactly what the LOOK demo computes when you click a word, and what gensim's most_similar does.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">cos(a,b) = (a · b) / (‖a‖‖b‖)<br>1 = identical direction · 0 = unrelated<br>rank vocab by cosine ⇒ nearest neighbours<br>cos(king, queen) ≈ 0.8</div>`, code:`def cosine(a, b):
+    return (a @ b) / (norm(a) * norm(b))
+
+def most_similar(word, k=5):
+    q = W_in[w2i[word]]
+    sims = [(w, cosine(q, W_in[i])) for w,i in w2i.items()]
+    return sorted(sims, key=lambda t: -t[1])[1:k+1]` },
+ { title:"8. Why analogies emerge: king − man + woman ≈ queen", why:"The most striking result is that relationships become consistent directions in the space. Because 'king' and 'queen' differ mainly by gender — just as 'man' and 'woman' do — the vector from man→woman is roughly the same as king→queen. So subtracting 'man' from 'king' isolates the 'royalty minus male' part, and adding 'woman' supplies 'female', landing you near 'queen'. This falls out of the linear structure the co-occurrence objective induces; it was one of the discoveries that made Word2Vec famous. The LOOK demo reproduces it on the toy corpus.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">king − man ≈ queen − woman  (same offset)<br>⇒ king − man + woman ≈ queen<br>gender is a consistent DIRECTION<br>relationships = vector arithmetic</div>`, code:`v = W_in[i("king")] - W_in[i("man")] + W_in[i("woman")]
+# nearest word to v (excluding the inputs):
+most_similar_vec(v)   # → 'queen'
+# also: paris - france + italy ≈ rome` },
+ { title:"9. Limits: one vector per word, no context", why:"Word2Vec gives each word a single static vector, so it can't handle polysemy: 'bank' (river) and 'bank' (money) collapse into one blurry vector, and 'apple' the fruit sits between 'apple' the company. The vector never changes with the sentence around it. It also can't represent unseen words. These limits motivated contextual embeddings — ELMo, and then BERT and the Transformer family — where a word's vector is computed from its actual sentence, so 'bank' gets a different vector in each usage. Word2Vec is the foundational idea those models generalise.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">"river bank"  &  "money bank"<br>→ SAME vector (static) ❌<br>fix: contextual embeddings (ELMo, BERT)<br>vector depends on the whole sentence</div>`, code:`# Static (Word2Vec): one vector per word
+wv["bank"]   # same in every sentence
+
+# Contextual (BERT): vector depends on context
+bert("I fished by the river bank")["bank"]
+bert("I deposited cash at the bank")["bank"]
+# → two different vectors for the same word` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },3500); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>
