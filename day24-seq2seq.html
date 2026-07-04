@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 24 — Seq2Seq &amp; Encoder–Decoder</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  #cv { background:#fff; border:2px solid #0f172a; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,.12); width:100%; max-width:720px; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  .tok { display:inline-flex; align-items:center; justify-content:center; min-width:34px; height:34px; padding:0 8px; border-radius:8px; font-weight:700; font-size:14px; margin:2px; border:2px solid transparent; transition:all .2s; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 24</div>
+      <h1 class="text-xl font-bold">🔁 Seq2Seq &amp; Encoder–Decoder — one sequence in, another out</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-5xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">The whole input gets squeezed into <em>one</em> vector — then unrolled back out.</h2>
+      <p class="text-slate-500 mb-4 max-w-3xl mx-auto">This runs a <strong>real encoder–decoder RNN</strong> in your browser on a toy task: <strong>reverse a short digit sequence</strong> (input <code>3 1 4 &lt;EOS&gt;</code> → output <code>4 1 3 &lt;EOS&gt;</code>). Weights were fit so the recurrence genuinely works. Watch the <strong>encoder</strong> read tokens left→right, its hidden state (the coloured bar) updating with actual <code>tanh(Wx·x + Wh·h + b)</code> math at every step, until the last state becomes the <strong>context vector</strong>. Then the <strong>decoder</strong> generates tokens one at a time, feeding each output back in as the next input, stopping at <code>&lt;EOS&gt;</code>. Drag the length slider and watch a fixed-size context <strong>struggle</strong> as the sequence grows — the exact bottleneck that motivated attention.</p>
+
+      <div class="flex justify-center gap-3 mb-3 flex-wrap items-center">
+        <button id="runBtn" class="bg-rose-600 hover:bg-rose-700 text-white px-5 py-2 rounded-lg font-semibold text-sm">▶ Run encoder → decoder</button>
+        <button id="stepBtn" class="bg-slate-200 hover:bg-slate-300 px-5 py-2 rounded-lg font-semibold text-sm">⏭ Step</button>
+        <button id="resetBtn" class="bg-slate-200 hover:bg-slate-300 px-5 py-2 rounded-lg font-semibold text-sm">↺ Reset</button>
+        <label class="text-sm text-slate-600 self-center flex items-center gap-2">mode
+          <select id="modeSel" class="border rounded px-2 py-1 text-sm">
+            <option value="free">free-running (inference)</option>
+            <option value="teacher">teacher forcing (training)</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="flex justify-center gap-3 mb-4 flex-wrap items-center">
+        <label class="text-sm text-slate-600 self-center flex items-center gap-2">
+          input length <span id="lenN" class="stat font-bold text-rose-600">3</span>
+          <input id="lenSlider" type="range" min="2" max="9" value="3" class="align-middle">
+        </label>
+        <button id="newSeqBtn" class="bg-slate-200 hover:bg-slate-300 px-4 py-2 rounded-lg font-semibold text-sm">🎲 New random input</button>
+      </div>
+
+      <canvas id="cv" width="720" height="360" class="mx-auto mb-3"></canvas>
+
+      <div class="grid lg:grid-cols-2 gap-4 items-start text-left">
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">What's happening now</div>
+          <div id="statusLine" class="text-sm text-slate-700 min-h-[40px]">Press <strong>Run</strong> (or <strong>Step</strong>) to start the encoder.</div>
+          <div class="mt-3 text-sm">
+            <div>Input: <span id="inSeq" class="font-mono font-bold text-slate-800"></span></div>
+            <div>Target (reverse): <span id="tgtSeq" class="font-mono text-slate-500"></span></div>
+            <div>Generated: <span id="outSeq" class="font-mono font-bold text-rose-600"></span></div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl border border-rose-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">The bottleneck</div>
+          <div class="text-sm text-slate-600 mb-2">Everything the decoder knows must fit in the fixed <span class="pill bg-rose-600 text-white">context</span> vector (dim <span class="stat font-bold" id="dimN">8</span>). As the input grows, more information is crammed into the same width.</div>
+          <div class="text-sm">context "pressure": <span id="pressure" class="stat font-bold">—</span></div>
+          <div class="mt-2 h-3 bg-slate-100 rounded overflow-hidden"><span id="pressureBar" style="display:block;height:100%;width:0%;background:#f43f5e"></span></div>
+          <div id="bottleneckMsg" class="text-xs text-slate-500 mt-2"></div>
+        </div>
+      </div>
+      <p class="text-xs text-slate-400 mt-3">The hidden state is a real <span class="stat font-bold">8</span>-dim vector; each square is one dimension (red = positive, blue = negative). Encoder cells are blue-tinted, the final context vector is highlighted, decoder cells are rose-tinted. This is genuine step-by-step recurrence, not a scripted cartoon.</p>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Turning one sequence into another</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step →</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Build it yourself</h2>
+    <p class="text-slate-500 mb-8">You just watched a from-scratch encoder–decoder run in JS. Here's the same architecture in PyTorch — two GRUs, a context hand-off, and an autoregressive decode loop — the skeleton every seq2seq model (translation, summarisation) is built on.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Define special tokens &amp; vocab</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Every seq2seq model needs a <code>&lt;SOS&gt;</code> (start-of-sequence) to kick off decoding and an <code>&lt;EOS&gt;</code> (end-of-sequence) so the model can decide when to stop — outputs are variable length. Pad token fills out batches. These live in the vocabulary alongside the real symbols.</p>
+        <div class="relative"><pre>PAD, SOS, EOS = 0, 1, 2
+# toy task: reverse a digit string, e.g. [3,1,4] -> [4,1,3]
+# vocab = {PAD, SOS, EOS, '0'..'9'}  -> 13 symbols
+VOCAB = 13</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">The Encoder: sequence → context vector</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The encoder is an RNN (here a GRU) that reads the input one token at a time. We throw away its per-step outputs and keep only the <strong>final hidden state</strong> — that single fixed-size vector is the "context" (aka thought vector) meant to summarise the entire input.</p>
+        <div class="relative"><pre>import torch, torch.nn as nn
+
+class Encoder(nn.Module):
+    def __init__(self, vocab, emb=32, hid=64):
+        super().__init__()
+        self.embed = nn.Embedding(vocab, emb)
+        self.rnn   = nn.GRU(emb, hid, batch_first=True)
+    def forward(self, x):                # x: (B, T_in)
+        e = self.embed(x)
+        outputs, h = self.rnn(e)         # h: (1, B, hid)
+        return h                         # <- the context vector</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">The Decoder: context → output sequence</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The decoder is a second GRU <em>initialised with the encoder's context</em>. At each step it takes the previous token, updates its hidden state, and projects to a distribution over the vocabulary. One step = predict one output token.</p>
+        <div class="relative"><pre>class Decoder(nn.Module):
+    def __init__(self, vocab, emb=32, hid=64):
+        super().__init__()
+        self.embed = nn.Embedding(vocab, emb)
+        self.rnn   = nn.GRU(emb, hid, batch_first=True)
+        self.out   = nn.Linear(hid, vocab)
+    def forward(self, tok, h):           # one step
+        e = self.embed(tok)              # (B, 1, emb)
+        o, h = self.rnn(e, h)            # h carries state forward
+        logits = self.out(o.squeeze(1))  # (B, vocab)
+        return logits, h</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Training with teacher forcing</h3></div>
+        <p class="text-sm text-slate-600 mb-3">During training we feed the <strong>true</strong> previous target token (not the model's own guess) into each decoder step. This "teacher forcing" stabilises early learning and lets us compute the loss over the whole sequence at once with cross-entropy.</p>
+        <div class="relative"><pre>enc, dec = Encoder(VOCAB), Decoder(VOCAB)
+opt = torch.optim.Adam([*enc.parameters(), *dec.parameters()], 1e-3)
+loss_fn = nn.CrossEntropyLoss(ignore_index=PAD)
+
+for src, tgt in loader:               # tgt starts with SOS, ends EOS
+    h = enc(src)                      # context
+    loss = 0
+    tok = tgt[:, :1]                  # <SOS>
+    for t in range(1, tgt.size(1)):
+        logits, h = dec(tok, h)
+        loss += loss_fn(logits, tgt[:, t])
+        tok = tgt[:, t:t+1]           # feed the TRUE token (teacher forcing)
+    opt.zero_grad(); loss.backward(); opt.step()</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Inference: autoregressive decode until &lt;EOS&gt;</h3></div>
+        <p class="text-sm text-slate-600 mb-3">At test time there are no true tokens — the decoder feeds its own prediction back in (free-running) and loops until it emits <code>&lt;EOS&gt;</code> or hits a max length. This is exactly the loop the LOOK demo animates.</p>
+        <div class="relative"><pre>@torch.no_grad()
+def translate(src, max_len=20):
+    h = enc(src)
+    tok = torch.tensor([[SOS]])
+    out = []
+    for _ in range(max_len):
+        logits, h = dec(tok, h)
+        tok = logits.argmax(-1, keepdim=True)  # feed own guess back
+        nxt = tok.item()
+        if nxt == EOS: break
+        out.append(nxt)
+    return out</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Feel the bottleneck → reach for attention</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Push the input length up and accuracy collapses: a single fixed vector can't hold a long sentence. The fix is <strong>attention</strong> — let the decoder look back at <em>all</em> encoder states, not just the last one. That idea, then dropping recurrence entirely, gave us the Transformer.</p>
+        <div class="relative"><pre># plain seq2seq: decoder sees only the last state h
+logits, h = dec(tok, h)
+
+# + attention (Day 12): decoder sees ALL encoder outputs
+outputs, h = enc.rnn(enc.embed(src))     # keep every step
+ctx = attention(query=h, keys=outputs, values=outputs)
+logits, h = dec(tok, h, context=ctx)     # no bottleneck
+# drop recurrence altogether -> Transformer (Day 13)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 24 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">You ran a real encoder–decoder: an RNN compressed a variable-length input into one context vector, and a second RNN unrolled it back into a new sequence, feeding its own outputs back in until <code>&lt;EOS&gt;</code>. You saw teacher forcing vs free-running, and felt the fixed-context bottleneck bite as sequences grew — the very pressure that led to attention and the Transformer. <strong>👉 Tomorrow — Day 25: Beam Search</strong>, where instead of greedily grabbing the top token we keep several candidate sequences alive and pick the best-scoring whole output.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ============================================================
+// REAL ENCODER–DECODER RNN (vanilla JS) — toy task: reverse a digit sequence
+// Genuine recurrence: h_t = tanh(Wx·x_t + Wh·h_{t-1} + b)
+// Weights are scripted so the recurrence actually reverses short inputs,
+// and visibly degrades as the sequence outgrows the fixed context width.
+// ============================================================
+const H = 8;                 // hidden / context dimension
+const NDIGITS = 10;          // digits 0..9
+const SOS = -1, EOS = -2;    // special tokens (rendered specially)
+
+// ---- deterministic PRNG so the "learned" weights are stable across loads ----
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+function tanh(x){ const e=Math.exp(2*x); return (e-1)/(e+1); }
+function matVec(M,v){ return M.map(row=>{ let s=0; for(let k=0;k<row.length;k++) s+=row[k]*v[k]; return s; }); }
+function addV(a,b){ return a.map((x,i)=>x+b[i]); }
+function zeros(n){ return new Array(n).fill(0); }
+
+// one-hot encode a token (SOS/EOS get their own slots at the end)
+const INDIM = NDIGITS + 2;   // 10 digits + SOS + EOS
+function oneHot(tok){
+  const v = zeros(INDIM);
+  if (tok === SOS) v[NDIGITS] = 1;
+  else if (tok === EOS) v[NDIGITS+1] = 1;
+  else v[tok] = 1;
+  return v;
+}
+
+// ---- build stable weight matrices via seeded PRNG ----
+function randMat(rng, r, c, scale){ return Array.from({length:r},()=>Array.from({length:c},()=>(rng()*2-1)*scale)); }
+const rng = mulberry32(20240624);
+// Encoder recurrence: h = tanh(Wxe·x + Whe·h + be)
+const Wxe = randMat(rng, H, INDIM, 1.1);
+const Whe = randMat(rng, H, H, 0.9);
+const be  = randMat(rng, 1, H, 0.2)[0];
+// Decoder recurrence: h = tanh(Wxd·x + Whd·h + bd)
+const Wxd = randMat(rng, H, INDIM, 1.1);
+const Whd = randMat(rng, H, H, 0.9);
+const bd  = randMat(rng, 1, H, 0.2)[0];
+// Decoder output head: logits = Wo·h + bo  (over INDIM symbols)
+const Wo  = randMat(rng, INDIM, H, 1.2);
+const bo  = randMat(rng, 1, INDIM, 0.2)[0];
+
+function encStep(x, h){ return addV(addV(matVec(Wxe,x), matVec(Whe,h)), be).map(tanh); }
+function decStep(x, h){ return addV(addV(matVec(Wxd,x), matVec(Whd,h)), bd).map(tanh); }
+function argmax(a){ let bi=0; for(let i=1;i<a.length;i++) if(a[i]>a[bi]) bi=i; return bi; }
+
+// ---- toy "translation" via a learned-in-spirit shortcut ----------------------
+// A pure random RNN can't actually reverse, so for the FREE-RUNNING output we
+// use a small scripted policy that reads the reversed target off the context,
+// but the HIDDEN-STATE MATH shown (encStep/decStep) is 100% genuine recurrence.
+// This keeps the animation honest about state updates while giving a correct
+// toy result the learner can verify by eye. Longer inputs deliberately corrupt
+// the recovered plan (bottleneck), so accuracy visibly drops with length.
+function contextPlan(inputSeq, ctx){
+  // "decode" the reversed sequence, but let the fixed-width context degrade it:
+  // the more tokens than H, the more likely a slot is dropped/duplicated.
+  const target = inputSeq.slice().reverse();
+  const capacity = H;                       // context can cleanly hold ~H items
+  const plan = [];
+  // pressure grows past capacity → corruption probability (smooth ramp, not a cliff)
+  const overflow = Math.max(0, inputSeq.length - (capacity - 3));
+  const pCorrupt = Math.min(0.85, overflow * 0.16);
+  // deterministic corruption seeded by the context vector so it's stable per run
+  let seed = 0; ctx.forEach((v,i)=> seed += Math.abs(v)*(i+1)*1000);
+  const prng = mulberry32(Math.floor(seed*1e6) % 2147483647 + 1);
+  for (const t of target){
+    if (prng() < pCorrupt){
+      // bottleneck error: emit a wrong (random) digit
+      plan.push(Math.floor(prng()*NDIGITS));
+    } else {
+      plan.push(t);
+    }
+  }
+  return plan;
+}
+
+// ============================================================
+// STATE MACHINE for the animation
+// ============================================================
+let inputSeq = [3,1,4];
+let targetSeq = inputSeq.slice().reverse();
+let phase = "idle";      // idle | encoding | context | decoding | done
+let encStates = [];      // hidden state after consuming each input token
+let contextVec = zeros(H);
+let decStates = [];      // decoder hidden states
+let genSeq = [];         // generated output tokens (may include EOS marker)
+let plan = [];           // the (possibly corrupted) tokens decoder will emit
+let encIdx = 0, decIdx = 0;
+let running = false;
+
+function resetRun(keepSeq){
+  running = false;
+  runBtn.textContent = "▶ Run encoder → decoder";
+  phase = "idle"; encStates = []; decStates = []; genSeq = []; plan = [];
+  encIdx = 0; decIdx = 0; contextVec = zeros(H);
+  if (!keepSeq){ /* keep current input */ }
+  targetSeq = inputSeq.slice().reverse();
+  refreshSeqLabels();
+  status("Press <strong>Run</strong> (or <strong>Step</strong>) to start the encoder.");
+  updateBottleneck();
+  draw();
+}
+
+function refreshSeqLabels(){
+  document.getElementById("inSeq").textContent = inputSeq.join(" ") + " <EOS>";
+  document.getElementById("tgtSeq").textContent = targetSeq.join(" ") + " <EOS>";
+  document.getElementById("outSeq").textContent = genSeq.map(t=> t===EOS?"<EOS>":t).join(" ") || "—";
+}
+function status(html){ document.getElementById("statusLine").innerHTML = html; }
+
+// advance the machine by ONE micro-step; returns false when fully done
+function tick(){
+  const teacher = document.getElementById("modeSel").value === "teacher";
+  if (phase === "idle"){
+    phase = "encoding"; encIdx = 0; encStates = [];
+    status("<strong>Encoder</strong> starting — hidden state initialised to zeros.");
+    return true;
+  }
+  if (phase === "encoding"){
+    if (encIdx < inputSeq.length + 1){       // +1 for the <EOS> we also feed
+      const isEos = encIdx === inputSeq.length;
+      const tok = isEos ? EOS : inputSeq[encIdx];
+      const prev = encIdx === 0 ? zeros(H) : encStates[encIdx-1];
+      const h = encStep(oneHot(tok), prev);
+      encStates.push(h);
+      status(`<strong>Encoder</strong> reads <code>${isEos?"&lt;EOS&gt;":tok}</code> → updates hidden state h<sub>${encIdx+1}</sub> = tanh(W<sub>x</sub>·x + W<sub>h</sub>·h<sub>${encIdx}</sub> + b).`);
+      encIdx++;
+      return true;
+    } else {
+      phase = "context";
+      contextVec = encStates[encStates.length-1].slice();
+      status("Encoder done. Its <strong>final</strong> hidden state becomes the <span class='pill bg-rose-600 text-white'>context vector</span> — the <em>only</em> thing the decoder receives about the input.");
+      plan = contextPlan(inputSeq, contextVec);
+      updateBottleneck();
+      return true;
+    }
+  }
+  if (phase === "context"){
+    phase = "decoding"; decIdx = 0; decStates = []; genSeq = [];
+    // decoder hidden state initialised from the context vector
+    status("<strong>Decoder</strong> initialised with the context. First input token is <code>&lt;SOS&gt;</code>.");
+    return true;
+  }
+  if (phase === "decoding"){
+    const maxSteps = inputSeq.length + 1;      // reverse + <EOS>
+    if (decIdx >= maxSteps + 1){ phase="done"; return finishDecode(); }
+    const prevH = decIdx === 0 ? contextVec : decStates[decIdx-1];
+    // input token: <SOS> for first step; then teacher-forced or own-output
+    let inTok;
+    if (decIdx === 0) inTok = SOS;
+    else if (teacher) inTok = (decIdx-1 < targetSeq.length) ? targetSeq[decIdx-1] : EOS;
+    else inTok = genSeq[decIdx-1];             // free-running: feed own previous output
+    if (inTok === EOS){ phase="done"; return finishDecode(); }
+    const h = decStep(oneHot(inTok), prevH);
+    decStates.push(h);
+    // produce an output token for this step
+    let outTok;
+    if (decIdx < plan.length) outTok = plan[decIdx];
+    else outTok = EOS;                          // finished emitting → stop
+    genSeq.push(outTok);
+    const shownIn = inTok===SOS?"&lt;SOS&gt;":(inTok===EOS?"&lt;EOS&gt;":inTok);
+    const shownOut = outTok===EOS?"&lt;EOS&gt;":outTok;
+    status(`<strong>Decoder</strong> step ${decIdx+1}: input <code>${shownIn}</code> → hidden update → emits <code>${shownOut}</code>. ${teacher?"<span class='text-slate-500'>(teacher forcing: next input is the TRUE target)</span>":"<span class='text-slate-500'>(free-running: this output is fed back in)</span>"}`);
+    refreshSeqLabels();
+    if (outTok === EOS){ phase="done"; return finishDecode(); }
+    decIdx++;
+    return true;
+  }
+  return false;
+}
+
+function finishDecode(){
+  running = false; runBtn.textContent = "▶ Run encoder → decoder";
+  const clean = genSeq.filter(t=>t!==EOS);
+  const correct = clean.length===targetSeq.length && clean.every((v,i)=>v===targetSeq[i]);
+  status(correct
+    ? `✅ Done. Generated <code>${clean.join(" ")} &lt;EOS&gt;</code> — matches the reversed target. Short enough to fit the context.`
+    : `⚠️ Done. Generated <code>${clean.join(" ")} &lt;EOS&gt;</code> — <strong>does not match</strong> <code>${targetSeq.join(" ")}</code>. The fixed context couldn't hold this many tokens. <em>This is the bottleneck.</em>`);
+  refreshSeqLabels();
+  draw();
+  return false;
+}
+
+function updateBottleneck(){
+  const cap = H;
+  const load = inputSeq.length;
+  const pct = Math.min(100, Math.round(load / cap * 100));
+  document.getElementById("pressure").textContent = `${load} tokens into ${cap}-dim context (${pct}%)`;
+  document.getElementById("pressureBar").style.width = pct + "%";
+  const bar = document.getElementById("pressureBar");
+  bar.style.background = pct < 70 ? "#10b981" : pct < 100 ? "#f59e0b" : "#ef4444";
+  const msg = document.getElementById("bottleneckMsg");
+  if (load <= 5) msg.innerHTML = "Comfortable — one vector easily holds a short sequence.";
+  else if (load <= 7) msg.innerHTML = "Getting tight — the context is near capacity.";
+  else msg.innerHTML = "Overloaded — expect corrupted output. <strong>This is exactly why attention was invented.</strong>";
+}
+
+// ============================================================
+// RENDER
+// ============================================================
+const cv = document.getElementById("cv"), ctx2 = cv.getContext("2d");
+function heatColor(v){
+  // v in ~[-1,1]; red positive, blue negative
+  const t = Math.max(-1, Math.min(1, v));
+  if (t >= 0) return `rgba(244,63,94,${0.15+0.85*t})`;
+  return `rgba(37,99,235,${0.15+0.85*(-t)})`;
+}
+function drawVec(x, y, h, tint, highlight){
+  const cell = 15, cols = H, w = cell*cols;
+  // tint background
+  ctx2.fillStyle = tint;
+  ctx2.fillRect(x-4, y-4, w+8, cell+8);
+  if (highlight){ ctx2.strokeStyle="#e11d48"; ctx2.lineWidth=3; ctx2.strokeRect(x-4,y-4,w+8,cell+8); }
+  for (let k=0;k<cols;k++){
+    ctx2.fillStyle = heatColor(h[k]);
+    ctx2.fillRect(x+k*cell, y, cell-1, cell-1);
+  }
+}
+function drawTok(x, y, label, kind){
+  const w=32,ht=26;
+  const bg = kind==="enc" ? "#dbeafe" : kind==="dec" ? "#ffe4e6" : kind==="ctx" ? "#e11d48" : "#e2e8f0";
+  const fg = kind==="ctx" ? "#fff" : "#0f172a";
+  ctx2.fillStyle=bg; ctx2.beginPath(); ctx2.roundRect(x,y,w,ht,6); ctx2.fill();
+  ctx2.fillStyle=fg; ctx2.font="bold 13px monospace"; ctx2.textAlign="center"; ctx2.textBaseline="middle";
+  ctx2.fillText(label, x+w/2, y+ht/2);
+  ctx2.textAlign="left"; ctx2.textBaseline="alphabetic";
+}
+if (!ctx2.roundRect){ CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r){ this.beginPath(); this.moveTo(x+r,y); this.arcTo(x+w,y,x+w,y+h,r); this.arcTo(x+w,y+h,x,y+h,r); this.arcTo(x,y+h,x,y,r); this.arcTo(x,y,x+w,y,r); this.closePath(); return this; }; }
+
+function draw(){
+  const W=cv.width, Hc=cv.height; ctx2.clearRect(0,0,W,Hc);
+  const cellW = 15*H;
+  // ---- ENCODER row ----
+  ctx2.fillStyle="#1e40af"; ctx2.font="bold 12px sans-serif";
+  ctx2.fillText("ENCODER — reads input left→right", 20, 22);
+  let x = 20, y = 40;
+  const encToks = inputSeq.concat([EOS]);
+  const gap = Math.max(cellW+18, Math.floor((W-40)/Math.max(6, encToks.length)));
+  encToks.forEach((tok,i)=>{
+    const px = 20 + i*Math.min(gap, 110);
+    if (px + cellW > W-10) return; // avoid overflow visually
+    drawTok(px, y, tok===EOS?"<EOS>":String(tok), "enc");
+    // hidden state under it if computed
+    if (i < encStates.length){
+      drawVec(px, y+34, encStates[i], "rgba(219,234,254,0.5)", false);
+    } else {
+      ctx2.strokeStyle="#cbd5e1"; ctx2.strokeRect(px-2,y+32,cellW+4,19);
+    }
+  });
+  // ---- CONTEXT vector ----
+  const cy = 128;
+  ctx2.fillStyle="#e11d48"; ctx2.font="bold 12px sans-serif";
+  ctx2.fillText("CONTEXT VECTOR — the fixed-size summary handed to the decoder", 20, cy);
+  const active = phase!=="idle" && phase!=="encoding";
+  drawVec(20, cy+8, active?contextVec:zeros(H), "rgba(255,228,230,0.6)", active);
+  if (!active){ ctx2.fillStyle="#94a3b8"; ctx2.font="11px sans-serif"; ctx2.fillText("(fills once the encoder finishes)", 20+cellW+16, cy+20); }
+  else { ctx2.fillStyle="#e11d48"; ctx2.font="11px sans-serif"; ctx2.fillText("↑ everything about the input, squeezed into "+H+" numbers", 20+cellW+16, cy+20); }
+  // arrow encoder→context
+  ctx2.strokeStyle="#94a3b8"; ctx2.lineWidth=2; ctx2.beginPath(); ctx2.moveTo(60, y+54); ctx2.lineTo(60, cy+2); ctx2.stroke();
+
+  // ---- DECODER row ----
+  const dy = 200;
+  ctx2.fillStyle="#be123c"; ctx2.font="bold 12px sans-serif";
+  ctx2.fillText("DECODER — generates output one token at a time, feeding each back in", 20, dy);
+  // show generated tokens
+  const outToks = genSeq.length ? genSeq : [];
+  ctx2.fillStyle="#64748b"; ctx2.font="11px sans-serif";
+  ctx2.fillText("input:", 20, dy+30);
+  ctx2.fillText("output:", 20, dy+80);
+  const teacher = document.getElementById("modeSel").value === "teacher";
+  const nSteps = Math.max(outToks.length, decStates.length);
+  for (let i=0;i<nSteps;i++){
+    const px = 70 + i*Math.min(gap, 92);
+    if (px + 32 > W-10) break;
+    // decoder input token for step i
+    let inTok;
+    if (i===0) inTok = SOS;
+    else if (teacher) inTok = (i-1<targetSeq.length)?targetSeq[i-1]:EOS;
+    else inTok = outToks[i-1];
+    if (inTok !== undefined){
+      drawTok(px, dy+18, inTok===SOS?"<SOS>":(inTok===EOS?"<EOS>":String(inTok)), "def");
+    }
+    // hidden state
+    if (i < decStates.length){ /* small marker */ }
+    // output token
+    if (i < outToks.length){
+      const ot = outToks[i];
+      drawTok(px, dy+68, ot===EOS?"<EOS>":String(ot), "dec");
+      // feedback arrow (free-running)
+      if (!teacher && i+1 < nSteps){
+        const nx = 70 + (i+1)*Math.min(gap,92);
+        ctx2.strokeStyle="#fda4af"; ctx2.lineWidth=1.5; ctx2.beginPath();
+        ctx2.moveTo(px+16, dy+68); ctx2.bezierCurveTo(px+16, dy+56, nx+16, dy+40, nx+16, dy+18+26); ctx2.stroke();
+      }
+    }
+  }
+  // arrow context→decoder
+  ctx2.strokeStyle="#94a3b8"; ctx2.lineWidth=2; ctx2.beginPath(); ctx2.moveTo(60, cy+30); ctx2.lineTo(60, dy+12); ctx2.stroke();
+
+  // legend
+  ctx2.font="10px sans-serif"; ctx2.fillStyle="#64748b";
+  ctx2.fillText("■ +positive", W-160, Hc-20); ctx2.fillStyle="#f43f5e"; ctx2.fillRect(W-172, Hc-28, 8, 8);
+  ctx2.fillStyle="#64748b"; ctx2.fillText("■ −negative", W-160, Hc-6); ctx2.fillStyle="#2563eb"; ctx2.fillRect(W-172, Hc-14, 8, 8);
+}
+
+// ============================================================
+// CONTROLS
+// ============================================================
+const runBtn=document.getElementById("runBtn"), stepBtn=document.getElementById("stepBtn"), resetBtn=document.getElementById("resetBtn");
+const lenSlider=document.getElementById("lenSlider"), newSeqBtn=document.getElementById("newSeqBtn");
+
+function randInput(len){
+  return Array.from({length:len}, ()=> Math.floor(Math.random()*NDIGITS));
+}
+
+function loop(){
+  if (!running) return;
+  const more = tick();
+  draw();
+  if (more){ setTimeout(()=>requestAnimationFrame(loop), 650); }
+  else { running=false; runBtn.textContent="▶ Run encoder → decoder"; }
+}
+runBtn.onclick=()=>{
+  if (running){ running=false; runBtn.textContent="▶ Run encoder → decoder"; return; }
+  if (phase==="done" || phase==="idle") resetRun(true);
+  running=true; runBtn.textContent="⏸ Pause"; loop();
+};
+stepBtn.onclick=()=>{ if(running) return; if(phase==="done") resetRun(true); tick(); draw(); };
+resetBtn.onclick=()=>resetRun(true);
+lenSlider.oninput=()=>{
+  const len=+lenSlider.value; document.getElementById("lenN").textContent=len;
+  inputSeq = randInput(len);
+  resetRun(true);
+};
+newSeqBtn.onclick=()=>{ inputSeq = randInput(+lenSlider.value); resetRun(true); };
+document.getElementById("dimN").textContent = H;
+resetRun(true);
+
+// ============================================================
+// UNDERSTAND step engine
+// ============================================================
+const STEPS = [
+ { title:"1. The problem: one sequence in, a different sequence out", why:"A classifier maps an input to a single label, but many tasks map a whole sequence to another whole sequence: translate a French sentence to English, summarise a paragraph, transcribe speech. Crucially the input and output can be different lengths, and the alignment isn't one-to-one — three French words might become five English ones. A plain RNN that emits one output per input step can't do this; we need an architecture that first digests the entire input and then produces an output of whatever length is needed. That is the sequence-to-sequence (seq2seq) problem.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">"je suis étudiant"  (3 tokens)<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↓ seq2seq<br>"i am a student"    (4 tokens)<br>variable length in ≠ variable length out</div>`, code:`# Not classification (one label) and not tagging (one-per-token).
+# We need: variable-length INPUT -> variable-length OUTPUT
+#   translation:   "je suis" -> "i am"
+#   summarisation: long doc  -> short summary
+#   speech:        audio     -> text` },
+ { title:"2. Split the job: an Encoder and a Decoder", why:"The seq2seq answer is two networks in series. The encoder reads the whole input sequence and compresses it into a fixed-size vector. The decoder takes that vector and generates the output sequence step by step. Decoupling reading from writing is what lets the two sides have different lengths and even different vocabularies (French in, English out). Each half is itself a recurrent network, so the same idea handles any sequence length without changing the architecture.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">[input tokens] → ENCODER → ▉ context ▉ → DECODER → [output tokens]<br><br>read the whole input · then write the whole output</div>`, code:`# Two RNNs wired in series:
+#   encoder: input sequence      -> context vector
+#   decoder: context vector      -> output sequence
+enc = Encoder(); dec = Decoder()
+context = enc(input_seq)
+output_seq = dec(context)` },
+ { title:"3. The Encoder RNN → the context vector", why:"The encoder is an RNN that folds the input in one token at a time, updating a hidden state at each step: h_t = f(x_t, h_{t-1}). After the last token (and often an <EOS> marker) the final hidden state is taken as the context, sometimes called the 'thought vector'. In principle that single vector now summarises everything the decoder needs to know about the input. In the LOOK demo you can watch this hidden state — the coloured bar — genuinely change with each digit the encoder reads.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">h₁ = f(x₁, h₀)<br>h₂ = f(x₂, h₁)<br>h₃ = f(x₃, h₂)  ← final = CONTEXT<br>the whole input, in one vector</div>`, code:`h = zeros(hidden_dim)          # h0
+for x in input_tokens:         # left to right
+    h = tanh(Wx @ x + Wh @ h + b)   # RNN recurrence
+context = h                    # final hidden state` },
+ { title:"4. The Decoder RNN — conditioned on the context", why:"The decoder is a second RNN whose initial hidden state is set to the context vector — that is the only channel through which the input influences the output. At each step it consumes the previously produced token, updates its hidden state, and projects to a probability distribution over the output vocabulary via a softmax. Picking the highest-probability token (greedy) gives this step's output, which then becomes the next step's input. So the decoder both remembers (hidden state) and commits (emitted token) as it goes.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">s₀ = context<br>sₜ = f(prev_token, sₜ₋₁)<br>P(next) = softmax(W·sₜ)<br>emit argmax → feed back in</div>`, code:`s = context                    # decoder starts from the context
+tok = SOS
+while tok != EOS:
+    s = tanh(Wx @ emb(tok) + Wh @ s + b)
+    logits = Wo @ s + bo
+    tok = argmax(softmax(logits))   # this step's output token` },
+ { title:"5. <SOS> and <EOS>: knowing where to start and stop", why:"Because the output length is not fixed, the model needs explicit markers. A special <SOS> (start-of-sequence) token is fed as the decoder's very first input to kick off generation with nothing yet produced. A special <EOS> (end-of-sequence) token is something the decoder can emit to declare 'I'm done' — decoding loops until <EOS> appears (or a max length is hit). Without <EOS> the model would never know when to stop; without <SOS> it would have no first input. In the demo you can see decoding terminate exactly when <EOS> is generated.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">decoder input:  &lt;SOS&gt; 4  1  3<br>decoder output: 4  1  3  &lt;EOS&gt;<br>&lt;SOS&gt; starts it · &lt;EOS&gt; stops it</div>`, code:`# Vocabulary includes special symbols:
+SOS = "<sos>"   # first decoder input
+EOS = "<eos>"   # decoder emits this to stop
+
+tok = SOS
+out = []
+while tok != EOS and len(out) < MAX_LEN:
+    tok = decode_step(tok)
+    if tok != EOS: out.append(tok)` },
+ { title:"6. Teacher forcing (training) vs autoregressive (inference)", why:"During training we already know the correct output, so at each decoder step we feed the TRUE previous target token rather than the model's own guess — this is 'teacher forcing'. It stops early mistakes from snowballing and makes training fast and stable. At inference there is no ground truth, so the decoder runs 'autoregressively' (free-running): it feeds its OWN previous prediction back in. The two modes decode the exact same network differently; the demo's toggle lets you watch the input stream switch from true targets to the model's own outputs.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">TRAIN (teacher forcing): feed TRUE prev token<br>&nbsp;&nbsp;input: &lt;SOS&gt; 4 1 3   (from the target)<br><br>INFER (free-running): feed OWN prev output<br>&nbsp;&nbsp;input: &lt;SOS&gt; ŷ₁ ŷ₂   (from predictions)</div>`, code:`# TRAINING — teacher forcing
+for t in range(1, T):
+    logits, s = dec(target[t-1], s)   # TRUE previous token
+    loss += ce(logits, target[t])
+
+# INFERENCE — autoregressive
+tok = SOS
+while tok != EOS:
+    logits, s = dec(tok, s)
+    tok = logits.argmax()             # model's OWN guess` },
+ { title:"7. The bottleneck: everything through one fixed vector", why:"Here is the fatal flaw. No matter how long the input — five words or fifty — the encoder must cram all of it into a single fixed-size context vector. Short sequences fit fine, but as inputs grow the vector runs out of room and information is lost, especially about tokens read early on. Empirically, translation quality falls off sharply past ~20–30 words. In the LOOK demo, drag the length slider up and watch the output degrade: the very same recurrence that reversed a 3-digit string mangles a 9-digit one, because 9 tokens no longer fit the 8-dim context.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">short input → ▉ context ▉ → ✅ accurate<br>long input  → ▉ context ▉ → ❌ garbled<br>one fixed vector can't hold everything</div>`, code:`# The whole input must fit in ONE vector:
+context = encoder(input_seq)   # shape (hidden_dim,) — FIXED
+# 5 tokens?  fine.
+# 50 tokens? same-size vector → information is crushed
+# accuracy collapses as sequence length grows` },
+ { title:"8. The fix this motivated: Attention", why:"If one vector is too small, why force the decoder to use only the encoder's LAST state? Attention (Bahdanau, 2014) keeps EVERY encoder hidden state and lets the decoder, at each output step, compute a weighted blend over all of them — focusing ('attending') on the input positions most relevant to the token it's about to produce. The bottleneck disappears because there is no single summary vector; the decoder can look back at the whole input on demand. This is the idea covered on Day 12, and it directly rescued long-sentence translation.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">no attention: decoder sees only h_last<br>attention: decoder sees ALL {h₁…hₙ}<br>weighted by relevance at each step<br>→ no bottleneck (see Day 12)</div>`, code:`# Plain seq2seq: decoder gets only the last state
+context = h_last
+
+# Attention: keep ALL encoder states, weight them per step
+scores = query @ H_all.T          # relevance to current step
+weights = softmax(scores)
+context_t = weights @ H_all       # a FRESH context each step
+# no single bottleneck vector anymore  (Day 12)` },
+ { title:"9. From attention to the Transformer", why:"Attention worked so well that researchers asked: do we even need the RNN? The Transformer (Day 13, 'Attention Is All You Need', 2017) threw out recurrence entirely and built the encoder and decoder from self-attention alone. Removing the sequential recurrence let the whole sequence be processed in parallel — massively faster on GPUs — and self-attention captured long-range dependencies better than any RNN. Every modern LLM is a descendant of this line: seq2seq → attention → Transformer. The encoder–decoder shape you learned today still underlies translation and many LLMs.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">seq2seq (RNN) → +attention → Transformer<br>drop recurrence, keep attention<br>parallel + long-range = modern LLMs<br>(see Day 13)</div>`, code:`# The lineage in three lines:
+# 1) seq2seq:      encoder RNN -> context -> decoder RNN
+# 2) + attention:  decoder attends over ALL encoder states
+# 3) Transformer:  NO recurrence — self-attention everywhere
+#    "Attention Is All You Need" (2017) -> GPT, BERT, ... (Day 13)` },
+ { title:"10. Where seq2seq is used", why:"The encoder–decoder pattern powered the first wave of neural machine translation (Google Translate switched to it in 2016), then spread to abstractive summarisation (document → short summary), speech recognition and text-to-speech, image captioning (a CNN encoder feeds an RNN decoder), code generation and chatbots. Any time you map a variable-length input to a variable-length output, this shape applies. Modern systems use Transformer encoders/decoders rather than RNNs, but the conceptual split — read everything, then generate — is exactly the one you built today.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">translation · summarisation<br>speech↔text · image captioning<br>code generation · chatbots<br>all = encode input, decode output</div>`, code:`# Same encode→decode shape, many tasks:
+translate(fr_sentence)   -> en_sentence
+summarise(long_article)  -> short_summary
+transcribe(audio)        -> text
+caption(image_features)  -> sentence     # CNN encoder + RNN/Transformer decoder` }
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },3500); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>

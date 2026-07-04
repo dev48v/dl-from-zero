@@ -30,6 +30,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 21 — Vanishing &amp; Exploding Gradients](https://dev48v.infy.uk/dl/day21-vanishing-gradients.html) — `day21-vanishing-gradients.html`
 - [DeepLearningFromZero · Day 22 — ResNet &amp; Skip Connections](https://dev48v.infy.uk/dl/day22-resnet-skip-connections.html) — `day22-resnet-skip-connections.html`
 - [DeepLearningFromZero · Day 23 — Word2Vec (skip-gram)](https://dev48v.infy.uk/dl/day23-word2vec.html) — `day23-word2vec.html`
+- [DeepLearningFromZero · Day 24 — Seq2Seq & Encoder–Decoder](https://dev48v.infy.uk/dl/day24-seq2seq.html) — `day24-seq2seq.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk
