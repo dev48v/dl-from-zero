@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 25 — Beam Search</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  #cv { background:#fff; border:2px solid #0f172a; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,.12); }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  table.res { width:100%; border-collapse:collapse; font-size:12px; }
+  table.res th, table.res td { padding:5px 8px; text-align:left; border-bottom:1px solid #e2e8f0; }
+  table.res th { color:#64748b; font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:.04em; }
+  table.res td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.win { background:#fff1f2; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 25</div>
+      <h1 class="text-xl font-bold">🔦 Beam Search — keep the top-k sequences, not just the top token</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Greedy grabs the single best token every step. Beam keeps the best <em>whole</em> sequences.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto">A decoder (like Day 24's) gives a probability for every next token. Instead of a real net, this runs a <strong>tiny scripted language model</strong>: at each node there's a fixed distribution over a few words. Decoding is a <strong>search over the tree of sequences</strong>. This does <strong>real beam search</strong> — at every depth it <strong>expands</strong> each surviving hypothesis by all next tokens, <strong>scores</strong> each candidate by its <strong>cumulative log-probability</strong> (the sum of <code>log p</code> along the path), <strong>keeps the top-k</strong> and <strong>prunes the rest</strong> (greyed out). Set <strong>k = 1</strong> and you get plain greedy decoding — watch it walk into a locally-best first word that misses the globally-best sentence a wider beam finds. Toggle <strong>length normalization</strong> to see the short-sequence bias fixed. All log-prob math and top-k pruning are genuine.</p>
+
+      <div class="flex justify-center gap-3 mb-3 flex-wrap items-center">
+        <label class="text-sm text-slate-600 self-center flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200">
+          beam width k = <span id="kVal" class="stat font-bold text-rose-600 text-base">2</span>
+          <input id="kSlider" type="range" min="1" max="5" value="2" class="align-middle">
+          <span id="kNote" class="text-xs text-slate-400"></span>
+        </label>
+        <button id="runBtn" class="bg-rose-600 hover:bg-rose-700 text-white px-5 py-2 rounded-lg font-semibold text-sm">▶ Run beam search</button>
+        <button id="stepBtn" class="bg-slate-200 hover:bg-slate-300 px-5 py-2 rounded-lg font-semibold text-sm">⏭ Step (one depth)</button>
+        <button id="resetBtn" class="bg-slate-200 hover:bg-slate-300 px-5 py-2 rounded-lg font-semibold text-sm">↺ Reset</button>
+      </div>
+
+      <div class="flex justify-center gap-3 mb-4 flex-wrap items-center">
+        <label class="text-sm text-slate-600 self-center flex items-center gap-2">
+          <input id="normToggle" type="checkbox" class="align-middle"> length normalization (score ÷ length<sup>α</sup>)
+        </label>
+        <label id="alphaWrap" class="text-sm text-slate-600 self-center flex items-center gap-2 opacity-40">
+          α = <span id="alphaVal" class="stat font-bold text-rose-600">0.7</span>
+          <input id="alphaSlider" type="range" min="0" max="1" step="0.1" value="0.7" class="align-middle" disabled>
+        </label>
+      </div>
+
+      <div style="overflow:auto;max-height:600px" class="bg-white rounded-xl border border-slate-200 p-2 mb-3">
+        <canvas id="cv" width="820" height="360" class="mx-auto"></canvas>
+      </div>
+      <p class="text-xs text-slate-400 mb-4"><span style="color:#e11d48;font-weight:700">■</span> kept in the beam (top-k) &nbsp;·&nbsp; <span style="color:#10b981;font-weight:700">■</span> completed (emitted <code>&lt;/s&gt;</code>) &nbsp;·&nbsp; <span style="color:#94a3b8;font-weight:700">■</span> pruned &nbsp;·&nbsp; each box shows the added token, cumulative <code>Σ log p</code>, and that step's <code>p</code>.</p>
+
+      <div class="grid lg:grid-cols-2 gap-4 items-start text-left">
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">What's happening now</div>
+          <div id="statusLine" class="text-sm text-slate-700 min-h-[40px]">Press <strong>Step</strong> (or <strong>Run</strong>) to expand the first tokens.</div>
+          <div class="mt-3">
+            <div class="text-xs uppercase font-bold text-slate-400 tracking-wider mb-1">Live beam (surviving hypotheses)</div>
+            <div id="beamList" class="text-sm font-mono text-slate-700 min-h-[24px]">—</div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl border border-rose-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">Greedy vs Beam</div>
+          <div id="contrastBox" class="text-sm text-slate-700"></div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 mt-4 text-left">
+        <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">Completed sequences, ranked <span class="text-slate-400 normal-case font-normal">(by current scoring)</span></div>
+        <div id="resultsBox"><div class="text-slate-400 text-sm">Run the search to see completed sequences ranked here.</div></div>
+        <div id="normNote" class="text-xs text-slate-500 mt-3"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Searching the tree of sequences</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Build it yourself</h2>
+    <p class="text-slate-500 mb-8">You just watched real beam search prune a tree by cumulative log-prob. Here it is in Python: a greedy baseline, the beam core (expand, score, prune), an EOS pool, length normalization, and the sampling alternative. Drop in any model that returns next-token log-probs.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">The model interface: next-token log-probs</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Every decoder exposes the same thing: given the tokens produced so far, return a distribution over the next token. We work in <strong>log</strong> space from the start (<code>log_softmax</code>) so scoring a sequence is a sum, never a product that underflows to zero.</p>
+        <div class="relative"><pre>import torch, torch.nn.functional as F
+
+@torch.no_grad()
+def next_logprobs(model, tokens, state):
+    # tokens generated so far (begins with SOS)
+    logits, state = model.step(tokens[-1], state)   # (vocab,)
+    return F.log_softmax(logits, dim=-1), state      # log p over vocab</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">A hypothesis, and the greedy baseline</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A <em>hypothesis</em> is a partial sequence plus its running score (sum of log p). Greedy decoding keeps exactly one hypothesis and always takes the <code>argmax</code> — fast, but it can never recover from a bad early commit.</p>
+        <div class="relative"><pre>from dataclasses import dataclass
+
+@dataclass
+class Hyp:
+    tokens: list          # e.g. SOS, 4, 1
+    score: float = 0.0    # cumulative log-prob
+    state: object = None
+    done: bool = False
+
+def greedy(model, max_len=20):
+    h = Hyp(tokens=[SOS])
+    for _ in range(max_len):
+        lp, h.state = next_logprobs(model, h.tokens, h.state)
+        tok = int(lp.argmax())            # take the single best token
+        h.tokens.append(tok); h.score += float(lp[tok])
+        if tok == EOS: break
+    return h</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Beam search core: expand, score, prune</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Keep <code>k</code> hypotheses. Each step: expand every live hyp by every token, score each candidate (<code>parent.score + log p</code>), sort them all, keep the best <code>k</code>, discard the rest. Completed hyps (those that emitted EOS) move to a separate pool and stop expanding.</p>
+        <div class="relative"><pre>def beam_search(model, k=4, max_len=20):
+    beam = [Hyp(tokens=[SOS])]
+    completed = []
+    for _ in range(max_len):
+        if not beam: break
+        cands = []
+        for h in beam:                                  # EXPAND
+            lp, state = next_logprobs(model, h.tokens, h.state)
+            for tok in range(VOCAB):                     # SCORE
+                cands.append(Hyp(tokens=h.tokens + [tok],
+                                 score=h.score + float(lp[tok]),
+                                 state=state,
+                                 done=(tok == EOS)))
+        cands.sort(key=lambda c: c.score, reverse=True)  # PRUNE
+        beam = []
+        for c in cands[:k]:                              # keep top-k
+            (completed if c.done else beam).append(c)
+    return completed</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Length normalization: fix the short-sequence bias</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Because every extra token adds a negative <code>log p</code>, raw scores punish long sentences and beam search loves emitting EOS early. Divide the final score by <code>length^alpha</code> (Wu et al. use alpha near 0.6 to 0.7) before picking the winner — exactly the toggle in the LOOK demo.</p>
+        <div class="relative"><pre>def best(completed, alpha=0.7):
+    def norm_score(h):
+        length = len(h.tokens) - 1          # exclude the SOS token
+        return h.score / (length ** alpha)  # alpha=0 -> raw log-prob
+    return max(completed, key=norm_score)
+
+result = best(beam_search(model, k=4), alpha=0.7)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">The other family: sampling</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Beam optimizes for the <em>likeliest</em> text, which for open-ended generation is often bland and repetitive. Sampling instead <strong>draws</strong> from the distribution — temperature sharpens or flattens it; top-k / top-p (nucleus) trim the tail. This is what chat LLMs use for variety.</p>
+        <div class="relative"><pre>def sample(model, temp=0.8, top_p=0.9, max_len=100):
+    h = Hyp(tokens=[SOS])
+    for _ in range(max_len):
+        lp, h.state = next_logprobs(model, h.tokens, h.state)
+        probs = F.softmax(lp / temp, dim=-1)          # temperature
+        # nucleus (top-p): keep smallest set with cum prob above top_p
+        sp, idx = probs.sort(descending=True)
+        keep = (sp.cumsum(0) - sp) < top_p
+        probs = torch.zeros_like(probs).scatter_(0, idx[keep], sp[keep])
+        tok = int(torch.multinomial(probs / probs.sum(), 1))
+        h.tokens.append(tok)
+        if tok == EOS: break
+    return h</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Pick the right decoder for the task</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Use <strong>beam</strong> when there is a mostly-correct answer to find: translation, summarization, speech-to-text, code. Use <strong>sampling</strong> when you want diversity and creativity: chat, stories, brainstorming. Many systems combine them — sample with a small beam, or beam-decode then rerank.</p>
+        <div class="relative"><pre># rule of thumb
+translate(sentence)   -> beam_search(k=5)      # find the likeliest
+summarize(document)   -> beam_search(k=4)
+chat(prompt)          -> sample(temp=0.8, top_p=0.9)   # be interesting
+brainstorm(prompt)    -> sample(temp=1.1, top_p=0.95)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 25 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">You ran real beam search over a tree of sequences: at each depth it expanded every hypothesis, scored candidates by cumulative log-probability, and kept only the top-k — with k = 1 collapsing to greedy and getting trapped in a locally-best first word, while a wider beam recovered the globally best sentence. You saw why we sum log-probs instead of multiplying, why beam is still only a heuristic, how length normalization cures the short-sequence bias, and where beam (translation) gives way to sampling (chat). <strong>👉 Tomorrow — Day 26: Attention (a hands-on recap)</strong> — the mechanism that lets a decoder look back at every input token, the fix for the seq2seq bottleneck you met on Day 24.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ============================================================
+// TOY LANGUAGE MODEL: a scripted next-token probability tree.
+// Key = the partial sequence so far (space-joined). Value = list of
+// [token, P(token | sequence)]. EOS = "</s>". Every distribution sums to 1.
+// Crafted so greedy (k=1) picks a locally-best first word that misses the
+// globally-best sentence a wider beam finds, and so length-normalization
+// flips the winner.  All probabilities are real; scoring is genuine.
+// ============================================================
+const EOS = "</s>";
+const MAXDEPTH = 6;
+const TREE = {
+  ""     : [["the",0.50],["a",0.32],["red",0.18]],
+  "the"  : [["dog",0.42],["cat",0.33],["fox",0.25]],
+  "a"    : [["cat",0.80],["dog",0.20]],
+  "red"  : [["fox",0.88],["cat",0.12]],
+  "the dog" : [["barks",0.55],["runs",0.45]],
+  "the cat" : [["sleeps",0.60],["runs",0.40]],
+  "the fox" : [["runs",0.70],["hides",0.30]],
+  "a cat"   : [[EOS,0.62],["purrs",0.38]],
+  "a dog"   : [["barks",0.70],[EOS,0.30]],
+  "red fox" : [["jumps",0.75],[EOS,0.25]],
+  "red cat" : [[EOS,1.00]],
+  "the dog barks" : [[EOS,1.00]],
+  "the dog runs"  : [[EOS,1.00]],
+  "the cat sleeps": [[EOS,1.00]],
+  "the cat runs"  : [[EOS,1.00]],
+  "the fox runs"  : [[EOS,1.00]],
+  "the fox hides" : [[EOS,1.00]],
+  "a cat purrs"   : [[EOS,1.00]],
+  "a dog barks"   : [[EOS,1.00]],
+  "red fox jumps" : [["fast",0.60],[EOS,0.40]],
+  "red fox jumps fast" : [[EOS,1.00]]
+};
+
+function makeRoot(){ return { tok:"BOS", isEnd:false, p:1, logp:0, seq:"", tokens:[], parent:null, state:"kept" }; }
+function expand(node){
+  const dist = TREE[node.seq] || [];
+  return dist.map(([tok,p]) => {
+    const isEnd = tok === EOS;
+    const seq = isEnd ? node.seq : (node.seq === "" ? tok : node.seq + " " + tok);
+    const tokens = isEnd ? node.tokens.slice() : node.tokens.concat([tok]);
+    return { tok, isEnd, p, logp: node.logp + Math.log(p), seq, tokens, parent: node, state:"pruned" };
+  });
+}
+// full (non-animated) beam run — used for the contrast + length-norm note
+function runBeamFull(k){
+  let beam = [makeRoot()]; const completed = [];
+  for (let d=0; d<MAXDEPTH && beam.length; d++){
+    let cand = [];
+    beam.forEach(h => cand.push(...expand(h)));
+    cand.sort((a,b) => b.logp - a.logp);
+    beam = [];
+    cand.slice(0,k).forEach(c => (c.isEnd ? completed : beam).push(c));
+  }
+  return completed;
+}
+function seqText(node){ return node.tokens.length ? node.tokens.join(" ") : "∅"; }
+function scoreOf(node, norm, alpha){ const L = Math.max(1, node.tokens.length); return norm ? node.logp/Math.pow(L,alpha) : node.logp; }
+function rankPool(pool, norm, alpha){ return pool.slice().sort((a,b) => scoreOf(b,norm,alpha) - scoreOf(a,norm,alpha)); }
+
+// ============================================================
+// ANIMATED beam search — one depth per tick, records every candidate level
+// ============================================================
+let animBeam = null, running = false;
+const kSlider=document.getElementById("kSlider"), kVal=document.getElementById("kVal"), kNote=document.getElementById("kNote");
+const runBtn=document.getElementById("runBtn"), stepBtn=document.getElementById("stepBtn"), resetBtn=document.getElementById("resetBtn");
+const normToggle=document.getElementById("normToggle"), alphaSlider=document.getElementById("alphaSlider"), alphaVal=document.getElementById("alphaVal"), alphaWrap=document.getElementById("alphaWrap");
+
+function status(html){ document.getElementById("statusLine").innerHTML = html; }
+
+function resetAnim(){
+  running=false; runBtn.textContent="▶ Run beam search";
+  const r=makeRoot();
+  animBeam={ k:+kSlider.value, beam:[r], completed:[], levels:[[r]], depth:0, done:false };
+  status("Root = <code>BOS</code>. Press <strong>Step</strong> to expand the first tokens, or <strong>Run</strong>.");
+  updateAll(); draw();
+}
+function stepAnim(){
+  if (!animBeam || animBeam.done || !animBeam.beam.length){ if(animBeam) animBeam.done=true; return false; }
+  const k = animBeam.k;
+  let cand = [];
+  animBeam.beam.forEach(h => cand.push(...expand(h)));
+  cand.sort((a,b) => b.logp - a.logp);
+  const top = new Set(cand.slice(0,k));
+  cand.forEach(c => c.state = top.has(c) ? (c.isEnd ? "completed" : "kept") : "pruned");
+  animBeam.levels.push(cand);
+  const newBeam=[];
+  cand.slice(0,k).forEach(c => c.isEnd ? animBeam.completed.push(c) : newBeam.push(c));
+  animBeam.beam = newBeam; animBeam.depth++;
+  const kept = cand.filter(c=>c.state!=="pruned").length, pruned = cand.filter(c=>c.state==="pruned").length;
+  status(`Depth <strong>${animBeam.depth}</strong>: expanded ${cand.length} candidate${cand.length!==1?"s":""}, kept the top <strong>${Math.min(k,cand.length)}</strong> by cumulative log-prob, pruned ${pruned}. ` + (animBeam.beam.length? "Beam continues.":"Beam empty — search done."));
+  if (!animBeam.beam.length) animBeam.done=true;
+  return !animBeam.done;
+}
+
+// ---------- canvas render ----------
+const cv=document.getElementById("cv"), c2=cv.getContext("2d");
+if (!c2.roundRect){ CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h,r){ this.beginPath(); this.moveTo(x+r,y); this.arcTo(x+w,y,x+w,y+h,r); this.arcTo(x+w,y+h,x,y+h,r); this.arcTo(x,y+h,x,y,r); this.arcTo(x,y,x+w,y,r); this.closePath(); return this; }; }
+function draw(){
+  if (!animBeam) return;
+  const L=animBeam.levels, col=150, boxW=120, boxH=40, leftPad=20, topPad=26, botPad=18, rowStep=52;
+  const nLev=L.length, maxNodes=Math.max(1,...L.map(l=>l.length));
+  cv.width  = Math.max(420, leftPad + (nLev-1)*col + boxW + 24);
+  cv.height = Math.max(320, topPad + botPad + maxNodes*rowStep);
+  const plotH = cv.height - topPad - botPad;
+  c2.clearRect(0,0,cv.width,cv.height);
+  // assign positions
+  L.forEach((nodes,li) => { const n=nodes.length, sp=plotH/(n+1); nodes.forEach((nd,ni)=>{ nd._x=leftPad+li*col; nd._y=topPad+(ni+1)*sp; }); });
+  // connectors
+  c2.lineWidth=1.5;
+  L.forEach((nodes,li) => { if(!li) return; nodes.forEach(nd => { const p=nd.parent; if(!p||p._x==null) return;
+    c2.strokeStyle = nd.state==="pruned" ? "#e2e8f0" : nd.state==="completed" ? "#6ee7b7" : "#fda4af";
+    c2.beginPath(); c2.moveTo(p._x+boxW, p._y); c2.bezierCurveTo(p._x+boxW+30, p._y, nd._x-30, nd._y, nd._x, nd._y); c2.stroke();
+  }); });
+  // level headers
+  c2.font="bold 11px sans-serif"; c2.fillStyle="#94a3b8"; c2.textAlign="left";
+  L.forEach((nodes,li) => { c2.fillText(li===0?"root":("depth "+li), leftPad+li*col, 14); });
+  // nodes
+  L.forEach((nodes) => nodes.forEach(nd => {
+    const x=nd._x, y=nd._y-boxH/2;
+    let fill,border,fg;
+    if (nd.tok==="BOS"){ fill="#0f172a"; border="#0f172a"; fg="#fff"; }
+    else if (nd.state==="completed"){ fill="rgba(16,185,129,.15)"; border="#10b981"; fg="#065f46"; }
+    else if (nd.state==="kept"){ fill="rgba(244,63,94,.12)"; border="#f43f5e"; fg="#0f172a"; }
+    else { fill="#f8fafc"; border="#e2e8f0"; fg="#94a3b8"; }
+    c2.fillStyle=fill; c2.strokeStyle=border; c2.lineWidth= nd.state==="pruned"?1:2;
+    c2.roundRect(x,y,boxW,boxH,8); c2.fill(); c2.stroke();
+    c2.textAlign="center"; c2.textBaseline="middle";
+    c2.font="bold 13px monospace"; c2.fillStyle=fg;
+    c2.fillText(nd.tok==="BOS"?"BOS":(nd.isEnd?"</s>":nd.tok), x+boxW/2, y+13);
+    c2.font="10px monospace"; c2.fillStyle= nd.state==="pruned" ? "#cbd5e1" : "#64748b";
+    if (nd.tok==="BOS") c2.fillText("Σ 0.00", x+boxW/2, y+29);
+    else c2.fillText("Σ "+nd.logp.toFixed(2)+"  p"+nd.p.toFixed(2), x+boxW/2, y+29);
+  }));
+  c2.textAlign="left"; c2.textBaseline="alphabetic";
+}
+
+// ---------- panels ----------
+function updateAll(){ updateBeamList(); updateResults(); updateContrast(); updateNormNote(); }
+function updateBeamList(){
+  const el=document.getElementById("beamList");
+  if (!animBeam || !animBeam.levels.length){ el.textContent="—"; return; }
+  const live = animBeam.beam;
+  if (!live.length){ el.innerHTML = animBeam.done ? "<span class='text-slate-400'>(beam empty — all hypotheses completed)</span>" : "—"; return; }
+  el.innerHTML = live.map(h => `<span class="pill bg-rose-50 text-rose-700 mr-1 mb-1">${seqText(h)} <span class="text-slate-400">Σ${h.logp.toFixed(2)}</span></span>`).join("");
+}
+function updateResults(){
+  const el=document.getElementById("resultsBox");
+  const pool = animBeam ? animBeam.completed : [];
+  if (!pool.length){ el.innerHTML='<div class="text-slate-400 text-sm">Run the search to see completed sequences ranked here.</div>'; return; }
+  const norm=normToggle.checked, alpha=+alphaSlider.value;
+  const ranked=rankPool(pool, norm, alpha);
+  let h=`<table class="res"><thead><tr><th>#</th><th>sequence</th><th>len</th><th>Σ log p</th><th>prob</th>${norm?"<th>÷ len<sup>α</sup></th>":""}</tr></thead><tbody>`;
+  ranked.forEach((n,i)=>{ h+=`<tr class="${i===0?"win":""}"><td>${i+1}</td><td class="font-mono">${seqText(n)} <span class="text-slate-400">&lt;/s&gt;</span></td><td class="num">${n.tokens.length}</td><td class="num">${n.logp.toFixed(3)}</td><td class="num">${Math.exp(n.logp).toFixed(4)}</td>${norm?`<td class="num">${scoreOf(n,true,alpha).toFixed(3)}</td>`:""}</tr>`; });
+  h+="</tbody></table>";
+  el.innerHTML=h;
+}
+function updateContrast(){
+  const el=document.getElementById("contrastBox"); const k=+kSlider.value;
+  const gPool=runBeamFull(1), bPool=runBeamFull(k);
+  const greedy=gPool.slice().sort((a,b)=>b.logp-a.logp)[0];
+  const beamBest=bPool.slice().sort((a,b)=>b.logp-a.logp)[0];
+  const better = beamBest.logp > greedy.logp + 1e-9;
+  el.innerHTML = `
+    <div class="mb-1"><span class="pill bg-slate-100 text-slate-600">greedy (k=1)</span> <span class="font-mono">${seqText(greedy)}</span> <span class="text-slate-400 stat">Σ${greedy.logp.toFixed(3)} · p${Math.exp(greedy.logp).toFixed(4)}</span></div>
+    <div class="mb-2"><span class="pill bg-rose-600 text-white">beam (k=${k})</span> <span class="font-mono">${seqText(beamBest)}</span> <span class="text-slate-400 stat">Σ${beamBest.logp.toFixed(3)} · p${Math.exp(beamBest.logp).toFixed(4)}</span></div>
+    <div class="text-sm ${better?"text-rose-700 font-semibold":"text-slate-500"}">${better
+      ? "✅ Beam finds a higher-probability sequence that greedy's first-token commit misses."
+      : (k===1 ? "k=1 is exactly greedy — widen the beam to escape the local optimum." : "At this width beam and greedy agree on the top sequence.")}</div>`;
+}
+function updateNormNote(){
+  const el=document.getElementById("normNote"); const k=+kSlider.value, alpha=+alphaSlider.value;
+  const pool=runBeamFull(k);
+  const rawW=rankPool(pool,false,alpha)[0];
+  const normW=rankPool(pool,true,alpha)[0];
+  if (rawW!==normW){
+    el.innerHTML = `↕ <strong>Length normalization changes the winner.</strong> Raw log-prob prefers the shorter <span class="font-mono">${seqText(rawW)}</span> (len ${rawW.tokens.length}); dividing by length<sup>${alpha}</sup> instead crowns <span class="font-mono">${seqText(normW)}</span> (len ${normW.tokens.length}) — correcting beam's bias toward short outputs. Toggle it above to see the ranking re-sort.`;
+  } else {
+    el.innerHTML = `At α=${alpha} and k=${k}, normalization keeps <span class="font-mono">${seqText(rawW)}</span> on top. Widen the beam (more completed lengths) or raise α to see the winner flip.`;
+  }
+}
+
+// ---------- controls ----------
+function loop(){ if(!running) return; const more=stepAnim(); updateAll(); draw(); if(more){ setTimeout(()=>requestAnimationFrame(loop), 850); } else { running=false; runBtn.textContent="▶ Run beam search"; } }
+runBtn.onclick=()=>{ if(running){ running=false; runBtn.textContent="▶ Run beam search"; return; } if(!animBeam||animBeam.done) resetAnim(); running=true; runBtn.textContent="⏸ Pause"; loop(); };
+stepBtn.onclick=()=>{ if(running) return; if(!animBeam||animBeam.done) resetAnim(); stepAnim(); updateAll(); draw(); };
+resetBtn.onclick=()=>resetAnim();
+kSlider.oninput=()=>{ const k=+kSlider.value; kVal.textContent=k; kNote.textContent = k===1?"(= greedy)":""; resetAnim(); };
+normToggle.onchange=()=>{ alphaSlider.disabled=!normToggle.checked; alphaWrap.style.opacity=normToggle.checked?"1":"0.4"; updateResults(); updateNormNote(); };
+alphaSlider.oninput=()=>{ alphaVal.textContent=(+alphaSlider.value).toFixed(1); updateResults(); updateNormNote(); };
+kNote.textContent = (+kSlider.value)===1?"(= greedy)":"";
+resetAnim();
+
+// ============================================================
+// UNDERSTAND step engine
+// ============================================================
+const STEPS = [
+ { title:"1. Decoding is a search problem", why:"A trained language model or seq2seq decoder gives you one thing: P(next token | tokens so far). To produce a whole sentence you must choose a token at every step, and the probability of the finished sequence is the product of those per-step probabilities. But the number of possible sequences is the vocabulary size raised to the length — astronomically large — so you cannot score them all and pick the maximum. Decoding is therefore a heuristic search through an exponentially large tree for a high-probability output. Beam search and greedy are two such heuristics.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">P(seq) = P(w1)·P(w2|w1)·P(w3|w1w2)·…<br><br>|vocab|<sup>length</sup> possible sequences<br>→ cannot enumerate → must search</div>`, code:"# The model only ever gives you the NEXT-token distribution:\n#   p = model(tokens_so_far)   # vector over the vocabulary\n# A full sequence's score is the product of the steps taken.\n# Sequences to consider = vocab_size ** length  (way too many)\n# So decoding = SEARCH for a high-probability path, not enumeration." },
+ { title:"2. Greedy decoding and its myopia", why:"The simplest search is greedy: at every step take the single highest-probability token (argmax) and never look back. It is fast, deterministic, and needs no extra memory. The flaw is that it is myopic — a token that looks best right now can lead into a region where every continuation is poor, while a slightly worse token now might open a far better sentence later. Because greedy commits irrevocably at each step, it can never recover from that early mistake. In the demo, set k=1 and watch it grab the likeliest first word and get stuck with a lower-scoring whole sentence.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">step1: pick argmax  ✔ locally best<br>step2: pick argmax  …<br>but the whole path may be worse!<br>greedy cannot look ahead</div>`, code:"tok = SOS\nwhile tok != EOS:\n    p = model(context)\n    tok = argmax(p)       # ALWAYS the single best token, no lookahead\n    emit(tok)\n# fast, but one bad early argmax dooms the whole sequence" },
+ { title:"3. The search tree", why:"Picture every partial sequence as a node in a tree. The root is the empty output; each edge is one possible next token labelled with its probability; a node's children are all the ways the sequence could continue. The branching factor is the vocabulary size and the depth is the sequence length, which is why the tree explodes. A complete sentence is a leaf reached by emitting the end-of-sequence token. Both greedy and beam walk down this tree; they differ only in how many nodes they keep alive at each level.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">root<br>├─ the ─┬─ dog ─ …<br>│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─ cat ─ …<br>└─ a ───── cat ─ …<br>leaves = complete sequences (…&lt;/s&gt;)</div>`, code:"# Node   = a partial sequence (a path from the root)\n# Edge   = one next token, weighted by P(token | path)\n# Depth  = length so far ; Branching = vocabulary size\n# Leaf   = sequence that emitted EOS\n# Greedy keeps 1 node per level; beam keeps k; exhaustive keeps all." },
+ { title:"4. Scoring with cumulative log-probability", why:"To compare partial sequences we need a running score. The natural score is the sequence probability, but that is a product of many numbers below 1, which quickly underflows to zero in floating point for long sequences. So we take the logarithm: the product of probabilities becomes a sum of log-probabilities, which is numerically stable. Because log is monotonic, the sequence with the highest probability also has the highest log-probability, so ranking is unchanged. Each log p is negative, we add them along the path, and less-negative totals are better — this is the number in every box in the demo.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">P = p1·p2·p3·…      (underflows → 0)<br>log P = Σ log pi     (stable sum)<br>each log pi &lt; 0 · higher Σ = better<br>argmax preserved (log is monotonic)</div>`, code:"import math\nscore = 0.0                      # log-prob of the empty prefix\nfor tok in sequence:\n    p = model(context)[tok]      # P(tok | context)\n    score += math.log(p)         # SUM logs, don't multiply probs\n# score is negative; the LEAST-negative sequence is the likeliest" },
+ { title:"5. Beam width k: quality versus cost", why:"Beam search generalises greedy by keeping the k best partial sequences at every step instead of just one. With k=1 it is exactly greedy; as k grows toward the full vocabulary it approaches an exhaustive search that is guaranteed to find the most probable sequence. A larger beam explores more of the tree and usually returns a higher-scoring, more fluent output, but the cost grows: each step expands k hypotheses over the whole vocabulary and re-sorts, so time and memory scale with k. In practice machine translation uses a small beam, roughly k=4 to k=10, because gains flatten out quickly.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">k = 1        → greedy (cheapest, myopic)<br>k = 4…10     → sweet spot (MT)<br>k → |vocab|  → exhaustive (optimal, infeasible)<br>bigger k = better + slower</div>`, code:"# k is the only knob:\nbeam_search(model, k=1)    # == greedy\nbeam_search(model, k=5)    # keep 5 hypotheses alive per step\nbeam_search(model, k=50)   # closer to optimal, much slower\n# cost per step ~ k * vocab_size  (expand every hyp, then re-sort)" },
+ { title:"6. One beam step: expand, score, prune", why:"Each iteration of beam search has three moves. Expand: take every hypothesis currently in the beam and grow it by every possible next token, producing many candidate sequences. Score: give each candidate its parent's cumulative log-prob plus the log-probability of the token just added. Prune: sort all candidates and keep only the top k, throwing the rest away. Any candidate that just emitted the end-of-sequence token is set aside in a finished pool rather than expanded further. Repeat until the beam is empty or a length limit is reached — exactly the expand/score/prune you watch level by level in the demo.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">EXPAND  every hyp × every token<br>SCORE   parent Σlogp + log p(token)<br>PRUNE   sort → keep top-k, drop rest<br>(finished hyps → completed pool)</div>`, code:"cands = []\nfor h in beam:                         # EXPAND\n    for tok, p in model(h.context):\n        cands.append((h.score + log(p), h.tokens + [tok]))\ncands.sort(reverse=True)               # SCORE + sort\nbeam = cands[:k]                       # PRUNE to top-k\n# move any hypothesis ending in EOS into the completed pool" },
+ { title:"7. Beam search is a heuristic, not optimal", why:"It is tempting to think a wider beam always finds the single most probable sequence, but that is only guaranteed when k equals the full vocabulary. With a bounded beam, the prefix of the true best sequence can look weak early and get pruned before its strong continuation appears, so it never survives to be found. Beam search is thus a bounded-width best-first search: much better than greedy, but still an approximation with no optimality guarantee. Larger k lowers the risk of pruning the eventual winner, at higher cost. Knowing it is heuristic explains why beam sometimes still returns an odd or repetitive output.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">true-best path may start weak<br>→ pruned early → never recovered<br>optimal only if k = |vocab|<br>beam = good approximation, not a guarantee</div>`, code:"# Beam can still miss the global argmax:\n#   a winning sequence whose FIRST tokens score poorly\n#   gets pruned before its strong tail ever appears.\n# Only k = vocab_size (exhaustive) guarantees the true maximum.\n# Bigger k -> smaller chance of pruning the eventual winner." },
+ { title:"8. The short-sequence bias and length normalization", why:"Every extra token multiplies the sequence probability by a number below 1, which means it adds a negative log-probability to the score. So longer sequences almost always score lower than short ones, and beam search develops a bias toward emitting the end-of-sequence token too early, returning stunted outputs. The standard fix is length normalization: divide the final score by the sequence length raised to a power alpha (often around 0.6 to 0.7), which rewards length just enough to level the field. This can change which completed hypothesis wins — toggle it in the demo and watch a longer, well-formed sentence overtake a short one. Alpha=0 recovers the raw log-prob.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">raw:   Σ log p  → shorter always wins (bias)<br>norm:  Σ log p ÷ length<sup>α</sup><br>α ≈ 0.6–0.7 rewards length<br>→ longer, complete sentences can win</div>`, code:"def final_score(h, alpha=0.7):\n    length = len(h.tokens)\n    return h.score / (length ** alpha)   # alpha=0 -> raw log-prob\n\nbest = max(completed, key=lambda h: final_score(h, 0.7))\n# without this, beam favours short outputs and stops too early" },
+ { title:"9. Beam versus sampling", why:"Beam search is deterministic and optimises for the most probable text, which is exactly what you want when there is a correct answer. But for open-ended generation the likeliest continuation is often bland, generic, or stuck in repetition loops. Sampling takes the opposite approach: it draws the next token from the distribution instead of maximising it, using temperature to sharpen or flatten the probabilities and top-k or top-p (nucleus) to cut off the unlikely tail. The result is diverse, creative, and human-sounding, at the cost of occasionally going off the rails. The key lesson: maximum likelihood is not the same as best quality for creative text.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">BEAM: argmax-ish · deterministic · precise · can be bland<br>SAMPLING: draw ~ p · temperature/top-k/top-p<br>diverse · creative · can wander<br>likelihood ≠ quality (open-ended)</div>`, code:"# Beam: maximise probability (deterministic)\nout = beam_search(model, k=5)\n\n# Sampling: draw from the distribution (stochastic)\np = softmax(logits / temperature)   # temperature\np = nucleus(p, top_p=0.9)            # keep the top-p mass\ntok = multinomial(p)                 # sample, don't argmax" },
+ { title:"10. Where each one is used", why:"Match the decoder to the task. Beam search dominates where there is a mostly-correct target to recover: neural machine translation (Google Translate switched to it in 2016), abstractive summarization, speech recognition, and code generation. Sampling dominates open-ended generation where diversity is the point: chatbots, story and content writing, and brainstorming — modern chat LLMs decode with temperature and top-p, not beam. The two are often combined, for example sampling with a small beam, or beam-decoding several candidates and reranking them. Understanding both, and the log-prob search underneath, lets you reason about why a model produced the text it did.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">BEAM → translation · summarisation<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;speech-to-text · code<br>SAMPLING → chat · stories · brainstorming<br>often combined (sample+beam, or beam+rerank)</div>`, code:"translate(sentence)  -> beam_search(k=5)          # find the right words\nsummarize(document)  -> beam_search(k=4)\ntranscribe(audio)    -> beam_search(k=10)\nchat(prompt)         -> sample(temp=0.8, top_p=0.9) # be interesting\nwrite_story(prompt)  -> sample(temp=1.0, top_p=0.95)" }
+];
+const stepsEl=document.getElementById("steps");
+const prevB=document.getElementById("prev"), nextB=document.getElementById("next-btn"), autoB=document.getElementById("auto");
+let curS=0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },4200); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>
