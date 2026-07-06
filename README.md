@@ -32,6 +32,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 23 — Word2Vec (skip-gram)](https://dev48v.infy.uk/dl/day23-word2vec.html) — `day23-word2vec.html`
 - [DeepLearningFromZero · Day 24 — Seq2Seq & Encoder–Decoder](https://dev48v.infy.uk/dl/day24-seq2seq.html) — `day24-seq2seq.html`
 - [DeepLearningFromZero · Day 25 — Beam Search](https://dev48v.infy.uk/dl/day25-beam-search.html) — `day25-beam-search.html`
+- [DeepLearningFromZero · Day 26 — GRU](https://dev48v.infy.uk/dl/day26-gru.html) — `day26-gru.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk

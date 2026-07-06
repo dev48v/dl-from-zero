@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 26 — GRU</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  #cv { background:#fff; border:2px solid #0f172a; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,.12); }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  table.res { width:100%; border-collapse:collapse; font-size:12px; }
+  table.res th, table.res td { padding:5px 8px; text-align:left; border-bottom:1px solid #e2e8f0; }
+  table.res th { color:#64748b; font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:.04em; }
+  table.res td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.win { background:#fff1f2; }
+  .tokbtn { border:2px solid #e2e8f0; }
+  .tokbtn.on { border-color:#f43f5e; background:#fff1f2; color:#be123c; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 26</div>
+      <h1 class="text-xl font-bold">🚪 GRU — two gates, one hidden state: the streamlined LSTM</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">One recurrent cell, two learned valves — and a hidden state that can hold a memory for as long as it needs.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto">A vanilla RNN (Day 10) crushes its hidden state through a <code>tanh</code> every step, so early signals vanish. The LSTM (Day 11) fixed that with three gates and a separate cell state. The <strong>GRU</strong> gets the same benefit with <strong>two gates and no extra state</strong>. This runs a <strong>real GRU cell</strong> on seeded weights — genuine <code>sigmoid</code> gates and a <code>tanh</code> candidate — over a tiny <strong>remember-the-first-token</strong> task. Watch the <strong>update gate <span class="text-rose-600 font-bold">z</span></strong> and <strong>reset gate <span class="text-rose-600 font-bold">r</span></strong> light up (0→1 heat bars) and the hidden state <strong>h</strong> update each timestep by the convex mix <code>h = (1−z)·h_prev + z·h̃</code>. Feed it a token, then a run of blanks: when the gate learns to stay <em>shut</em>, the first token is <strong>carried</strong> unchanged to the end; push the sliders and you can make it <strong>forget</strong>. All gate math is real.</p>
+
+      <div class="flex justify-center gap-3 mb-3 flex-wrap items-center">
+        <span class="text-sm text-slate-600 self-center">first token to remember:</span>
+        <div id="tokPick" class="flex gap-1">
+          <button data-tok="A" class="tokbtn on px-4 py-1.5 rounded-lg font-bold text-sm">A</button>
+          <button data-tok="B" class="tokbtn px-4 py-1.5 rounded-lg font-bold text-sm">B</button>
+          <button data-tok="C" class="tokbtn px-4 py-1.5 rounded-lg font-bold text-sm">C</button>
+        </div>
+        <button id="runBtn" class="bg-rose-600 hover:bg-rose-700 text-white px-5 py-2 rounded-lg font-semibold text-sm">▶ Run sequence</button>
+        <button id="stepBtn" class="bg-slate-200 hover:bg-slate-300 px-5 py-2 rounded-lg font-semibold text-sm">⏭ Step (one timestep)</button>
+        <button id="resetBtn" class="bg-slate-200 hover:bg-slate-300 px-5 py-2 rounded-lg font-semibold text-sm">↺ Reset</button>
+      </div>
+
+      <div class="flex justify-center gap-6 mb-4 flex-wrap items-center">
+        <label class="text-sm text-slate-600 self-center flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200">
+          update gate bias <span class="text-slate-400">(carry</span> <span id="zArrow">↔</span> <span class="text-slate-400">refresh)</span>
+          <input id="zBias" type="range" min="-6" max="6" step="0.5" value="0" class="align-middle">
+          <span id="zBiasVal" class="stat font-bold text-rose-600 w-8 text-left">0</span>
+        </label>
+        <label class="text-sm text-slate-600 self-center flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200">
+          reset gate bias <span class="text-slate-400">(forget</span> <span id="rArrow">↔</span> <span class="text-slate-400">use&nbsp;past)</span>
+          <input id="rBias" type="range" min="-6" max="6" step="0.5" value="0" class="align-middle">
+          <span id="rBiasVal" class="stat font-bold text-rose-600 w-8 text-left">0</span>
+        </label>
+      </div>
+
+      <div style="overflow:auto;max-height:640px" class="bg-white rounded-xl border border-slate-200 p-2 mb-3">
+        <canvas id="cv" width="880" height="470" class="mx-auto"></canvas>
+      </div>
+      <p class="text-xs text-slate-400 mb-4">gate rows: <span style="color:#e11d48;font-weight:700">■</span> darker = closer to 1 (open) &nbsp;·&nbsp; state rows: <span style="color:#0f172a;font-weight:700">■</span> negative &nbsp;/&nbsp; <span style="color:#e11d48;font-weight:700">■</span> positive &nbsp;·&nbsp; right grid = hidden state <code>h</code> at every timestep; the thin bar above each column is that step's <strong>carry fraction</strong> <code>mean(1−z)</code>.</p>
+
+      <div class="grid lg:grid-cols-2 gap-4 items-start text-left">
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">What's happening now</div>
+          <div id="statusLine" class="text-sm text-slate-700 min-h-[40px]">Press <strong>Step</strong> (or <strong>Run</strong>) to feed the first token into the cell.</div>
+          <div class="mt-3 grid grid-cols-3 gap-2 text-center">
+            <div class="bg-slate-50 rounded-lg p-2"><div class="text-[10px] uppercase font-bold text-slate-400">avg update z</div><div id="zStat" class="stat text-lg font-bold text-slate-700">—</div></div>
+            <div class="bg-slate-50 rounded-lg p-2"><div class="text-[10px] uppercase font-bold text-slate-400">avg reset r</div><div id="rStat" class="stat text-lg font-bold text-slate-700">—</div></div>
+            <div class="bg-rose-50 rounded-lg p-2"><div class="text-[10px] uppercase font-bold text-rose-400">carry 1−z</div><div id="carryStat" class="stat text-lg font-bold text-rose-600">—</div></div>
+          </div>
+          <div class="mt-3 p-3 rounded-lg border" id="taskBox">
+            <div class="text-xs uppercase font-bold text-slate-400 tracking-wider mb-1">Remember-first-token task</div>
+            <div id="taskLine" class="text-sm text-slate-700">Run the full sequence to see whether the first token survived to the last step.</div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl border border-rose-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">GRU vs LSTM vs vanilla RNN</div>
+          <table class="res">
+            <thead><tr><th></th><th>RNN · Day 10</th><th>LSTM · Day 11</th><th>GRU · Day 26</th></tr></thead>
+            <tbody>
+              <tr><td class="font-semibold">gates</td><td>0</td><td>3 (input, forget, output)</td><td class="text-rose-700 font-semibold">2 (update, reset)</td></tr>
+              <tr><td class="font-semibold">states</td><td>h</td><td>h <em>and</em> cell state c</td><td class="text-rose-700 font-semibold">h only</td></tr>
+              <tr><td class="font-semibold">params / cell*</td><td>≈ 1×</td><td>≈ 4×</td><td class="text-rose-700 font-semibold">≈ 3×</td></tr>
+              <tr><td class="font-semibold">long-range carry</td><td>none → vanishes</td><td>additive cell path</td><td class="text-rose-700 font-semibold">convex hold (1−z)</td></tr>
+              <tr><td class="font-semibold">gradient</td><td>vanishes/explodes</td><td>protected by c</td><td class="text-rose-700 font-semibold">protected by z≈0</td></tr>
+            </tbody>
+          </table>
+          <p class="text-[11px] text-slate-400 mt-2">*relative to a plain RNN of the same width; each gate/candidate adds one weight block. The GRU drops the LSTM's output gate and merges input+forget into a single <code>z</code>, so it trains a bit faster with fewer weights.</p>
+          <div id="compareNote" class="text-sm text-slate-600 mt-2"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Two gates, one state, no vanishing</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">← Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next →</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">▶ Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">—</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Build it yourself</h2>
+    <p class="text-slate-500 mb-8">You just watched a real GRU cell carry a token across a run of blanks using nothing but its update gate. Here it is in PyTorch: the one-line <code>nn.GRU</code>, the exact cell equations spelled out in a <code>GRUCell</code>, the shapes you actually pass, a sequence-classifier head for the remember-first-token task, and the one-line swap to an LSTM so you can benchmark both.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">The whole layer is one line: nn.GRU</h3></div>
+        <p class="text-sm text-slate-600 mb-3">PyTorch ships the GRU as a fused, cuDNN-accelerated layer. You give it the input feature size and the hidden size; it returns the full sequence of hidden states plus the final one. <code>batch_first=True</code> makes the tensors read <code>(batch, time, features)</code>.</p>
+        <div class="relative"><pre>import torch, torch.nn as nn
+
+gru = nn.GRU(input_size=16, hidden_size=32,
+             num_layers=1, batch_first=True)
+
+x = torch.randn(8, 5, 16)          # (batch=8, seq_len=5, features=16)
+out, h_n = gru(x)                  # out:(8,5,32)  h_n:(1,8,32)
+# out[:, t, :] = hidden state after timestep t ; h_n = out[:, -1, :]</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">The four equations, written out as a GRUCell</h3></div>
+        <p class="text-sm text-slate-600 mb-3">This is exactly what the LOOK demo computes at every timestep: two sigmoid gates, one tanh candidate, and the convex-combination update. Follow it once and the fused layer is no longer a black box.</p>
+        <div class="relative"><pre>import torch, torch.nn as nn, torch.nn.functional as F
+
+class GRUCell(nn.Module):
+    def __init__(self, d_in, d_h):
+        super().__init__()
+        self.x2h = nn.Linear(d_in, 3 * d_h)   # W_z, W_r, W_h stacked
+        self.h2h = nn.Linear(d_h,  3 * d_h)   # U_z, U_r, U_h stacked
+
+    def forward(self, x, h_prev):
+        xz, xr, xh = self.x2h(x).chunk(3, dim=-1)
+        hz, hr, hh = self.h2h(h_prev).chunk(3, dim=-1)
+        z = torch.sigmoid(xz + hz)            # update gate  in [0,1]
+        r = torch.sigmoid(xr + hr)            # reset  gate  in [0,1]
+        h_tilde = torch.tanh(xh + r * hh)     # candidate (reset filters the past)
+        return (1 - z) * h_prev + z * h_tilde # h = (1-z)*h_prev + z*h~</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Roll the cell over a sequence</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The fused <code>nn.GRU</code> does this loop in C for speed, but writing it once shows how the same weights are reused at every timestep and how the hidden state threads through — carrying information forward when <code>z</code> stays near zero.</p>
+        <div class="relative"><pre>cell = GRUCell(d_in=16, d_h=32)
+
+def run(seq):                          # seq: (batch, time, d_in)
+    B, T, _ = seq.shape
+    h = torch.zeros(B, 32)             # h_0
+    outs = []
+    for t in range(T):
+        h = cell(seq[:, t, :], h)      # same weights every step
+        outs.append(h)
+    return torch.stack(outs, dim=1), h # (B,T,32), final h</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">A classifier head for remember-first-token</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Take the final hidden state and map it to a label. Train this on sequences whose answer depends only on the first token and the GRU learns, on its own, to shut the update gate on the blank steps so the first token survives — the behaviour the slider forces by hand in LOOK.</p>
+        <div class="relative"><pre>class FirstTokenClassifier(nn.Module):
+    def __init__(self, vocab, d_emb=16, d_h=32, n_cls=3):
+        super().__init__()
+        self.emb = nn.Embedding(vocab, d_emb)
+        self.gru = nn.GRU(d_emb, d_h, batch_first=True)
+        self.fc  = nn.Linear(d_h, n_cls)
+    def forward(self, tokens):          # tokens: (batch, time) of ids
+        _, h_n = self.gru(self.emb(tokens))
+        return self.fc(h_n[-1])         # logits from the FINAL hidden state
+
+model = FirstTokenClassifier(vocab=4)
+loss  = F.cross_entropy(model(tokens), labels)   # standard training loop</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Stack, go bidirectional, add dropout</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The same knobs as <code>nn.LSTM</code>. Depth stacks GRUs; bidirectional runs a second GRU backwards and concatenates, doubling the output width; inter-layer dropout regularises. Remember to sort/pack variable-length batches.</p>
+        <div class="relative"><pre>gru = nn.GRU(input_size=16, hidden_size=32,
+             num_layers=2,        # stacked depth
+             bidirectional=True,  # out width = 2 * hidden_size
+             dropout=0.3,         # applied between layers
+             batch_first=True)
+
+# variable-length batches: pack so padding is skipped
+from torch.nn.utils.rnn import pack_padded_sequence
+packed = pack_padded_sequence(x, lengths, batch_first=True,
+                              enforce_sorted=False)
+out, h_n = gru(packed)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">GRU or LSTM? Swap one line and measure</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The interfaces are identical except the LSTM's hidden state is a <code>(h, c)</code> tuple. There is no universal winner — GRU is lighter and often trains faster on small/medium data; LSTM sometimes edges ahead on very long dependencies. Benchmark both on your task.</p>
+        <div class="relative"><pre># identical call site — just change the module:
+rnn = nn.GRU (d_in, d_h, batch_first=True)   # 3 weight blocks, state = h
+rnn = nn.LSTM(d_in, d_h, batch_first=True)   # 4 weight blocks, state = (h, c)
+
+# rule of thumb
+small_or_fast_data   -> GRU     # fewer params, quicker to train
+very_long_context    -> LSTM    # extra cell state can help
+production_2024_plus -> Transformer  # attention replaced RNNs for most seq tasks</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">🎉 Day 26 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">You ran a real GRU cell: two sigmoid gates and a tanh candidate feeding the convex update <strong>h = (1−z)·h_prev + z·h̃</strong>. You saw the update gate <strong>z</strong> act as a write/carry valve — near 0 it copies the old state forward untouched (the additive-style path that lets gradients survive, the fix for the vanilla RNN's vanishing gradient), near 1 it refreshes to the candidate — and the reset gate <strong>r</strong> decide how much of the past even enters that candidate. Two gates and one state give the GRU most of the LSTM's long-range memory with fewer parameters and no separate cell state. <strong>👉 Tomorrow — Day 27: Attention recap / Layer Norm</strong> — the mechanism (and the normalisation trick) that let Transformers retire recurrence for most sequence tasks.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ============================================================
+// REAL GRU CELL on seeded weights. H hidden units, D-dim token embeddings.
+// z = σ(Wz·x + Uz·h + bz + zBias)          update gate  in [0,1]
+// r = σ(Wr·x + Ur·h + br + rBias)          reset  gate  in [0,1]
+// h̃ = tanh(Wh·x + Uh·(r⊙h) + bh)          candidate
+// h = (1-z)⊙h_prev + z⊙h̃                  new hidden state (convex combo)
+// Weights are DESIGNED so a strong token drive opens z (writes) while a
+// negative bias keeps z shut on blank steps (carry). Sliders add to the
+// gate pre-activations so you can force forgetting. All math is genuine.
+// ============================================================
+const H = 4, D = 3, T = 5;
+const sigmoid = x => 1 / (1 + Math.exp(-x));
+const dot = (row, v) => row.reduce((s, w, j) => s + w * v[j], 0);
+const matvec = (M, v) => M.map(row => dot(row, v));
+const addv = (a, b) => a.map((x, i) => x + b[i]);
+const had = (a, b) => a.map((x, i) => x * b[i]);
+const cos = (a, b) => { const d = dot(a, b), na = Math.hypot(...a), nb = Math.hypot(...b); return (na && nb) ? d / (na * nb) : 0; };
+
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+const rnd = mulberry32(0x9E3779B9);
+const rmat = (r, c, s) => Array.from({length:r}, () => Array.from({length:c}, () => (rnd()*2-1)*s));
+const Wz = Array.from({length:H}, () => Array.from({length:D}, () => 5.0));
+const Uz = rmat(H, H, 0.15);
+const bz = Array.from({length:H}, () => -3.0);
+const Wr = rmat(H, D, 1.0);
+const Ur = rmat(H, H, 0.5);
+const br = Array.from({length:H}, () => 0.5);
+const Wh = rmat(H, D, 1.6);
+const Uh = rmat(H, H, 0.6);
+const bh = Array.from({length:H}, () => 0.0);
+const EMB = { A:[1,0,0], B:[0,1,0], C:[0,0,1], "·":[0,0,0] };
+
+function cell(x, hPrev, zBias, rBias){
+  const z = addv(addv(matvec(Wz,x), matvec(Uz,hPrev)), bz).map(v => sigmoid(v + zBias));
+  const r = addv(addv(matvec(Wr,x), matvec(Ur,hPrev)), br).map(v => sigmoid(v + rBias));
+  const hc = addv(addv(matvec(Wh,x), matvec(Uh, had(r,hPrev))), bh).map(Math.tanh);
+  const h  = z.map((zi,i) => (1-zi)*hPrev[i] + zi*hc[i]);   // h = (1-z)*hprev + z*hcand
+  return { z, r, hc, h };
+}
+function runTrace(first, zBias, rBias){
+  const seq = [first, "·", "·", "·", "·"];
+  let h = new Array(H).fill(0); const tr = [];
+  seq.forEach(tok => { const o = cell(EMB[tok], h, zBias, rBias); tr.push({ tok, hPrev:h, ...o }); h = o.h; });
+  return tr;
+}
+// reference "written" prototypes (designed weights, no bias) = h right after token 1
+const PROTO = {}; ["A","B","C"].forEach(t => PROTO[t] = runTrace(t,0,0)[0].h);
+function classify(h){ return ["A","B","C"].map(t => [t, cos(h, PROTO[t])]).sort((a,b)=>b[1]-a[1]); }
+
+// ---------- state ----------
+let viz = { first:"A", zBias:0, rBias:0, trace:runTrace("A",0,0), t:0 }, running=false;
+const zBiasEl=document.getElementById("zBias"), rBiasEl=document.getElementById("rBias");
+const zBiasVal=document.getElementById("zBiasVal"), rBiasVal=document.getElementById("rBiasVal");
+const runBtn=document.getElementById("runBtn"), stepBtn=document.getElementById("stepBtn"), resetBtn=document.getElementById("resetBtn");
+function recompute(keepT){ const t = keepT ? viz.t : 0; viz.trace = runTrace(viz.first, viz.zBias, viz.rBias); viz.t = Math.min(t, T); }
+function status(html){ document.getElementById("statusLine").innerHTML = html; }
+
+// ---------- canvas ----------
+const cv=document.getElementById("cv"), c2=cv.getContext("2d");
+if (!c2.roundRect){ CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h,r){ this.beginPath(); this.moveTo(x+r,y); this.arcTo(x+w,y,x+w,y+h,r); this.arcTo(x+w,y+h,x,y+h,r); this.arcTo(x,y+h,x,y,r); this.arcTo(x,y,x+w,y,r); this.closePath(); return this; }; }
+const gateColor = v => `rgba(225,29,72,${(0.10 + 0.90*Math.max(0,Math.min(1,v))).toFixed(3)})`;
+const signColor = v => v>=0 ? `rgba(225,29,72,${(0.12+0.85*Math.min(1,Math.abs(v))).toFixed(3)})` : `rgba(15,23,42,${(0.12+0.85*Math.min(1,Math.abs(v))).toFixed(3)})`;
+
+function heatRow(x0, y, label, sub, vals, mode){
+  const cw=44, ch=30, gap=6;
+  c2.textAlign="right"; c2.textBaseline="middle";
+  c2.font="bold 12px sans-serif"; c2.fillStyle="#334155"; c2.fillText(label, x0-10, y+ch/2-5);
+  if (sub){ c2.font="9px sans-serif"; c2.fillStyle="#94a3b8"; c2.fillText(sub, x0-10, y+ch/2+8); }
+  vals.forEach((v,i)=>{
+    const x=x0+i*(cw+gap);
+    c2.fillStyle = mode==="gate" ? gateColor(v) : signColor(v);
+    c2.strokeStyle="#e2e8f0"; c2.lineWidth=1;
+    c2.roundRect(x,y,cw,ch,6); c2.fill(); c2.stroke();
+    c2.textAlign="center"; c2.textBaseline="middle";
+    c2.font="bold 11px monospace";
+    c2.fillStyle = (mode==="gate" ? v>0.55 : Math.abs(v)>0.55) ? "#fff" : "#475569";
+    c2.fillText(v.toFixed(2), x+cw/2, y+ch/2);
+  });
+  c2.textAlign="right";
+}
+
+function draw(){
+  const tr=viz.trace, t=viz.t;                       // t = steps revealed (0..T)
+  const cur = t>0 ? tr[t-1] : null;
+  c2.clearRect(0,0,cv.width,cv.height);
+  // ---- LEFT: current-timestep cell ----
+  const lx=150;
+  c2.textAlign="left"; c2.textBaseline="alphabetic";
+  c2.font="bold 13px sans-serif"; c2.fillStyle="#0f172a";
+  c2.fillText(cur ? `Timestep ${t}  ·  input token = ${cur.tok==="·"?"blank (·)":cur.tok}` : "Timestep 0  ·  hidden state h₀ = 0", 20, 22);
+  const yh0=42, yz=88, yr=134, yhc=180, yh=226;
+  heatRow(lx, yh0, "h_prev", "state in", cur ? cur.hPrev : new Array(H).fill(0), "sign");
+  heatRow(lx, yz,  "z", "update σ", cur ? cur.z  : new Array(H).fill(0), "gate");
+  heatRow(lx, yr,  "r", "reset σ",  cur ? cur.r  : new Array(H).fill(0), "gate");
+  heatRow(lx, yhc, "h̃", "tanh cand", cur ? cur.hc : new Array(H).fill(0), "sign");
+  heatRow(lx, yh,  "h", "= (1−z)h_prev + z·h̃", cur ? cur.h : new Array(H).fill(0), "sign");
+  // divider + equation caption
+  c2.strokeStyle="#f1f5f9"; c2.lineWidth=1; c2.beginPath(); c2.moveTo(20,yh-14); c2.lineTo(430,yh-14); c2.stroke();
+  c2.font="10px monospace"; c2.fillStyle="#94a3b8"; c2.textAlign="left";
+  c2.fillText("h = (1−z)·h_prev + z·h̃   (z→0 carry · z→1 refresh)", 20, 262);
+
+  // ---- RIGHT: hidden state across all timesteps (heatmap) ----
+  const gx=560, gy=64, cw=42, ch=32, gap=6;
+  c2.textAlign="left"; c2.font="bold 13px sans-serif"; c2.fillStyle="#0f172a";
+  c2.fillText("Hidden state h across the sequence", gx-40, 22);
+  c2.font="9px sans-serif"; c2.fillStyle="#94a3b8";
+  c2.fillText("carry fraction  mean(1−z)  per step", gx-40, 38);
+  // column headers (tokens) + carry bars
+  for(let j=0;j<T;j++){
+    const x=gx+j*(cw+gap), revealed=j<t, node=tr[j];
+    // carry bar
+    const carry = revealed ? node.z.reduce((s,v)=>s+(1-v),0)/H : 0;
+    c2.fillStyle="#f1f5f9"; c2.fillRect(x, 44, cw, 8);
+    c2.fillStyle = revealed ? "#f43f5e" : "#e2e8f0"; c2.fillRect(x, 44, cw*carry, 8);
+    // token header
+    c2.textAlign="center"; c2.font="bold 11px monospace";
+    c2.fillStyle = j===t-1 ? "#be123c" : "#64748b";
+    const tok = node.tok==="·" ? "·" : node.tok;
+    c2.fillText(`t${j+1}:${tok}`, x+cw/2, gy-6);
+  }
+  // rows = hidden units
+  for(let i=0;i<H;i++){
+    c2.textAlign="right"; c2.textBaseline="middle"; c2.font="10px monospace"; c2.fillStyle="#94a3b8";
+    c2.fillText("h"+(i+1), gx-8, gy+i*(ch+gap)+ch/2);
+    for(let j=0;j<T;j++){
+      const x=gx+j*(cw+gap), y=gy+i*(ch+gap), revealed=j<t;
+      c2.fillStyle = revealed ? signColor(tr[j].h[i]) : "#f8fafc";
+      c2.strokeStyle = j===t-1 ? "#f43f5e" : "#e2e8f0"; c2.lineWidth = j===t-1 ? 2 : 1;
+      c2.roundRect(x,y,cw,ch,6); c2.fill(); c2.stroke();
+      if(revealed){ c2.textAlign="center"; c2.textBaseline="middle"; c2.font="9px monospace";
+        c2.fillStyle = Math.abs(tr[j].h[i])>0.55 ? "#fff":"#64748b"; c2.fillText(tr[j].h[i].toFixed(2), x+cw/2, y+ch/2); }
+    }
+  }
+  // memory-of-token-1 line under grid
+  c2.textAlign="left"; c2.textBaseline="alphabetic"; c2.font="10px sans-serif"; c2.fillStyle="#64748b";
+  const yb=gy+H*(ch+gap)+16;
+  c2.fillText("similarity to the written token-1 pattern (1.00 = perfectly held):", gx-40, yb);
+  for(let j=0;j<T;j++){
+    const x=gx+j*(cw+gap), revealed=j<t;
+    const sim = revealed ? cos(tr[j].h, PROTO[viz.first]) : 0;
+    c2.textAlign="center"; c2.font="bold 10px monospace";
+    c2.fillStyle = !revealed ? "#cbd5e1" : sim>0.8 ? "#059669" : sim>0.4 ? "#d97706" : "#e11d48";
+    c2.fillText(revealed ? sim.toFixed(2) : "–", x+cw/2, yb+16);
+  }
+  c2.textAlign="left"; c2.textBaseline="alphabetic";
+  updatePanels(cur);
+}
+
+function updatePanels(cur){
+  const avg = a => a.reduce((s,v)=>s+v,0)/a.length;
+  if(cur){
+    const az=avg(cur.z), ar=avg(cur.r);
+    document.getElementById("zStat").textContent=az.toFixed(2);
+    document.getElementById("rStat").textContent=ar.toFixed(2);
+    document.getElementById("carryStat").textContent=(1-az).toFixed(2);
+  } else {
+    document.getElementById("zStat").textContent="—";
+    document.getElementById("rStat").textContent="—";
+    document.getElementById("carryStat").textContent="—";
+  }
+  // task readout
+  const box=document.getElementById("taskBox"), line=document.getElementById("taskLine");
+  if(viz.t < T){
+    box.className="mt-3 p-3 rounded-lg border border-slate-200 bg-slate-50";
+    line.innerHTML = viz.t===0 ? "Run the full sequence to see whether the first token survived to the last step."
+      : `Fed <strong>${viz.t}</strong> of ${T} timesteps. The first token was <span class="font-mono font-bold">${viz.first}</span>; keep stepping to the end.`;
+  } else {
+    const hT=viz.trace[T-1].h, ranked=classify(hT), pred=ranked[0][0], sim=cos(hT,PROTO[viz.first]), ok=pred===viz.first;
+    box.className="mt-3 p-3 rounded-lg border "+(ok?"border-emerald-300 bg-emerald-50":"border-rose-300 bg-rose-50");
+    line.innerHTML = ok
+      ? `✅ <strong>Remembered.</strong> After 4 blank steps the final hidden state still matches the written <span class="font-mono font-bold">${viz.first}</span> pattern (similarity ${sim.toFixed(2)}). The update gate stayed near 0 on the blanks, so <em>h</em> was carried forward unchanged.`
+      : `❌ <strong>Forgotten.</strong> The final state now looks most like <span class="font-mono font-bold">${pred}</span>, not <span class="font-mono font-bold">${viz.first}</span> (similarity to the real token dropped to ${sim.toFixed(2)}). The gate bias let each blank step overwrite — or never write — the memory.`;
+  }
+  // compare note
+  document.getElementById("compareNote").innerHTML = cur
+    ? `Right now the average carry is <strong>${(1-avg(cur.z)).toFixed(2)}</strong>. A vanilla RNN has no such valve (carry is effectively forced through a tanh every step → vanishing); the GRU simply learns <em>z≈0</em> to hold, <em>z≈1</em> to update.`
+    : `A vanilla RNN would overwrite <em>h</em> every step with no valve. Step the GRU and watch <em>z</em> decide how much of the past to keep.`;
+}
+
+// ---------- controls ----------
+function stepOnce(){ if(viz.t>=T) return false; viz.t++; const cur=viz.trace[viz.t-1];
+  const avg=a=>a.reduce((s,v)=>s+v,0)/a.length;
+  status(`Timestep <strong>${viz.t}</strong>: input = <span class="font-mono">${cur.tok==="·"?"blank ·":cur.tok}</span>. update z=<strong>${avg(cur.z).toFixed(2)}</strong> ⇒ carry <strong>${(1-avg(cur.z)).toFixed(2)}</strong> of h_prev, write <strong>${avg(cur.z).toFixed(2)}</strong> of the candidate. reset r=<strong>${avg(cur.r).toFixed(2)}</strong> lets ${avg(cur.r)>0.5?"most":"little"} of the past into the candidate.`);
+  return viz.t<T; }
+function resetViz(){ running=false; runBtn.textContent="▶ Run sequence"; recompute(false); status("Hidden state h₀ = 0. Press <strong>Step</strong> to feed the first token, or <strong>Run</strong> the whole sequence."); draw(); }
+function loop(){ if(!running) return; const more=stepOnce(); draw(); if(more){ setTimeout(()=>requestAnimationFrame(loop), 950); } else { running=false; runBtn.textContent="▶ Run sequence"; } }
+runBtn.onclick=()=>{ if(running){ running=false; runBtn.textContent="▶ Run sequence"; return; } if(viz.t>=T) resetViz(); running=true; runBtn.textContent="⏸ Pause"; loop(); };
+stepBtn.onclick=()=>{ if(running) return; if(viz.t>=T) resetViz(); stepOnce(); draw(); };
+resetBtn.onclick=()=>resetViz();
+document.querySelectorAll("#tokPick button").forEach(b => b.onclick=()=>{
+  document.querySelectorAll("#tokPick button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); viz.first=b.dataset.tok; resetViz();
+});
+zBiasEl.oninput=()=>{ viz.zBias=+zBiasEl.value; zBiasVal.textContent=viz.zBias; recompute(true); draw(); };
+rBiasEl.oninput=()=>{ viz.rBias=+rBiasEl.value; rBiasVal.textContent=viz.rBias; recompute(true); draw(); };
+resetViz();
+
+// ============================================================
+// UNDERSTAND step engine
+// ============================================================
+const STEPS = [
+ { title:"1. Recap: the vanilla RNN forgets", why:"A plain RNN (Day 10) keeps a single hidden state and rewrites it completely at every step: h_t = tanh(W·x_t + U·h_{t-1} + b). Because that same recurrent matrix multiplies the state again and again, and the tanh squashes it every time, gradients flowing back through many steps get multiplied by many small numbers and shrink toward zero — the vanishing-gradient problem. In practice a vanilla RNN struggles to connect information more than a handful of steps apart: by the time it reaches the end of a long sentence, the beginning has washed out. Gating was invented to give the network a way to leave the state alone when it wants to.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">RNN:  h_t = tanh(W·x_t + U·h_{t-1} + b)<br>state fully rewritten every step<br>∂h_t/∂h_0 = Π (small numbers) → 0<br>→ long-range signal vanishes</div>`, code:"# Vanilla RNN cell (Day 10): no gates, no memory valve\nh = tanh(W @ x + U @ h_prev + b)   # h is OVERWRITTEN every step\n# gradient through T steps multiplies U^T of tanh derivatives\n# |values| < 1 repeated -> vanishes -> can't learn long dependencies" },
+ { title:"2. The idea: learned valves on the state", why:"Instead of forcing the hidden state through a fresh nonlinearity every step, a gated cell computes small control signals — gates — that decide how much of the old state to keep and how much new information to let in. A gate is just a vector produced by a sigmoid, so every element sits between 0 and 1 and acts like a soft on/off switch multiplied element-wise into the flow. Crucially the gates are learned: the network discovers, from the loss, when to hold and when to update. The LSTM (Day 11) used three such gates plus a separate cell state. The GRU is the minimalist answer: get the same effect with just two gates and no extra state.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">gate = σ(linear)  ∈ (0,1) per element<br>0 = block · 1 = pass through<br>applied element-wise (⊙) to the flow<br>LEARNED from the loss, not hand-set</div>`, code:"# A gate is a soft mask learned by the network:\ngate = sigmoid(W @ x + U @ h_prev + b)   # each element in (0,1)\nkept = gate * something                   # element-wise valve\n# 0 -> shut (block) , 1 -> open (pass) , 0.5 -> half\n# GRU uses TWO of these; LSTM uses three." },
+ { title:"3. The update gate z: keep or refresh", why:"The update gate z is the heart of the GRU. It is a vector of values in (0,1), one per hidden unit, computed from the current input and previous state: z = σ(W_z·x + U_z·h_{t-1} + b_z). It controls the blend between the old state and a freshly computed candidate. When a unit's z is near 0, that unit copies its previous value straight through — the state is carried forward untouched. When z is near 1, the unit is overwritten by the new candidate. So z alone lets the cell either hold a memory indefinitely or refresh it on demand, and because the network learns z, it decides per unit and per step which to do. In the demo the carry bar is exactly mean(1−z).", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">z = σ(W_z·x + U_z·h_{t-1} + b_z)  ∈ (0,1)<br>z → 0 : keep old state (carry)<br>z → 1 : take new candidate (refresh)<br>one learned decision per hidden unit</div>`, code:"z = sigmoid(Wz @ x + Uz @ h_prev + bz)   # update gate, in (0,1)\n# z near 0 -> this unit is CARRIED forward unchanged\n# z near 1 -> this unit is REFRESHED by the candidate\n# the network learns z from the task loss" },
+ { title:"4. The reset gate r: how much past to use", why:"The reset gate r, also a sigmoid vector, controls how much of the previous hidden state is allowed to influence the new candidate: r = σ(W_r·x + U_r·h_{t-1} + b_r). It is applied inside the candidate computation, multiplying the previous state before it is mixed with the current input. When r is near 0 the candidate ignores the past entirely and is built from the current input alone — the cell effectively 'forgets' its history when forming its next guess, which is useful at the start of a new phrase or sequence. When r is near 1 the full past participates. Reset controls the content of the candidate; update controls whether that candidate is actually written.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">r = σ(W_r·x + U_r·h_{t-1} + b_r)  ∈ (0,1)<br>candidate uses  r ⊙ h_{t-1}<br>r → 0 : ignore past (fresh start)<br>r → 1 : use full past</div>`, code:"r = sigmoid(Wr @ x + Ur @ h_prev + br)   # reset gate, in (0,1)\n# used INSIDE the candidate:\nh_tilde = tanh(Wh @ x + Uh @ (r * h_prev) + bh)\n# r near 0 -> candidate forgets history, uses x only\n# r near 1 -> candidate sees the full previous state" },
+ { title:"5. The candidate and the convex combination", why:"The candidate state h̃ is the GRU's proposal for the new hidden state, computed with a tanh over the current input and the reset-filtered past: h̃ = tanh(W_h·x + U_h·(r⊙h_{t-1}) + b_h). It is only a proposal — the update gate decides how much of it to accept. The final state is the convex combination h_t = (1−z)·h_{t-1} + z·h̃. Because the two weights (1−z) and z sum to 1 for every unit, the new state is a genuine interpolation between keeping the old value and adopting the candidate: no separate 'add then squash' step, no risk of the magnitude blowing up. This single line is the whole GRU update, and it is exactly what the LOOK demo animates.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">h̃ = tanh(W_h·x + U_h·(r⊙h_{t-1}) + b_h)<br>h_t = (1−z)·h_{t-1} + z·h̃<br>weights (1−z)+z = 1  → interpolation<br>keep ⟷ replace, per unit</div>`, code:"h_tilde = tanh(Wh @ x + Uh @ (r * h_prev) + bh)  # proposal\nh = (1 - z) * h_prev + z * h_tilde               # convex combo\n# (1-z) and z sum to 1 per unit -> a true blend\n# z=0 -> h=h_prev (hold) ; z=1 -> h=h_tilde (replace)" },
+ { title:"6. Why this fixes the vanishing gradient", why:"When the update gate is near 0, the update reduces to h_t ≈ h_{t-1}: the state is copied forward almost verbatim. Along that copy path the derivative of h_t with respect to h_{t-1} is close to the identity, so gradients can flow back over many steps without shrinking. This is the same trick the LSTM's cell state provides and the same idea behind residual connections — a near-linear highway that lets error signal survive long distances. The network learns to open z only where it genuinely needs to change the state, and to keep it shut where information must be preserved. That controllable, mostly-identity path is precisely why gated RNNs learn long-range dependencies that vanilla RNNs cannot.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">z ≈ 0  ⇒  h_t ≈ h_{t-1}<br>∂h_t/∂h_{t-1} ≈ 1  (identity path)<br>gradient flows back un-shrunk<br>= a learned memory highway</div>`, code:"# The carry path when z -> 0:\nh_t = (1 - z) * h_prev + z * h_tilde\n#     ~= 1 * h_prev + 0        (z small)\n#     => d h_t / d h_prev ~= 1  (no vanishing)\n# gradients survive across many timesteps -> long memory" },
+ { title:"7. Fewer parameters than the LSTM", why:"An LSTM has four weight blocks per cell: three gates (input, forget, output) plus the candidate. The GRU has three: two gates (update, reset) plus the candidate. It also drops the LSTM's separate cell state, so there is only one state vector to carry. Concretely, for input size d and hidden size h, an LSTM holds roughly 4·(d·h + h·h + h) parameters while a GRU holds 3·(d·h + h·h + h) — about 25% fewer weights for the same hidden size. Fewer parameters means less memory, faster steps, and often quicker convergence on small or medium datasets, which is a large part of why the GRU became popular after Cho et al. introduced it in 2014.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">LSTM: 4 weight blocks + cell state c<br>GRU:  3 weight blocks, state = h only<br>params ≈ 3·(d·h + h² + h)  vs  4·(…)<br>≈ 25% fewer weights, one state</div>`, code:"# parameter count per cell (input d, hidden h):\n# LSTM: 4 * (d*h + h*h + h)   # i, f, o gates + candidate, plus c\n# GRU : 3 * (d*h + h*h + h)   # z, r gates + candidate, h only\nlstm = nn.LSTM(d, h)   # ~4 blocks, state (h, c)\ngru  = nn.GRU (d, h)   # ~3 blocks, state h  -> lighter" },
+ { title:"8. GRU vs LSTM: the tradeoffs", why:"The two are close cousins and there is no universal winner — empirically they perform within a whisker of each other on most tasks. The GRU is lighter and often trains a little faster and generalises better when data is limited, because it has fewer parameters to fit. The LSTM's extra machinery — a dedicated output gate and a separate cell state that it can protect independently of what it exposes — can give it an edge on very long or very complex dependencies. Practical advice: default to a GRU for its simplicity and speed, try an LSTM if you suspect long-range memory is the bottleneck, and let a validation set decide. Swapping between them in code is a one-line change.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">GRU:  lighter · faster · great on small data<br>LSTM: output gate + cell state<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;can edge ahead on very long deps<br>within a whisker on most tasks → benchmark</div>`, code:"# no universal winner - benchmark both:\nfor Cell in (nn.GRU, nn.LSTM):\n    model = Seq(Cell(d, h))\n    val_acc = train_and_eval(model)\n# GRU default (fewer params, faster)\n# LSTM if long-range memory is the bottleneck" },
+ { title:"9. Where GRUs get used", why:"For the decade after 2014, gated RNNs were the workhorse of sequence modelling, and the GRU showed up wherever an ordered signal needed encoding without a huge parameter budget: machine translation encoders and decoders, speech recognition, time-series and sensor forecasting, anomaly detection, music and handwriting generation, and as the recurrent core inside larger systems. It is especially favoured on edge and mobile settings and on smaller datasets, precisely because it is lighter than an LSTM. Even today, when a task is streaming, low-latency, or data-poor, a GRU is often a stronger and cheaper choice than a Transformer.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">translation · speech · time-series<br>forecasting · anomaly detection<br>music / handwriting generation<br>edge & low-data (lighter than LSTM)</div>`, code:"# typical homes for a GRU:\nseq2seq_encoder   = nn.GRU(d, h)   # MT, summarisation\nspeech_recogniser = nn.GRU(d, h, bidirectional=True)\nforecaster        = nn.GRU(d, h)   # sensors, demand, prices\n# small data / streaming / on-device -> GRU over Transformer" },
+ { title:"10. Superseded — but still worth knowing", why:"Since 2017 the Transformer has replaced recurrent networks for most large-scale sequence tasks. Instead of threading a single hidden state through time, attention lets every position look directly at every other position, so there is no long chain to vanish through and the whole sequence is processed in parallel rather than step by step — which suits modern hardware far better. GRUs and LSTMs are no longer the default for large language or translation models. But the gating idea did not die: it lives on in the gated feed-forward blocks and normalisation-and-residual highways inside Transformers, and GRUs remain excellent for small, streaming, or resource-constrained problems. Understanding the update/reset valve is the cleanest way to grasp why controlled information flow matters — the theme we pick up tomorrow with attention and layer norm.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">2017+: Transformers replace RNNs at scale<br>attention = every token sees every token<br>parallel, no vanishing chain<br>gating idea lives on (gated FFN, residual+norm)</div>`, code:"# the modern default for large seq tasks:\n#   Transformer (attention) — parallel, no recurrence\n# but GRU still wins when you need:\n#   small model / streaming / low latency / little data\n# Tomorrow (Day 27): attention + layer norm, the pieces that\n# let recurrence be retired." }
+];
+const stepsEl=document.getElementById("steps");
+const prevB=document.getElementById("prev"), nextB=document.getElementById("next-btn"), autoB=document.getElementById("auto");
+let curS=0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },4200); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>
