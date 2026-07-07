@@ -33,6 +33,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 24 — Seq2Seq & Encoder–Decoder](https://dev48v.infy.uk/dl/day24-seq2seq.html) — `day24-seq2seq.html`
 - [DeepLearningFromZero · Day 25 — Beam Search](https://dev48v.infy.uk/dl/day25-beam-search.html) — `day25-beam-search.html`
 - [DeepLearningFromZero · Day 26 — GRU](https://dev48v.infy.uk/dl/day26-gru.html) — `day26-gru.html`
+- [DeepLearningFromZero · Day 27 — Layer Normalization](https://dev48v.infy.uk/dl/day27-layer-norm.html) — `day27-layer-norm.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk

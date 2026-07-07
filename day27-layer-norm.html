@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 27 — Layer Normalization</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  #cv { background:#fff; border:2px solid #0f172a; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,.12); }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  table.res { width:100%; border-collapse:collapse; font-size:12px; }
+  table.res th, table.res td { padding:5px 8px; text-align:left; border-bottom:1px solid #e2e8f0; }
+  table.res th { color:#64748b; font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:.04em; }
+  table.res td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.win { background:#fff1f2; }
+  .tokbtn { border:2px solid #e2e8f0; }
+  .tokbtn.on { border-color:#f43f5e; background:#fff1f2; color:#be123c; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 27</div>
+      <h1 class="text-xl font-bold">📏 Layer Normalization — normalize across features, per sample: the norm that powers Transformers</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Normalization is just: subtract the mean, divide by the standard deviation.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto">Back on <strong>Day 19</strong>, <strong>BatchNorm</strong> normalized each feature <em>down a column</em> across every sample in the mini-batch. <strong>LayerNorm</strong> turns the grid 90 degrees: it normalizes each <em>sample across its own features</em>, <em>along a row</em>. That single change makes the statistics depend only on the one sample in front of you, never on the rest of the batch. Below is a <strong>real</strong> normalizer running on a fixed <strong>4x6</strong> batch (4 samples, 6 features): pick the axis, press <strong>Normalize</strong>, and watch every row (or column) snap to <strong>mean 0 / variance 1</strong>, then push the learnable <span class="text-rose-600 font-bold">gamma</span> (scale) and <span class="text-rose-600 font-bold">beta</span> (shift) sliders. Then drop the <strong>batch size to 1</strong> and watch BatchNorm collapse while LayerNorm keeps working, the exact reason Transformers, RNNs and every modern LLM normalize per token, not per batch. All mean/variance math is genuine.</p>
+
+      <div class="flex justify-center gap-3 mb-3 flex-wrap items-center">
+        <span class="text-sm text-slate-600 self-center">normalize axis:</span>
+        <div id="modePick" class="flex gap-1">
+          <button data-mode="ln" class="tokbtn on px-4 py-1.5 rounded-lg font-bold text-sm">LayerNorm &middot; rows &rarr;</button>
+          <button data-mode="bn" class="tokbtn px-4 py-1.5 rounded-lg font-bold text-sm">BatchNorm &middot; cols &darr;</button>
+        </div>
+        <span class="text-sm text-slate-600 self-center ml-3">batch size:</span>
+        <div id="batchPick" class="flex gap-1">
+          <button data-b="1" class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">1</button>
+          <button data-b="2" class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">2</button>
+          <button data-b="3" class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">3</button>
+          <button data-b="4" class="tokbtn on px-3 py-1.5 rounded-lg font-bold text-sm">4</button>
+        </div>
+      </div>
+
+      <div class="flex justify-center gap-6 mb-4 flex-wrap items-center">
+        <label class="text-sm text-slate-600 self-center flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200">
+          <span class="text-rose-600 font-bold">&gamma;</span> scale
+          <input id="gamma" type="range" min="0" max="3" step="0.1" value="1" class="align-middle">
+          <span id="gammaVal" class="stat font-bold text-rose-600 w-8 text-left">1.0</span>
+        </label>
+        <label class="text-sm text-slate-600 self-center flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200">
+          <span class="text-rose-600 font-bold">&beta;</span> shift
+          <input id="beta" type="range" min="-3" max="3" step="0.1" value="0" class="align-middle">
+          <span id="betaVal" class="stat font-bold text-rose-600 w-8 text-left">0.0</span>
+        </label>
+        <button id="normBtn" class="bg-rose-600 hover:bg-rose-700 text-white px-5 py-2 rounded-lg font-semibold text-sm">&#9654; Normalize</button>
+        <button id="resetBtn" class="bg-slate-200 hover:bg-slate-300 px-5 py-2 rounded-lg font-semibold text-sm">&#8635; Reset (raw)</button>
+      </div>
+
+      <div style="overflow:auto" class="bg-white rounded-xl border border-slate-200 p-2 mb-3">
+        <canvas id="cv" width="880" height="430" class="mx-auto"></canvas>
+      </div>
+      <p class="text-xs text-slate-400 mb-4">cell heat: <span style="color:#0f172a;font-weight:700">&#9632;</span> negative &nbsp;/&nbsp; <span style="color:#e11d48;font-weight:700">&#9632;</span> positive &nbsp;&middot;&nbsp; the <span style="color:#f43f5e;font-weight:700">rose bracket</span> marks the axis being normalized. Before normalizing, row <b>s4</b> (all &asymp;10) is solid rose while <b>s2</b> (all &asymp;1) is pale &mdash; wildly different scales. After LayerNorm every <em>row</em> is recentered to 0 with the same spread, so the row-to-row brightness gap <strong>flattens</strong>; BatchNorm does the identical thing down each <em>column</em>.</p>
+
+      <div class="grid lg:grid-cols-2 gap-4 items-start text-left">
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">What is happening now</div>
+          <div id="statusLine" class="text-sm text-slate-700 min-h-[40px]">Press <strong>Normalize</strong> to standardize each row (LayerNorm) to mean 0 / variance 1, then move &gamma; and &beta;.</div>
+          <div class="mt-3 grid grid-cols-3 gap-2 text-center">
+            <div class="bg-slate-50 rounded-lg p-2"><div class="text-[10px] uppercase font-bold text-slate-400">normalize over</div><div id="axisStat" class="stat text-base font-bold text-slate-700">rows &rarr;</div></div>
+            <div class="bg-slate-50 rounded-lg p-2"><div class="text-[10px] uppercase font-bold text-slate-400">mean after (&rarr;&beta;)</div><div id="muStat" class="stat text-lg font-bold text-slate-700">&mdash;</div></div>
+            <div class="bg-rose-50 rounded-lg p-2"><div class="text-[10px] uppercase font-bold text-rose-400">var after (&rarr;&gamma;&sup2;)</div><div id="varStat" class="stat text-lg font-bold text-rose-600">&mdash;</div></div>
+          </div>
+          <div class="mt-3 p-3 rounded-lg border" id="taskBox">
+            <div class="text-xs uppercase font-bold text-slate-400 tracking-wider mb-1">Batch-size independence</div>
+            <div id="taskLine" class="text-sm text-slate-700">Set the batch size to <strong>1</strong>, then normalize in each mode to see which one survives.</div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl border border-rose-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">BatchNorm (Day 19) vs LayerNorm (Day 27)</div>
+          <table class="res">
+            <thead><tr><th></th><th>BatchNorm &middot; Day 19</th><th>LayerNorm &middot; Day 27</th></tr></thead>
+            <tbody>
+              <tr><td class="font-semibold">normalize over</td><td>each feature, across the batch (&darr; column)</td><td class="text-rose-700 font-semibold">each sample, across features (&rarr; row)</td></tr>
+              <tr><td class="font-semibold">stats depend on other samples</td><td>yes</td><td class="text-rose-700 font-semibold">no</td></tr>
+              <tr><td class="font-semibold">batch size 1</td><td>breaks (variance = 0)</td><td class="text-rose-700 font-semibold">works fine</td></tr>
+              <tr><td class="font-semibold">train vs eval</td><td>different (running averages)</td><td class="text-rose-700 font-semibold">identical</td></tr>
+              <tr><td class="font-semibold">variable-length sequences</td><td>awkward</td><td class="text-rose-700 font-semibold">natural (per token)</td></tr>
+              <tr><td class="font-semibold">typical home</td><td>CNNs / vision</td><td class="text-rose-700 font-semibold">Transformers &middot; RNNs &middot; LLMs</td></tr>
+            </tbody>
+          </table>
+          <p class="text-[11px] text-slate-400 mt-2">Both compute the same standardize-then-affine, <code>y = &gamma;&middot;(x&minus;&mu;)/&radic;(&sigma;&sup2;+&epsilon;) + &beta;</code>. They differ only in the set of numbers &mu; and &sigma;&sup2; are averaged over &mdash; and that difference decides everything about how they behave at inference and on sequences.</p>
+          <div id="compareNote" class="text-sm text-slate-600 mt-2"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Normalize per sample, not per batch</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">You just watched a real normalizer standardize each row of a batch to mean 0 / variance 1, then rescale with learnable &gamma; and &beta;, and saw why doing it per sample (LayerNorm) instead of per feature-across-the-batch (BatchNorm) is what makes it batch-size independent. Here it is in PyTorch: the one-line <code>nn.LayerNorm</code>, the exact math spelled out, how it plugs into a Transformer token tensor, the pre-norm vs post-norm choice, the concrete differences from <code>nn.BatchNorm1d</code>, and the one-parameter <code>RMSNorm</code> that most 2023+ LLMs use instead.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">The whole layer is one line: nn.LayerNorm</h3></div>
+        <p class="text-sm text-slate-600 mb-3">You give it <code>normalized_shape</code>, the trailing feature dimension(s) to normalize over. It computes the mean and variance across those features, for each sample independently, then applies a learnable per-feature <code>gamma</code> (scale) and <code>beta</code> (shift).</p>
+        <div class="relative"><pre>import torch, torch.nn as nn
+
+ln = nn.LayerNorm(normalized_shape=512)   # d_model = 512
+
+x = torch.randn(8, 512)     # (batch=8, features=512)
+y = ln(x)                   # each of the 8 rows -&gt; mean 0, var 1, then gamma/beta
+# y.shape == (8, 512) ; stats are computed PER ROW, never across the batch</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">The math, written out</h3></div>
+        <p class="text-sm text-slate-600 mb-3">This is exactly what the LOOK demo computes for every row: mean and variance over the last dimension, standardize, then the affine map. Note <code>unbiased=False</code>: LayerNorm uses the biased (population) variance, dividing by D, not D&minus;1.</p>
+        <div class="relative"><pre>import torch
+
+def layer_norm(x, gamma, beta, eps=1e-5):
+    # x: (..., D) -- normalize over the LAST dim (the features)
+    mu   = x.mean(dim=-1, keepdim=True)                 # per-sample mean
+    var  = x.var(dim=-1, unbiased=False, keepdim=True)  # per-sample variance
+    xhat = (x - mu) / torch.sqrt(var + eps)             # -&gt; mean 0, var 1
+    return gamma * xhat + beta                          # learnable scale + shift
+
+# gamma, beta are Parameters of shape (D,), initialised to 1 and 0</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Plug it into a Transformer: normalize each token</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A Transformer activation is <code>(batch, seq_len, d_model)</code>. <code>LayerNorm(d_model)</code> normalizes <strong>each token</strong> over its own <code>d_model</code> features, never across other tokens or other sentences. That is why batch size and sequence length simply do not matter.</p>
+        <div class="relative"><pre># In a Transformer, x is (batch, seq_len, d_model).
+# LayerNorm(d_model) normalizes EACH TOKEN over its d_model features,
+# independently of the other tokens and of the batch.
+x  = torch.randn(32, 100, 512)   # 32 sentences, 100 tokens, d_model=512
+ln = nn.LayerNorm(512)
+y  = ln(x)                       # (32,100,512): 3200 tokens each normalized alone
+# batch=1, seq_len=7, or seq_len=4000 -- all identical maths, no cross-token stats</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Pre-norm vs post-norm placement</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The original 2017 Transformer put LayerNorm <em>after</em> the residual add (post-norm), which needs a learning-rate warmup to train deep stacks. Modern models (GPT-2 onward) put it <em>before</em> the sublayer (pre-norm), leaving the residual path a clean identity highway: far more stable and the default today.</p>
+        <div class="relative"><pre># Post-LN (original 2017 Transformer): norm AFTER the residual add
+x = ln(x + sublayer(x))       # powerful but harder to train deep; needs warmup
+
+# Pre-LN (GPT-2 onward): norm BEFORE the sublayer; add stays a clean highway
+x = x + sublayer(ln(x))       # stable gradients, trains very deep nets easily</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">LayerNorm vs BatchNorm, concretely</h3></div>
+        <p class="text-sm text-slate-600 mb-3">BatchNorm keeps a running mean/variance and behaves differently in <code>.train()</code> vs <code>.eval()</code>; it also needs a reasonably sized batch. LayerNorm has no running stats and no train/eval switch: the same maths at any batch size, which is exactly why sequence models prefer it.</p>
+        <div class="relative"><pre>bn = nn.BatchNorm1d(512)    # normalizes each FEATURE across the batch
+ln = nn.LayerNorm(512)      # normalizes each SAMPLE across its features
+
+bn.train(); bn(x)           # uses batch stats AND updates running mean/var
+bn.eval();  bn(x)           # switches to the stored running averages
+# LayerNorm has NO running stats and NO train/eval difference:
+ln.eval();  ln(x)           # identical maths in train and eval, any batch size</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">RMSNorm: the modern shortcut</h3></div>
+        <p class="text-sm text-slate-600 mb-3">RMSNorm drops the mean-centering and the <code>beta</code> shift entirely: it just divides by the root-mean-square of the features and rescales. Fewer operations, no mean to compute, and in practice it works as well, so LLaMA, Mistral and most 2023+ LLMs use it in place of LayerNorm.</p>
+        <div class="relative"><pre>class RMSNorm(nn.Module):
+    def __init__(self, d, eps=1e-6):
+        super().__init__()
+        self.eps = eps
+        self.g = nn.Parameter(torch.ones(d))   # scale only -- no beta, no mean
+    def forward(self, x):
+        rms = x.pow(2).mean(dim=-1, keepdim=True).add(self.eps).sqrt()
+        return self.g * x / rms                # divide by RMS, skip centering
+# used in LLaMA, Mistral, most 2023+ LLMs -- cheaper, matches LayerNorm quality</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 27 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">You saw that normalization is one recipe, <strong>subtract the mean, divide by the std, then rescale with &gamma; and &beta;</strong>, and that the only thing separating <strong>BatchNorm</strong> from <strong>LayerNorm</strong> is <em>which numbers the mean and variance are taken over</em>. BatchNorm averages each feature <em>down the batch</em>, so its statistics depend on the other samples, differ between train and eval, and collapse when the batch is tiny. LayerNorm averages each sample <em>across its own features</em>, so it is completely batch-size independent, identical at train and inference, and normalizes every token on its own: the properties that let it slot into Transformers, RNNs and variable-length sequences where BatchNorm cannot. <strong>&#128073; Tomorrow, Day 28:</strong> Word2Vec is already live back on Day 23, so next up is most likely <strong>RMSNorm</strong> (the centering-free norm you met in step 6) or <strong>Weight Initialization</strong> (Xavier / He), the other half of keeping activations healthy.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ============================================================
+// REAL normalizer on a fixed 4x6 batch (4 samples, 6 features).
+//   LayerNorm: for EACH sample (row) take mean+var ACROSS its 6 features,
+//              standardize to mean 0 / var 1, then y = gamma*xhat + beta.
+//   BatchNorm: for EACH feature (column) take mean+var ACROSS the batch,
+//              standardize, then the same affine. (Day 19.)
+// Batch size = how many rows participate. With batch=1, BatchNorm's per-column
+// variance is 0 -> everything collapses to beta; LayerNorm is unaffected
+// because it never looks across samples. All mean/variance math is genuine.
+// ============================================================
+const NF = 6, EPS = 1e-5;
+const RAW = [
+  [ 4.0,  6.0,  2.0,  8.0,  5.0,  3.0],
+  [ 1.0,  1.5,  0.5,  2.0,  1.2,  0.8],
+  [-2.0,  3.0, -1.0,  4.0,  0.0,  2.0],
+  [10.0, 11.0,  9.0, 12.0, 10.5,  9.5]
+];
+const mean  = a => a.reduce((s,v)=>s+v,0)/a.length;
+const varOf = a => { const m=mean(a); return a.reduce((s,v)=>s+(v-m)*(v-m),0)/a.length; };
+function lnRow(row,g,b){ const m=mean(row), v=varOf(row), s=Math.sqrt(v+EPS); return row.map(x => g*((x-m)/s)+b); }
+function bnGrid(rows,g,b){
+  const B=rows.length, out=rows.map(r=>r.slice());
+  for(let c=0;c<NF;c++){ const col=rows.map(r=>r[c]), m=mean(col), v=varOf(col), s=Math.sqrt(v+EPS);
+    for(let i=0;i<B;i++) out[i][c]=g*((rows[i][c]-m)/s)+b; }
+  return out;
+}
+let viz = { mode:"ln", B:4, g:1, b:0, t:0 };
+function targetGrid(){ const rows=RAW.slice(0,viz.B); return viz.mode==="ln" ? rows.map(r=>lnRow(r,viz.g,viz.b)) : bnGrid(rows,viz.g,viz.b); }
+function currentGrid(){ const rows=RAW.slice(0,viz.B), tg=targetGrid(), t=viz.t; return rows.map((r,i)=>r.map((x,j)=>x*(1-t)+tg[i][j]*t)); }
+
+const gammaEl=document.getElementById("gamma"), betaEl=document.getElementById("beta");
+const gammaVal=document.getElementById("gammaVal"), betaVal=document.getElementById("betaVal");
+const normBtn=document.getElementById("normBtn"), resetBtn=document.getElementById("resetBtn");
+
+const cv=document.getElementById("cv"), c2=cv.getContext("2d");
+if (!c2.roundRect){ CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h,r){ this.beginPath(); this.moveTo(x+r,y); this.arcTo(x+w,y,x+w,y+h,r); this.arcTo(x+w,y+h,x,y+h,r); this.arcTo(x,y+h,x,y,r); this.arcTo(x,y,x+w,y,r); this.closePath(); return this; }; }
+const SCALE = 4.5;
+const signColor = v => { const a=(0.12+0.85*Math.min(1,Math.abs(v)/SCALE)).toFixed(3); return v>=0 ? `rgba(225,29,72,${a})` : `rgba(15,23,42,${a})`; };
+const MU="μ", SIG2="σ²", RARR="→", DARR="↓", EMD="—";
+</script>
+
+<script>
+const COL=6, cellW=62, cellH=48, gapC=6, gapR=6, gx=140, gy=90;
+function draw(){
+  const B=viz.B, grid=currentGrid(), t=viz.t;
+  c2.clearRect(0,0,cv.width,cv.height);
+  c2.textAlign="left"; c2.textBaseline="alphabetic";
+  c2.font="bold 13px sans-serif"; c2.fillStyle="#0f172a";
+  c2.fillText(viz.mode==="ln"
+    ? "LayerNorm  ·  each SAMPLE (row "+RARR+") normalized across its 6 features"
+    : "BatchNorm  ·  each FEATURE (column "+DARR+") normalized across the batch", 20, 26);
+  c2.font="11px sans-serif"; c2.fillStyle="#94a3b8";
+  c2.fillText(t<0.999 ? "raw activations "+EMD+" press Normalize"
+    : "y = γ·(x−"+MU+")/√("+SIG2+"+ε) + β    ("+MU+", "+SIG2+" per "+(viz.mode==="ln"?"row":"column")+")", 20, 44);
+  for(let j=0;j<COL;j++){ const x=gx+j*(cellW+gapC);
+    c2.textAlign="center"; c2.font="bold 11px monospace"; c2.fillStyle=viz.mode==="bn"?"#be123c":"#64748b";
+    c2.fillText("f"+(j+1), x+cellW/2, gy-12); }
+  if(viz.mode==="bn"){ for(let j=0;j<COL;j++){ const x=gx+j*(cellW+gapC);
+    c2.strokeStyle="#f43f5e"; c2.lineWidth=2.5; c2.beginPath(); c2.moveTo(x-3, gy-7); c2.lineTo(x-3, gy+B*(cellH+gapR)-gapR+7); c2.stroke(); } }
+  for(let i=0;i<B;i++){ const y=gy+i*(cellH+gapR);
+    c2.textAlign="right"; c2.textBaseline="middle"; c2.font="bold 12px monospace"; c2.fillStyle=viz.mode==="ln"?"#be123c":"#64748b";
+    c2.fillText("s"+(i+1), gx-16, y+cellH/2);
+    if(viz.mode==="ln"){ c2.strokeStyle="#f43f5e"; c2.lineWidth=2.5; c2.beginPath(); c2.moveTo(gx-7, y-3); c2.lineTo(gx+COL*(cellW+gapC)-gapC+7, y-3); c2.stroke(); }
+    for(let j=0;j<COL;j++){ const x=gx+j*(cellW+gapC), v=grid[i][j];
+      c2.fillStyle=signColor(v); c2.strokeStyle="#e2e8f0"; c2.lineWidth=1; c2.roundRect(x,y,cellW,cellH,7); c2.fill(); c2.stroke();
+      c2.textAlign="center"; c2.textBaseline="middle"; c2.font="bold 12px monospace";
+      c2.fillStyle=(Math.abs(v)/SCALE>0.5)?"#fff":"#475569"; c2.fillText(v.toFixed(2), x+cellW/2, y+cellH/2); }
+  }
+  const gridRight=gx+COL*(cellW+gapC);
+  if(viz.mode==="ln"){
+    c2.textAlign="left"; c2.textBaseline="alphabetic"; c2.font="9px sans-serif"; c2.fillStyle="#94a3b8";
+    c2.fillText("per-row stats", gridRight+18, gy-12);
+    c2.textBaseline="middle";
+    for(let i=0;i<B;i++){ const y=gy+i*(cellH+gapR), m=mean(grid[i]), vv=varOf(grid[i]);
+      c2.font="12px monospace"; c2.fillStyle="#475569";
+      c2.fillText(MU+"="+m.toFixed(2)+"    "+SIG2+"="+vv.toFixed(2), gridRight+18, y+cellH/2); }
+  } else {
+    const by=gy+B*(cellH+gapR)+10;
+    c2.textAlign="left"; c2.textBaseline="alphabetic"; c2.font="9px sans-serif"; c2.fillStyle="#94a3b8";
+    c2.fillText("per-column stats "+DARR, 20, by+16);
+    for(let j=0;j<COL;j++){ const x=gx+j*(cellW+gapC), col=grid.map(r=>r[j]), m=mean(col), vv=varOf(col);
+      c2.textAlign="center"; c2.font="11px monospace"; c2.fillStyle="#475569";
+      c2.fillText(MU+"="+m.toFixed(1), x+cellW/2, by+12);
+      c2.fillText(SIG2+"="+vv.toFixed(1), x+cellW/2, by+26); }
+  }
+  c2.textAlign="left"; c2.textBaseline="alphabetic";
+  updatePanels();
+}
+</script>
+
+<script>
+function updatePanels(){
+  const B=viz.B, grid=currentGrid(), done=viz.t>0.999, g=viz.g, b=viz.b;
+  document.getElementById("axisStat").innerHTML = viz.mode==="ln" ? "rows &rarr;" : "cols &darr;";
+  let means=[], vars=[];
+  if(viz.mode==="ln"){ for(let i=0;i<B;i++){ means.push(mean(grid[i])); vars.push(varOf(grid[i])); } }
+  else { for(let j=0;j<NF;j++){ const col=grid.map(r=>r[j]); means.push(mean(col)); vars.push(varOf(col)); } }
+  const mAvg=mean(means), vAvg=mean(vars);
+  document.getElementById("muStat").textContent  = done ? mAvg.toFixed(2) : "—";
+  document.getElementById("varStat").textContent = done ? vAvg.toFixed(2) : "—";
+  const sline=document.getElementById("statusLine"), box=document.getElementById("taskBox"), tline=document.getElementById("taskLine");
+  if(!done){
+    sline.innerHTML = viz.mode==="ln"
+      ? "Raw batch. Press <strong>Normalize</strong> to standardize <strong>each row</strong> across its 6 features to mean 0 / variance 1, then move &gamma; and &beta;."
+      : "Raw batch. Press <strong>Normalize</strong> to standardize <strong>each column</strong> across the batch of "+B+" to mean 0 / variance 1.";
+  } else if(viz.mode==="ln"){
+    sline.innerHTML = "Each of the <strong>"+B+"</strong> row(s) is now mean <strong>"+mAvg.toFixed(2)+"</strong> (&asymp; &beta;="+b.toFixed(1)+") and variance <strong>"+vAvg.toFixed(2)+"</strong> (&asymp; &gamma;&sup2;="+(g*g).toFixed(2)+") across its own features &mdash; with no reference to any other sample.";
+  } else {
+    sline.innerHTML = "Each feature-column is now mean <strong>"+mAvg.toFixed(2)+"</strong> and variance <strong>"+vAvg.toFixed(2)+"</strong> across the batch of <strong>"+B+"</strong>. Change the other samples and these numbers change.";
+  }
+  if(viz.mode==="bn" && B===1){
+    box.className="mt-3 p-3 rounded-lg border border-rose-300 bg-rose-50";
+    tline.innerHTML = done
+      ? "&#10060; <strong>BatchNorm collapsed.</strong> With one sample, every column's variance is 0, so each value normalizes to 0 and the output is just &beta; everywhere &mdash; all information destroyed. This is why BatchNorm needs a batch, and why sequence models avoid it."
+      : "Batch = 1, BatchNorm mode. Press <strong>Normalize</strong> and watch every cell collapse to &beta; (variance across a single sample is 0).";
+  } else if(viz.mode==="ln" && B===1){
+    box.className="mt-3 p-3 rounded-lg border border-emerald-300 bg-emerald-50";
+    tline.innerHTML = done
+      ? "&#9989; <strong>LayerNorm with batch = 1 still works perfectly</strong> &mdash; the lone sample is normalized across its own features to mean 0 / variance 1. No batch needed &mdash; exactly why Transformers, RNNs and variable-length sequences use it."
+      : "Batch = 1, LayerNorm mode. Press <strong>Normalize</strong>: the single sample normalizes fine across its features &mdash; no batch required.";
+  } else {
+    box.className="mt-3 p-3 rounded-lg border border-slate-200 bg-slate-50";
+    tline.innerHTML = viz.mode==="ln"
+      ? "LayerNorm ignores the batch entirely. Shrink the batch to <strong>1</strong> and each row still normalizes across its features &mdash; then switch to BatchNorm at batch 1 to see the contrast."
+      : "BatchNorm reads statistics <em>down each column</em>, so it depends on the whole batch. Drop the batch size to <strong>1</strong> to watch it break.";
+  }
+  document.getElementById("compareNote").innerHTML = viz.mode==="ln"
+    ? "LayerNorm's &mu; and &sigma;&sup2; come only from the current sample &mdash; identical at train and inference, at any batch size."
+    : "BatchNorm's &mu; and &sigma;&sup2; come from the whole batch &mdash; excellent for CNNs, but batch-dependent and awkward for sequences.";
+}
+
+let animId=null;
+function animate(){ cancelAnimationFrame(animId); const start=performance.now(), dur=850;
+  function frame(now){ const p=Math.min(1,(now-start)/dur); viz.t=p; draw(); if(p<1) animId=requestAnimationFrame(frame); }
+  animId=requestAnimationFrame(frame); }
+gammaEl.oninput=()=>{ viz.g=+gammaEl.value; gammaVal.textContent=viz.g.toFixed(1); draw(); };
+betaEl.oninput =()=>{ viz.b=+betaEl.value; betaVal.textContent=viz.b.toFixed(1); draw(); };
+normBtn.onclick =()=>animate();
+resetBtn.onclick=()=>{ cancelAnimationFrame(animId); viz.t=0; draw(); };
+document.querySelectorAll("#modePick button").forEach(bn=>bn.onclick=()=>{
+  document.querySelectorAll("#modePick button").forEach(x=>x.classList.remove("on"));
+  bn.classList.add("on"); viz.mode=bn.dataset.mode; viz.t=0; cancelAnimationFrame(animId); draw(); });
+document.querySelectorAll("#batchPick button").forEach(bn=>bn.onclick=()=>{
+  document.querySelectorAll("#batchPick button").forEach(x=>x.classList.remove("on"));
+  bn.classList.add("on"); viz.B=+bn.dataset.b; viz.t=0; cancelAnimationFrame(animId); draw(); });
+draw();
+</script>
+
+<script>
+const STEPS = [
+ { title:"1. Recap: internal covariate shift", why:"Day 19 recap. As a network trains, the weights of early layers keep changing, so the distribution of inputs to every later layer keeps shifting during training. Each layer therefore chases a moving target, which slows learning and forces small learning rates. Normalizing activations to a stable mean and variance steadies those distributions so training is faster and more robust. The only open question is which set of numbers you compute that mean and variance over.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">layer inputs' &mu; and &sigma;&sup2; drift<br>as earlier weights update<br>every layer re-adapts &rarr; slow training<br>fix: renormalize the activations</div>`, code:"# each layer's input distribution shifts as earlier weights update\n# -> later layers chase a moving target -> slow, unstable training\n# remedy: re-standardize activations to a fixed mean / variance\n# the real question: average over WHICH axis?" },
+ { title:"2. The one normalization recipe", why:"Every normalization layer, batch or layer, shares one recipe. First standardize: subtract the mean and divide by the standard deviation so the values have mean 0 and variance 1. Then apply a learnable scale gamma and shift beta so the network can rescale, or even undo, the normalization if that helps the task. The tiny epsilon in the denominator just prevents division by zero. The single thing that differs between methods is which numbers enter the mean and variance.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">standardize: x&#770; = (x &minus; &mu;) / &radic;(&sigma;&sup2;+&epsilon;)<br>&rarr; mean 0, variance 1<br>affine: y = &gamma;&middot;x&#770; + &beta;<br>&gamma;, &beta; learnable &rarr; identity recoverable</div>`, code:"# the shared recipe (BatchNorm AND LayerNorm):\nmu   = X.mean(axis=?)             # over SOME axis\nvar  = X.var(axis=?)\nxhat = (X - mu) / sqrt(var + eps)  # mean 0, var 1\ny    = gamma * xhat + beta         # learnable scale + shift" },
+ { title:"3. BatchNorm: average down the batch", why:"BatchNorm, from Day 19, takes the mean and variance of each feature across all the samples in the mini-batch. For a batch of N samples and D features it computes D means and D variances, one per feature column, using the N values in that column. It works brilliantly for feed-forward and convolutional vision networks and was a big reason very deep CNNs became trainable. Because the statistics come from the batch, it also keeps a running average to use at inference time.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">BatchNorm axis = the batch (&darr; column)<br>per FEATURE: &mu;, &sigma;&sup2; over all N samples<br>N samples &rarr; N values per feature<br>great for CNNs / vision (Day 19)</div>`, code:"# BatchNorm1d over a (N, D) batch: normalize DOWN each column\nmu  = X.mean(dim=0)   # (D,) one mean per feature, over the N samples\nvar = X.var(dim=0)    # (D,) one variance per feature\nXhat = (X - mu) / sqrt(var + eps)\n# stats depend on the whole batch; eval uses stored running averages" },
+ { title:"4. Where BatchNorm breaks", why:"The batch dependence causes real trouble. If the batch is size 1, each feature's variance is 0 and normalization is undefined. Training uses live batch statistics while evaluation uses stored running averages, so the two can diverge if the running estimate is off. Small or fluctuating batch sizes make the statistics noisy. And for recurrent nets and variable-length sequences there is no clean batch axis, since different examples have different lengths. All of this pushed researchers to normalize along a different axis.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">batch = 1 &rarr; variance 0 &rarr; collapse<br>train uses batch stats, eval uses running avg<br>small / variable batches &rarr; noisy stats<br>RNN timesteps &rarr; no natural batch axis</div>`, code:"# where BatchNorm hurts:\n# - batch_size == 1        -> var == 0, undefined\n# - train() vs eval()     -> batch stats vs running averages differ\n# - tiny / variable batch -> noisy, unreliable statistics\n# - RNN / variable length  -> no clean batch axis to average over" },
+ { title:"5. LayerNorm: average across features", why:"LayerNorm, introduced by Ba, Kiros and Hinton in 2016, flips the axis. Instead of averaging one feature across the batch, it averages all the features within a single sample. Each sample is standardized using only its own D feature values, so the result for one example never depends on any other example, and the batch size is irrelevant. That is the whole idea, and it is exactly what the LOOK demo does, one row at a time.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">LayerNorm axis = the features (&rarr; row)<br>per SAMPLE: &mu;, &sigma;&sup2; over its own D features<br>no other sample involved<br>batch size is irrelevant</div>`, code:"# LayerNorm over a (N, D) batch: normalize ALONG each row\nmu  = X.mean(dim=-1, keepdim=True)   # (N,1) one mean per SAMPLE\nvar = X.var(dim=-1, keepdim=True)    # (N,1) one variance per SAMPLE\nXhat = (X - mu) / sqrt(var + eps)\n# every row normalized independently -> batch size does not matter" },
+ { title:"6. The LayerNorm math", why:"The math, per sample, over its D features: the mean mu is the average of the D values; the variance sigma-squared is the average squared deviation from that mean (the biased estimator, dividing by D); xhat standardizes each value; and y applies the learnable per-feature scale gamma and shift beta. After standardizing, every sample has feature-mean 0 and feature-variance 1; after the affine, mean beta and variance gamma-squared. That is precisely what the stat tiles in LOOK report.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">&mu; = (1/D) &sum; x&#7522;<br>&sigma;&sup2; = (1/D) &sum; (x&#7522; &minus; &mu;)&sup2;<br>x&#770; = (x &minus; &mu;) / &radic;(&sigma;&sup2;+&epsilon;)<br>y = &gamma;&middot;x&#770; + &beta;</div>`, code:"def layer_norm(x, gamma, beta, eps=1e-5):   # x: (..., D)\n    mu   = x.mean(-1, keepdim=True)\n    var  = ((x - mu)**2).mean(-1, keepdim=True)   # biased: divide by D\n    xhat = (x - mu) / (var + eps).sqrt()\n    return gamma * xhat + beta   # after affine: mean=beta, var=gamma^2" },
+ { title:"7. gamma and beta: keep the power", why:"Forcing every activation to mean 0 and variance 1 could discard useful signal, so LayerNorm restores flexibility with two learnable vectors: gamma rescales and beta shifts each feature. They start at 1 and 0 (a pure standardize) and are tuned by gradient descent; in the limit the network can even learn gamma and beta that undo the normalization entirely. So normalization costs nothing in representational power, it only makes optimization easier. Move the sliders in LOOK to watch the mean track beta and the variance track gamma-squared.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">&gamma; (scale), &beta; (shift): learnable, shape (D,)<br>init &gamma; = 1, &beta; = 0 (pure standardize)<br>learned by gradient descent<br>can rescale &mdash; or fully undo &mdash; the norm</div>`, code:"self.gamma = nn.Parameter(torch.ones(D))    # scale, init 1\nself.beta  = nn.Parameter(torch.zeros(D))   # shift, init 0\n# y = gamma * xhat + beta\n# learned -> layer can rescale, or recover the identity, if that is best" },
+ { title:"8. Why LayerNorm suits Transformers", why:"These properties are exactly what sequence models need. Because LayerNorm never crosses samples, it behaves identically at batch size 1 or 1000, and identically during training and inference with no running averages to maintain. In a Transformer each token is a sample of d_model features, so LayerNorm normalizes every token on its own, regardless of how many tokens the sequence has or how they are batched. That is why the Transformer, and essentially every large language model since, normalizes with LayerNorm rather than BatchNorm.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">batch-independent: works at batch = 1<br>train == eval (no running stats)<br>per-token: any sequence length is fine<br>&rarr; the default norm in Transformers</div>`, code:"# a Transformer activation: (batch, seq_len, d_model)\n# LayerNorm(d_model) normalizes each TOKEN over its d_model features\n# -> batch=1 fine, seq_len variable fine, train == eval\nln = nn.LayerNorm(d_model)   # the norm inside every Transformer block" },
+ { title:"9. Placement: pre-norm vs post-norm", why:"Where you put LayerNorm inside a residual block matters. The original 2017 Transformer used post-norm, normalizing after the residual addition, which is powerful but needs a careful learning-rate warmup and can be unstable when stacked very deep. Pre-norm, used from GPT-2 onward, normalizes the input to each sublayer and leaves the residual add as a clean identity path, which keeps gradients well behaved and lets you train very deep models more easily. Pre-norm is the common default today.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">Post-LN: x = LN(x + Sublayer(x))   (2017)<br>Pre-LN: x = x + Sublayer(LN(x))   (GPT-2+)<br>Pre-LN keeps a clean residual highway<br>&rarr; more stable, trains deeper</div>`, code:"# Post-LN (2017 original): norm AFTER the add\nx = ln(x + attn(x))\nx = ln(x + ffn(x))\n\n# Pre-LN (GPT-2 onward): norm BEFORE the sublayer, clean residual\nx = x + attn(ln(x))\nx = x + ffn(ln(x))" },
+ { title:"10. RMSNorm: the modern variant", why:"RMSNorm is a popular simplification of LayerNorm that removes the mean-centering step and the beta shift, keeping only the division by the root-mean-square of the features and a learnable scale. It turns out the re-centering contributes little, so this cheaper variant matches LayerNorm quality while doing fewer operations, which matters at LLM scale. LLaMA, Mistral and most modern large models use RMSNorm. It is a natural next topic, and the ideas here, standardize then rescale, carry straight over.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">RMSNorm: drop the mean, drop &beta;<br>rms = &radic;( mean(x&sup2;) )<br>y = &gamma; &middot; x / rms<br>LLaMA, Mistral, most 2023+ LLMs</div>`, code:"class RMSNorm(nn.Module):\n    def __init__(self, d, eps=1e-6):\n        super().__init__(); self.g = nn.Parameter(torch.ones(d)); self.eps = eps\n    def forward(self, x):\n        rms = x.pow(2).mean(-1, keepdim=True).add(self.eps).sqrt()\n        return self.g * x / rms   # no mean, no beta -> cheaper, matches LN" }
+];
+</script>
+
+<script>
+const stepsEl=document.getElementById("steps");
+const prevB=document.getElementById("prev"), nextB=document.getElementById("next-btn"), autoB=document.getElementById("auto");
+let curS=0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },4200); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>
