@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 28 — Weight Initialization</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  #cv { background:#fff; border:2px solid #0f172a; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,.12); }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  table.res { width:100%; border-collapse:collapse; font-size:12px; }
+  table.res th, table.res td { padding:5px 8px; text-align:left; border-bottom:1px solid #e2e8f0; }
+  table.res th { color:#64748b; font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:.04em; }
+  table.res td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.win { background:#fff1f2; }
+  .tokbtn { border:2px solid #e2e8f0; }
+  .tokbtn.on { border-color:#f43f5e; background:#fff1f2; color:#be123c; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 28</div>
+      <h1 class="text-xl font-bold">&#9878;&#65039; Weight Initialization — why the first random numbers decide whether a deep net learns at all</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Before a network learns anything, it has to guess its weights. That guess alone can kill training.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto">Below is a <strong>real</strong> forward pass through a <strong>10-layer</strong> deep net (64 units per layer), fed a fixed random input with <strong>std&nbsp;1</strong>. Pick an <strong>init scheme</strong> and an <strong>activation</strong>, press <strong>Run</strong>, and watch the <span class="text-rose-600 font-bold">standard deviation of the activations</span> as the signal travels deeper. On a log axis the story is instant: <strong>all-zeros</strong> makes every unit identical (symmetry never breaks, a dead network); <strong>too-small (&times;0.01)</strong> shrinks the signal geometrically until it <em>vanishes</em>; <strong>too-large</strong> saturates tanh at &plusmn;1 or explodes ReLU toward overflow; <strong>Xavier/Glorot</strong> holds the std flat under <em>tanh</em>; and <strong>He</strong> holds it flat under <em>ReLU</em>. Each run leaves a faint ghost line so you can stack the schemes and see the contrast. The std at every layer, and the histogram on the right, are computed live from the actual pass.</p>
+
+      <div class="flex justify-center gap-3 mb-3 flex-wrap items-center">
+        <span class="text-sm text-slate-600 self-center">init scheme:</span>
+        <div id="schemePick" class="flex gap-1 flex-wrap justify-center">
+          <button data-s="zeros"  class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">All-zeros</button>
+          <button data-s="small"  class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">Too-small &times;0.01</button>
+          <button data-s="large"  class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">Too-large</button>
+          <button data-s="xavier" class="tokbtn on px-3 py-1.5 rounded-lg font-bold text-sm">Xavier / Glorot</button>
+          <button data-s="he"     class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">He / Kaiming</button>
+        </div>
+      </div>
+
+      <div class="flex justify-center gap-6 mb-4 flex-wrap items-center">
+        <span class="text-sm text-slate-600 self-center">activation:</span>
+        <div id="actPick" class="flex gap-1">
+          <button data-a="tanh" class="tokbtn on px-4 py-1.5 rounded-lg font-bold text-sm">tanh</button>
+          <button data-a="relu" class="tokbtn px-4 py-1.5 rounded-lg font-bold text-sm">ReLU</button>
+        </div>
+        <button id="runBtn"   class="bg-rose-600 hover:bg-rose-700 text-white px-5 py-2 rounded-lg font-semibold text-sm">&#9654; Run forward pass</button>
+        <button id="resetBtn" class="bg-slate-200 hover:bg-slate-300 px-5 py-2 rounded-lg font-semibold text-sm">&#8635; Clear ghosts</button>
+      </div>
+
+      <div style="overflow:auto" class="bg-white rounded-xl border border-slate-200 p-2 mb-3">
+        <canvas id="cv" width="900" height="470" class="mx-auto"></canvas>
+      </div>
+      <p class="text-xs text-slate-400 mb-4">Left: <span style="color:#e11d48;font-weight:700">std of activations</span> vs layer depth on a <strong>log</strong> axis; the dashed line at <strong>std&nbsp;=&nbsp;1</strong> is the healthy target and faint <span style="color:#94a3b8;font-weight:700">grey lines</span> are previous runs. Right: the <strong>activation histogram</strong> at the deepest revealed layer &mdash; watch it collapse to a spike (vanish), split into two &plusmn;1 spikes (tanh saturation), blow up (ReLU explosion), or hold a healthy bell (Xavier&nbsp;/&nbsp;He).</p>
+
+      <div class="grid lg:grid-cols-2 gap-4 items-start text-left">
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">What is happening now</div>
+          <div id="statusLine" class="text-sm text-slate-700 min-h-[40px]">Pick a scheme and an activation, then press <strong>Run</strong> to push the signal through all 10 layers and read the std at each depth.</div>
+          <div class="mt-3 grid grid-cols-4 gap-2 text-center">
+            <div class="bg-slate-50 rounded-lg p-2"><div class="text-[10px] uppercase font-bold text-slate-400">input std</div><div id="s0Stat" class="stat text-base font-bold text-slate-700">&mdash;</div></div>
+            <div class="bg-slate-50 rounded-lg p-2"><div class="text-[10px] uppercase font-bold text-slate-400">layer&nbsp;1 std</div><div id="s1Stat" class="stat text-base font-bold text-slate-700">&mdash;</div></div>
+            <div class="bg-slate-50 rounded-lg p-2"><div class="text-[10px] uppercase font-bold text-slate-400">layer&nbsp;10 std</div><div id="sLStat" class="stat text-base font-bold text-slate-700">&mdash;</div></div>
+            <div class="bg-rose-50 rounded-lg p-2"><div class="text-[10px] uppercase font-bold text-rose-400">ratio last/first</div><div id="ratioStat" class="stat text-base font-bold text-rose-600">&mdash;</div></div>
+          </div>
+          <div class="mt-3 p-3 rounded-lg border" id="taskBox">
+            <div class="text-xs uppercase font-bold text-slate-400 tracking-wider mb-1">The variance-preserving goal</div>
+            <div id="taskLine" class="text-sm text-slate-700">A healthy net keeps the activation std <strong>roughly constant</strong> with depth (ratio &asymp; 1). Run <strong>Too-small</strong> and <strong>Xavier</strong> back to back and compare the two lines.</div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl border border-rose-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">Five ways to set the weights</div>
+          <table class="res">
+            <thead><tr><th>scheme</th><th>Var(w)</th><th>best for</th><th>what happens with depth</th></tr></thead>
+            <tbody>
+              <tr><td class="font-semibold">All-zeros</td><td>0</td><td>never</td><td>symmetry: every unit identical, no learning</td></tr>
+              <tr><td class="font-semibold">Too-small &times;0.01</td><td>tiny fixed</td><td>never</td><td>activations shrink to 0 &mdash; vanishing</td></tr>
+              <tr><td class="font-semibold">Too-large</td><td>big fixed</td><td>never</td><td>tanh saturates / ReLU explodes</td></tr>
+              <tr><td class="font-semibold text-rose-700">Xavier / Glorot</td><td class="text-rose-700">2 / (fan_in+fan_out)</td><td class="text-rose-700 font-semibold">tanh · sigmoid</td><td class="text-rose-700">std stays &asymp; constant</td></tr>
+              <tr><td class="font-semibold text-rose-700">He / Kaiming</td><td class="text-rose-700">2 / fan_in</td><td class="text-rose-700 font-semibold">ReLU</td><td class="text-rose-700">std stays &asymp; constant</td></tr>
+            </tbody>
+          </table>
+          <p class="text-[11px] text-slate-400 mt-2">A pre-activation is a sum of <code>fan_in</code> weight&times;input products, so <code>Var(z) = fan_in &middot; Var(w) &middot; Var(x)</code>. Xavier and He simply choose <code>Var(w)</code> so that <code>fan_in &middot; Var(w) = 1</code> (Xavier balances the backward pass too; He doubles it because ReLU zeroes half its inputs). Cancel the <code>fan_in</code> factor and the variance stops drifting with depth.</p>
+          <div id="compareNote" class="text-sm text-slate-600 mt-2"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Keep the variance alive, layer after layer</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">You just watched a real 10-layer forward pass live or die on nothing but its starting weights: zeros freeze it by symmetry, tiny weights vanish the signal, big weights saturate or explode it, and the two <em>variance-preserving</em> schemes hold the std flat with depth. Here it is in code: see the collapse in raw NumPy, derive Xavier and He by hand, then call the one-liners PyTorch ships &mdash; <code>nn.init.xavier_normal_</code> and <code>nn.init.kaiming_normal_</code> &mdash; and apply them across a whole model.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">See the collapse: a naive forward pass</h3></div>
+        <p class="text-sm text-slate-600 mb-3">This is exactly what the LOOK demo runs. Scale the weights too small and the activation std decays toward 0 layer by layer; scale them too big and it blows up. Print the per-layer std and watch it drift.</p>
+        <div class="relative"><pre>import numpy as np
+np.random.seed(0)
+
+N, L = 64, 10
+x = np.random.randn(N)                 # input, std = 1
+
+for scale in [0.01, 0.20, 1.00]:       # too-small, ~ok, too-large
+    a = x.copy()
+    stds = []
+    for _ in range(L):
+        W = np.random.randn(N, N) * scale   # naive fixed scale
+        a = np.tanh(W @ a)                  # one layer
+        stds.append(a.std())
+    print(f"scale={scale:>4}: layer1={stds[0]:.2e}  layer10={stds[-1]:.2e}")
+# scale=0.01 -&gt; layer10 ~ 0      (vanished)
+# scale=1.00 -&gt; layer10 saturates/blows up depending on activation</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Xavier / Glorot by hand (tanh, sigmoid)</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A pre-activation is a sum of <code>fan_in</code> products, so <code>Var(z) = fan_in &middot; Var(w) &middot; Var(x)</code>. To keep <code>Var(z) = Var(x)</code> on the forward pass you need <code>Var(w) = 1/fan_in</code>; balancing the backward pass too gives Glorot's compromise <code>Var(w) = 2/(fan_in+fan_out)</code>. Near 0 tanh has slope&nbsp;1, so the variance carries through unchanged.</p>
+        <div class="relative"><pre>import numpy as np
+
+def xavier_normal(fan_in, fan_out):
+    std = np.sqrt(2.0 / (fan_in + fan_out))   # Glorot: balances fwd + bwd
+    return np.random.randn(fan_out, fan_in) * std
+
+def xavier_uniform(fan_in, fan_out):
+    limit = np.sqrt(6.0 / (fan_in + fan_out)) # same variance, uniform form
+    return np.random.uniform(-limit, limit, (fan_out, fan_in))
+
+W = xavier_normal(64, 64)   # for a 64 -&gt; 64 tanh/sigmoid layer
+# feed std-1 input through many such layers -&gt; std stays ~1</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">He / Kaiming by hand (ReLU) &mdash; and why the 2</h3></div>
+        <p class="text-sm text-slate-600 mb-3">ReLU sets every negative pre-activation to 0, which roughly <strong>halves</strong> the variance passing through. So you must double the forward term: <code>Var(w) = 2/fan_in</code>. That extra factor of 2 is the entire difference between He and Xavier, and it is what keeps a deep ReLU stack from slowly vanishing.</p>
+        <div class="relative"><pre>import numpy as np
+
+def he_normal(fan_in, fan_out):
+    std = np.sqrt(2.0 / fan_in)   # the 2 undoes ReLU zeroing half the inputs
+    return np.random.randn(fan_out, fan_in) * std
+
+def he_uniform(fan_in, fan_out):
+    limit = np.sqrt(6.0 / fan_in)
+    return np.random.uniform(-limit, limit, (fan_out, fan_in))
+
+W = he_normal(64, 64)   # for a 64 -&gt; 64 ReLU layer
+# Xavier here would under-scale and let the ReLU signal slowly decay</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">PyTorch one-liners: xavier_ and kaiming_</h3></div>
+        <p class="text-sm text-slate-600 mb-3">You never hand-roll this in practice. <code>torch.nn.init</code> ships both, in normal and uniform variants. Note the trailing underscore: these fill the tensor <strong>in place</strong>. Biases go to 0 &mdash; the weights already break symmetry.</p>
+        <div class="relative"><pre>import torch, torch.nn as nn
+
+lin = nn.Linear(64, 64)
+
+# tanh / sigmoid layer -&gt; Xavier / Glorot
+nn.init.xavier_normal_(lin.weight)                 # or xavier_uniform_
+# ReLU layer -&gt; He / Kaiming (tell it the nonlinearity + which fan)
+nn.init.kaiming_normal_(lin.weight,
+                        mode="fan_in", nonlinearity="relu")  # or kaiming_uniform_
+nn.init.zeros_(lin.bias)                            # biases start at 0</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Apply it to a whole model</h3></div>
+        <p class="text-sm text-slate-600 mb-3"><code>model.apply(fn)</code> walks every submodule so you can initialise a deep stack in one shot. Match the scheme to the activation: He for ReLU/GELU nets, Xavier for tanh/sigmoid and attention projections. The <code>gain</code> from <code>calculate_gain</code> adjusts for the exact nonlinearity.</p>
+        <div class="relative"><pre>import torch.nn as nn
+
+def init_weights(m):
+    if isinstance(m, nn.Linear):
+        nn.init.kaiming_normal_(m.weight, nonlinearity="relu")  # ReLU net
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+
+model = nn.Sequential(nn.Linear(64,64), nn.ReLU(),
+                      nn.Linear(64,64), nn.ReLU(),
+                      nn.Linear(64,10))
+model.apply(init_weights)          # every Linear re-initialised in place
+
+# tanh gain, if you need it explicitly:
+g = nn.init.calculate_gain("tanh") # -&gt; ~1.667; std = g * sqrt(2/(fi+fo))</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Init still matters even with BatchNorm / LayerNorm</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Normalization (Days 19 &amp; 27) re-centers activations every layer, so it makes a network far <em>less</em> sensitive to the starting weights &mdash; but not immune. The very first optimisation steps, any block without a norm, and very deep residual stacks still need sane init; modern nets even scale residual branches down (e.g. <code>1/&radic;(2L)</code>) on top of He / Xavier.</p>
+        <div class="relative"><pre>import torch.nn as nn
+
+# LayerNorm / BatchNorm params get their own standard init:
+ln = nn.LayerNorm(64)
+nn.init.ones_(ln.weight)    # gamma = 1
+nn.init.zeros_(ln.bias)     # beta  = 0   (identity at start)
+
+# Deep residual nets often down-scale the residual branch on top of He:
+#   out = x + (1/sqrt(2*num_layers)) * sublayer(x)
+# Norm reduces init sensitivity; it does NOT remove the need for good init.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 28 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">You saw that a deep network's fate is sealed before the first gradient step: <strong>all-zeros</strong> traps every unit in the same value by symmetry, <strong>too-small</strong> weights vanish the signal, <strong>too-large</strong> weights saturate tanh or explode ReLU, and only <em>variance-preserving</em> init keeps the activation std flat with depth. The rule is one line of algebra &mdash; a pre-activation is a sum of <code>fan_in</code> products, so choose <code>Var(w)</code> to cancel that <code>fan_in</code> factor: <strong>Xavier/Glorot</strong> <code>2/(fan_in+fan_out)</code> for tanh/sigmoid, and <strong>He/Kaiming</strong> <code>2/fan_in</code> for ReLU, the factor of 2 paying for the half of the inputs ReLU zeroes. Biases start at 0, and normalization softens but never removes the need for good init. <strong>&#128073; Tomorrow, Day 29:</strong> Positional Encoding &mdash; attention is permutation-blind, so how do Transformers tell token 1 from token 100? Sinusoids and learned position vectors.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ============================================================
+// REAL forward pass through a 10-layer, 64-unit deep net.
+//   input x ~ N(0,1) (fixed seed) with std ~ 1.
+//   each layer: z = W @ a ; a = act(z)  with W drawn per-scheme.
+//   scheme sets Var(w):
+//     zeros  -> W = 0            (symmetry: every unit identical)
+//     small  -> std = 0.01       (signal vanishes with depth)
+//     large  -> std = 0.60       (tanh saturates / ReLU explodes)
+//     xavier -> std = sqrt(2/(fan_in+fan_out))   (tanh: variance preserved)
+//     he     -> std = sqrt(2/fan_in)             (ReLU: variance preserved)
+//   we compute the population std of the activations at EVERY layer, live.
+// ============================================================
+const N = 64, L = 10, SEED = 987654321;
+
+// deterministic PRNG so every run + Node verification match exactly
+function mulberry32(a){ return function(){ a|=0; a=(a+0x6D2B79F5)|0; let t=Math.imul(a^(a>>>15),1|a); t=(t+Math.imul(t^(t>>>7),61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; }; }
+function gaussFactory(seed){ const r=mulberry32(seed); return ()=>{ let u=0,v=0; while(u===0)u=r(); while(v===0)v=r(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }; }
+const mean  = a => a.reduce((s,v)=>s+v,0)/a.length;
+const stdOf = a => { const m=mean(a); return Math.sqrt(a.reduce((s,v)=>s+(v-m)*(v-m),0)/a.length); };
+
+function schemeStd(scheme){
+  switch(scheme){
+    case "zeros":  return 0;
+    case "small":  return 0.01;
+    case "large":  return 0.60;
+    case "xavier": return Math.sqrt(2/(N+N));
+    case "he":     return Math.sqrt(2/N);
+  }
+  return 0;
+}
+const actFn = (act,z) => act==="relu" ? Math.max(0,z) : Math.tanh(z);
+
+function computeForward(scheme, act){
+  const g = gaussFactory(SEED);
+  let a = []; for(let i=0;i<N;i++) a.push(g());   // input, std ~ 1
+  const layers=[a.slice()], stds=[stdOf(a)];
+  const s = schemeStd(scheme);
+  for(let l=0;l<L;l++){
+    const next = new Array(N).fill(0);
+    for(let j=0;j<N;j++){
+      let z=0;
+      for(let i=0;i<N;i++){ const w = scheme==="zeros" ? 0 : g()*s; z += w*a[i]; }
+      next[j] = actFn(act,z);
+    }
+    a = next; layers.push(a.slice()); stds.push(stdOf(a));
+  }
+  return { layers, stds };
+}
+
+let state = { scheme:"xavier", act:"tanh", data:null, reveal:0, ghosts:{} };
+</script>
+
+<script>
+const cv=document.getElementById("cv"), c2=cv.getContext("2d");
+const LX0=72, LX1=560, LY0=58, LY1=408;      // std-vs-depth line chart
+const HX0=632, HX1=884, HY0=58, HY1=408;     // histogram
+const LOGMIN=-12, LOGMAX=6;
+const SIG="σ";
+function yStd(std){ const lg = std<=0 ? LOGMIN : Math.max(LOGMIN,Math.min(LOGMAX,Math.log10(std))); return LY1 - (lg-LOGMIN)/(LOGMAX-LOGMIN)*(LY1-LY0); }
+function xLay(i){ return LX0 + i/L*(LX1-LX0); }
+
+function drawLineChart(){
+  // axes frame
+  c2.strokeStyle="#e2e8f0"; c2.lineWidth=1;
+  c2.strokeRect(LX0,LY0,LX1-LX0,LY1-LY0);
+  // horizontal log gridlines
+  c2.textAlign="right"; c2.textBaseline="middle"; c2.font="10px monospace";
+  for(let k=LOGMIN;k<=LOGMAX;k+=3){
+    const y = yStd(Math.pow(10,k)); const bold = (k===0);
+    c2.strokeStyle = bold ? "#f43f5e" : "#eef2f6";
+    c2.setLineDash(bold ? [5,4] : []); c2.lineWidth = bold ? 1.5 : 1;
+    c2.beginPath(); c2.moveTo(LX0,y); c2.lineTo(LX1,y); c2.stroke();
+    c2.setLineDash([]);
+    c2.fillStyle = bold ? "#be123c" : "#94a3b8";
+    c2.fillText(k===0 ? "1" : "1e"+k, LX0-6, y);
+  }
+  // x ticks
+  c2.textAlign="center"; c2.textBaseline="top"; c2.fillStyle="#94a3b8"; c2.font="9px monospace";
+  for(let i=0;i<=L;i++){ c2.fillText(i===0?"in":(""+i), xLay(i), LY1+6); }
+  c2.fillStyle="#64748b"; c2.font="10px sans-serif"; c2.fillText("layer depth", (LX0+LX1)/2, LY1+20);
+  // "std = 1 healthy" tag
+  c2.textAlign="left"; c2.textBaseline="bottom"; c2.font="bold 9px sans-serif"; c2.fillStyle="#be123c";
+  c2.fillText("std = 1  (healthy target)", LX0+6, yStd(1)-2);
+
+  // ghost lines (previous runs)
+  for(const name in state.ghosts){
+    const g = state.ghosts[name]; if(name===state.scheme && state.data) continue;
+    c2.strokeStyle="#cbd5e1"; c2.lineWidth=1.5; c2.beginPath();
+    for(let i=0;i<g.length;i++){ const x=xLay(i), y=yStd(g[i]); i===0?c2.moveTo(x,y):c2.lineTo(x,y); } c2.stroke();
+    c2.fillStyle="#94a3b8"; c2.textAlign="left"; c2.textBaseline="middle"; c2.font="9px sans-serif";
+    c2.fillText(name, xLay(g.length-1)+4, yStd(g[g.length-1]));
+  }
+
+  // current run, revealed up to state.reveal
+  if(state.data){
+    const st = state.data.stds, upto = Math.min(L, Math.floor(state.reveal));
+    c2.strokeStyle="#f43f5e"; c2.lineWidth=2.6; c2.beginPath();
+    for(let i=0;i<=upto;i++){ const x=xLay(i), y=yStd(st[i]); i===0?c2.moveTo(x,y):c2.lineTo(x,y); }
+    // partial segment to the reveal fraction
+    if(upto<L){ const frac=state.reveal-upto; const x0=xLay(upto),y0=yStd(st[upto]),x1=xLay(upto+1),y1=yStd(st[upto+1]); c2.lineTo(x0+(x1-x0)*frac, y0+(y1-y0)*frac); }
+    c2.stroke();
+    for(let i=0;i<=upto;i++){ c2.fillStyle="#e11d48"; c2.beginPath(); c2.arc(xLay(i),yStd(st[i]),3,0,7); c2.fill(); }
+  }
+}
+
+function drawHistogram(){
+  c2.strokeStyle="#e2e8f0"; c2.lineWidth=1; c2.strokeRect(HX0,HY0,HX1-HX0,HY1-HY0);
+  c2.textAlign="center"; c2.textBaseline="bottom"; c2.font="bold 10px sans-serif"; c2.fillStyle="#64748b";
+  const depth = state.data ? Math.min(L, Math.round(state.reveal)) : 0;
+  c2.fillText("activation histogram · layer "+(depth===0?"input":depth), (HX0+HX1)/2, HY0-6);
+  if(!state.data){ c2.fillStyle="#cbd5e1"; c2.textBaseline="middle"; c2.font="11px sans-serif"; c2.fillText("press Run", (HX0+HX1)/2, (HY0+HY1)/2); return; }
+  const vals = state.data.layers[depth];
+  const relu = state.act==="relu";
+  let maxAbs = 0; for(const v of vals) maxAbs=Math.max(maxAbs,Math.abs(v));
+  if(maxAbs<1e-9) maxAbs = 1;
+  const lo = relu ? 0 : -maxAbs, hi = maxAbs, BINS=21;
+  const cnt = new Array(BINS).fill(0);
+  for(const v of vals){ let b=Math.floor((v-lo)/(hi-lo)*BINS); if(b<0)b=0; if(b>=BINS)b=BINS-1; cnt[b]++; }
+  const cmax = Math.max(1,...cnt);
+  const bw = (HX1-HX0)/BINS, base=HY1-16;
+  for(let b=0;b<BINS;b++){
+    const h=cnt[b]/cmax*(base-HY0-6), x=HX0+b*bw+1;
+    c2.fillStyle="rgba(225,29,72,0.78)"; c2.fillRect(x, base-h, bw-2, h);
+  }
+  // zero marker + range labels
+  c2.strokeStyle="#94a3b8"; c2.setLineDash([3,3]);
+  const xz = HX0 + (0-lo)/(hi-lo)*(HX1-HX0);
+  if(!relu){ c2.beginPath(); c2.moveTo(xz,HY0); c2.lineTo(xz,base); c2.stroke(); }
+  c2.setLineDash([]);
+  c2.fillStyle="#94a3b8"; c2.font="9px monospace"; c2.textBaseline="top";
+  c2.textAlign="left";   c2.fillText(fmt(lo), HX0+2, base+3);
+  c2.textAlign="right";  c2.fillText(fmt(hi), HX1-2, base+3);
+  c2.textAlign="center"; c2.fillText(relu?"value (ReLU ≥ 0)":"activation value", (HX0+HX1)/2, base+3);
+}
+function fmt(v){ const a=Math.abs(v); if(a===0)return "0"; if(a>=1e4||a<1e-2) return v.toExponential(1); return v.toFixed(2); }
+
+function draw(){
+  c2.clearRect(0,0,cv.width,cv.height);
+  c2.textAlign="left"; c2.textBaseline="alphabetic";
+  c2.font="bold 13px sans-serif"; c2.fillStyle="#0f172a";
+  const names={zeros:"All-zeros",small:"Too-small ×0.01",large:"Too-large",xavier:"Xavier / Glorot",he:"He / Kaiming"};
+  c2.fillText(names[state.scheme]+"  ·  "+(state.act==="relu"?"ReLU":"tanh")+"  ·  std of activations vs depth", 20, 28);
+  c2.font="11px sans-serif"; c2.fillStyle="#94a3b8";
+  c2.fillText("Var(w) = "+(state.scheme==="zeros"?"0":schemeStd(state.scheme).toFixed(4)+"²")+"   —   10 layers × 64 units, real forward pass", 20, 44);
+  drawLineChart();
+  drawHistogram();
+  updateInfo();
+}
+</script>
+
+<script>
+function updateInfo(){
+  const d=state.data, done = d && state.reveal>=L;
+  document.getElementById("s0Stat").textContent = d ? fmt(d.stds[0]) : "—";
+  document.getElementById("s1Stat").textContent = d ? fmt(d.stds[1]) : "—";
+  document.getElementById("sLStat").textContent = d ? fmt(d.stds[L]) : "—";
+  const ratio = d ? (d.stds[1]>0 ? d.stds[L]/d.stds[1] : 0) : null;
+  document.getElementById("ratioStat").textContent = d ? (d.stds[1]>0 ? fmt(ratio) : "—") : "—";
+
+  const sline=document.getElementById("statusLine"), box=document.getElementById("taskBox"), tline=document.getElementById("taskLine"), cnote=document.getElementById("compareNote");
+  if(!d){ sline.innerHTML="Pick a scheme and an activation, then press <strong>Run</strong> to push the signal through all 10 layers and read the std at each depth."; return; }
+  const act = state.act==="relu" ? "ReLU" : "tanh";
+  let msg="", tone="slate", note="";
+  switch(state.scheme){
+    case "zeros":
+      msg="<strong>All-zeros init.</strong> Every weight is 0, so every pre-activation is 0 and <em>every unit in a layer outputs the identical value</em>. Their gradients are identical too, so the units can never specialise — the layer behaves like a single neuron forever. The std is <strong>0 at every depth</strong>: a dead network. Symmetry must be broken by random weights.";
+      tone="rose"; note="Zeros (or any equal weights) never break symmetry — the classic reason you must randomise."; break;
+    case "small":
+      msg="<strong>Too-small (×0.01) + "+act+".</strong> Each layer multiplies the std by roughly √(fan_in·0.01²) ≈ 0.08, so the signal shrinks geometrically: from <strong>"+fmt(d.stds[1])+"</strong> at layer 1 to <strong>"+fmt(d.stds[L])+"</strong> by layer 10. This is <em>vanishing activations</em> — and the gradients vanish with them, so deep layers learn nothing.";
+      tone="rose"; note="A tiny fixed scale ignores fan_in, so the variance decays every layer — the vanishing problem."; break;
+    case "large":
+      if(state.act==="relu"){ msg="<strong>Too-large + ReLU.</strong> The variance is multiplied every layer, so activations <em>explode</em>: std climbs from <strong>"+fmt(d.stds[1])+"</strong> to <strong>"+fmt(d.stds[L])+"</strong> and would overflow in a deeper net. Gradients explode to match — training diverges to NaN."; }
+      else { msg="<strong>Too-large + tanh.</strong> Pre-activations are huge, so tanh <em>saturates</em> to ±1: the histogram splits into two spikes at the edges. Saturated tanh has near-zero slope, so gradients vanish through saturation even though the std looks ≈1."; }
+      tone="rose"; note="A big fixed scale drives the sum of products far from 0 — saturation (tanh) or explosion (ReLU)."; break;
+    case "xavier":
+      if(state.act==="tanh"){ msg="<strong>Xavier/Glorot + tanh.</strong> Var(w)=2/(fan_in+fan_out) cancels the fan_in factor, and near 0 tanh has slope 1, so the std stays ≈ constant: <strong>"+fmt(d.stds[1])+"</strong> → <strong>"+fmt(d.stds[L])+"</strong> (ratio "+fmt(ratio)+"). Healthy signal at every depth — exactly what Glorot designed it for."; }
+      else { msg="<strong>Xavier + ReLU.</strong> Xavier assumes a slope-1 activation, but ReLU zeroes half its inputs, so the signal is slightly under-scaled and drifts down (ratio "+fmt(ratio)+"). Switch to <strong>He</strong> to fix this — that is the whole reason He exists."; }
+      tone="emerald"; note="Xavier balances the forward and backward variance for tanh/sigmoid: fan_in·Var(w)=fan_out·Var(w)=1 as a compromise."; break;
+    case "he":
+      if(state.act==="relu"){ msg="<strong>He/Kaiming + ReLU.</strong> Var(w)=2/fan_in — double Xavier's forward term — pays back the variance ReLU destroys by zeroing half its inputs, so the std holds ≈ constant to the deepest layer: <strong>"+fmt(d.stds[1])+"</strong> → <strong>"+fmt(d.stds[L])+"</strong> (ratio "+fmt(ratio)+"). This is the default for ReLU nets."; }
+      else { msg="<strong>He + tanh.</strong> He's 2/fan_in is tuned for ReLU, so with tanh it slightly over-scales and the std creeps up (ratio "+fmt(ratio)+"). For tanh, use <strong>Xavier</strong> instead."; }
+      tone="emerald"; note="He doubles Xavier's forward term (2/fan_in) precisely to undo ReLU zeroing half the pre-activations."; break;
+  }
+  sline.innerHTML = msg; cnote.innerHTML = note;
+  const good = state.scheme==="xavier"&&state.act==="tanh" || state.scheme==="he"&&state.act==="relu";
+  box.className = "mt-3 p-3 rounded-lg border " + (good ? "border-emerald-300 bg-emerald-50" : (tone==="rose" ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-slate-50"));
+  tline.innerHTML = !done ? "Running the forward pass…" : (good
+    ? "✅ <strong>Variance preserved.</strong> The activation std barely moves across 10 layers (ratio ≈ "+fmt(ratio)+"). This is the goal: a signal that neither vanishes nor explodes, so gradients stay healthy all the way down."
+    : (state.scheme==="zeros" ? "❌ <strong>Symmetry never breaks.</strong> Randomise the weights (Xavier or He) to give units distinct gradients."
+       : "⚠️ <strong>Signal drifts with depth</strong> (ratio "+fmt(ratio)+"). Run <strong>"+(state.act==="relu"?"He":"Xavier")+"</strong> next to see the std snap back to ≈ constant."));
+}
+
+let animId=null;
+function run(){
+  state.data = computeForward(state.scheme, state.act);
+  cancelAnimationFrame(animId);
+  const start=performance.now(), dur=1300;
+  function frame(now){ const p=Math.min(1,(now-start)/dur); state.reveal=p*L; draw();
+    if(p<1) animId=requestAnimationFrame(frame);
+    else { state.reveal=L; state.ghosts[state.scheme]=state.data.stds.slice(); draw(); } }
+  animId=requestAnimationFrame(frame);
+}
+document.getElementById("runBtn").onclick=run;
+document.getElementById("resetBtn").onclick=()=>{ cancelAnimationFrame(animId); state.ghosts={}; state.data=null; state.reveal=0; draw(); };
+document.querySelectorAll("#schemePick button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("#schemePick button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); state.scheme=b.dataset.s; run(); });
+document.querySelectorAll("#actPick button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("#actPick button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); state.act=b.dataset.a; state.ghosts={}; run(); });
+run();
+</script>
+
+<script>
+const STEPS = [
+ { title:"1. Why initialization matters at all", why:"Training is optimization from a starting point, and the weights are that starting point. Gradient descent only nudges the weights a little each step, so if the initial weights already push the network into a bad regime — all activations dead, or saturated, or exploding — the gradients are near zero or enormous and the net may never recover. Good init is not a nicety; for a deep network it is the difference between converging in a few epochs and never learning at all. The whole trick is to pick random weights whose scale keeps the signal healthy as it flows through many layers.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">weights = the starting point of optimization<br>bad start &rarr; dead / saturated / exploding signal<br>gradients &asymp; 0 or &asymp; &infin; &rarr; no learning<br>goal: a scale that keeps the signal alive with depth</div>`, code:"# training = gradient descent FROM the initial weights\n# if init puts the net in a bad regime, gradients ~ 0 or ~ inf\n# -> the network never trains, no matter the optimizer\n# so: choose the random scale carefully (this whole lesson)" },
+ { title:"2. The symmetry problem (why not zeros)", why:"The obvious idea — set every weight to 0 (or any single constant) — fails immediately. If all weights in a layer are equal, every unit computes the exact same output from the same inputs, and during backprop every unit receives the exact same gradient. So they update identically and stay identical forever: the layer has the representational power of a single neuron, no matter how many units it has. Randomness is what breaks this symmetry and lets units specialise. This is why every scheme below draws weights at random.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">all weights equal &rarr; all units identical output<br>identical forward &rarr; identical gradient<br>update identically &rarr; stay identical forever<br>random init BREAKS the symmetry</div>`, code:"# zeros / equal weights: every unit is a clone\nW = np.zeros((n_out, n_in))\n# forward: all units output the same value\n# backward: all units get the same gradient -> never differentiate\n# fix: W = random * scale   (break symmetry)" },
+ { title:"3. Variance of a sum of products", why:"To choose the scale we track how the variance of the signal changes through one layer. A pre-activation is a sum over fan_in inputs of weight times input: z = Σ wᵢ·xᵢ. For independent, zero-mean weights and inputs, the variances add, giving Var(z) = fan_in · Var(w) · Var(x). That fan_in factor is the villain: with a naive fixed Var(w), each layer multiplies the variance by fan_in·Var(w). If that product is below 1 the signal shrinks toward 0 every layer (vanishing); if above 1 it grows every layer (exploding). Depth compounds the effect exponentially.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">z = &sum;&#7522; w&#7522;&middot;x&#7522;   (sum over fan_in inputs)<br>Var(z) = fan_in &middot; Var(w) &middot; Var(x)<br>factor per layer = fan_in &middot; Var(w)<br>&lt; 1 &rarr; vanish &nbsp; · &nbsp; &gt; 1 &rarr; explode</div>`, code:"# one pre-activation is a sum of fan_in products:\n#   z = sum_i  w_i * x_i\n# independent, zero-mean -> variances add:\n#   Var(z) = fan_in * Var(w) * Var(x)\n# the per-layer multiplier is  fan_in * Var(w)\n# depth multiplies it again and again -> exponential drift" },
+ { title:"4. The variance-preserving goal", why:"The fix falls straight out of that formula. If we want the signal to neither shrink nor grow, we want the per-layer multiplier to equal 1, i.e. fan_in · Var(w) = 1, so Var(w) = 1/fan_in. Then Var(z) = Var(x) and the activation variance is preserved layer after layer, no matter how deep the net. The same argument runs backward for the gradients, which is why the best schemes also consider fan_out. Everything that follows — Xavier, He — is just this one equation, adjusted for the activation function in between.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">want: fan_in &middot; Var(w) = 1<br>&rArr; Var(w) = 1 / fan_in<br>then Var(z) = Var(x) &rarr; std stays constant<br>same idea backward &rarr; also weigh fan_out</div>`, code:"# want the per-layer multiplier to be 1:\n#   fan_in * Var(w) = 1   ->   Var(w) = 1 / fan_in\n# then Var(activations) is preserved across depth.\n# backward pass wants fan_out * Var(w) = 1 for the gradients.\n# the schemes below just solve this for each activation." },
+ { title:"5. Xavier / Glorot (tanh, sigmoid)", why:"Glorot and Bengio (2010) wanted both the forward activations and the backward gradients to keep their variance. Forward asks for Var(w)=1/fan_in, backward asks for Var(w)=1/fan_out; you cannot satisfy both exactly unless fan_in=fan_out, so they took the harmonic-style compromise Var(w)=2/(fan_in+fan_out). This assumes an activation that is roughly linear with unit slope near 0 — exactly tanh and (rescaled) sigmoid. Use Xavier for tanh/sigmoid layers and for the linear projections inside attention.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">fwd wants 1/fan_in, bwd wants 1/fan_out<br>compromise: Var(w) = 2 / (fan_in + fan_out)<br>std = &radic;(2/(fan_in+fan_out))<br>for tanh · sigmoid (slope &asymp; 1 near 0)</div>`, code:"# Xavier / Glorot: balance forward AND backward variance\nstd   = sqrt(2 / (fan_in + fan_out))    # normal variant\nlimit = sqrt(6 / (fan_in + fan_out))    # uniform variant\nW = np.random.randn(fan_out, fan_in) * std\n# assumes activation is ~linear near 0 -> tanh, sigmoid" },
+ { title:"6. He / Kaiming (ReLU)", why:"ReLU breaks Xavier's assumption: it sets every negative pre-activation to 0, so on average it passes only half the variance forward. He, Zhang, Ren and Sun (2015) accounted for this by doubling the forward term: Var(w) = 2/fan_in. That factor of 2 is the entire difference from Xavier's forward case, and it is what keeps a deep ReLU network (or GELU, ELU with the right gain) from slowly vanishing. He init is the default for essentially every modern ReLU-family convolutional and feed-forward net.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">ReLU zeroes negatives &rarr; halves the variance<br>compensate: Var(w) = 2 / fan_in<br>std = &radic;(2 / fan_in)<br>the &times;2 is the whole difference from Xavier</div>`, code:"# He / Kaiming: ReLU throws away ~half the variance,\n# so DOUBLE the forward term to pay it back:\nstd   = sqrt(2 / fan_in)     # normal variant\nlimit = sqrt(6 / fan_in)     # uniform variant\nW = np.random.randn(fan_out, fan_in) * std\n# default for ReLU / GELU / ELU networks" },
+ { title:"7. Uniform vs normal variants", why:"Both Xavier and He come in a normal form and a uniform form, and they are interchangeable — they only differ in the shape of the distribution, not its variance. The normal form draws from N(0, std²). The uniform form draws from U(−limit, limit); since a uniform on (−a, a) has variance a²/3, you set limit = √3·std, which is why Xavier-uniform uses √(6/(fan_in+fan_out)) and He-uniform uses √(6/fan_in). Pick whichever your framework defaults to; the variance is what matters.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">normal: w ~ N(0, std&sup2;)<br>uniform: w ~ U(&minus;limit, +limit)<br>U(&minus;a,a) has Var = a&sup2;/3 &rarr; limit = &radic;3 &middot; std<br>same variance, different shape &mdash; both fine</div>`, code:"# same variance, two shapes:\n# normal :  w ~ N(0, std**2)\n# uniform:  w ~ U(-limit, +limit),  limit = sqrt(3) * std\n# so Xavier-uniform: limit = sqrt(6/(fan_in+fan_out))\n#    He-uniform    : limit = sqrt(6/fan_in)" },
+ { title:"8. Bias initialization", why:"Biases are simpler: initialise them to 0. The weights already break symmetry, so there is no symmetry argument forcing biases to be random, and a zero bias keeps each unit centred at the mean of its inputs. The exceptions are minor and deliberate — for example a small positive bias (like 0.01) is sometimes used with ReLU to keep units active early, and LSTM forget gates are often biased to 1 — but for the vast majority of layers, zero is the correct and standard choice.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">bias = 0 (the standard default)<br>weights already break symmetry<br>rare exceptions: small +bias for ReLU<br>LSTM forget-gate bias &asymp; 1</div>`, code:"# biases: zero is the standard default\nnn.init.zeros_(layer.bias)\n# weights already break symmetry, so no need to randomise bias\n# exceptions (deliberate):\n#   small +0.01 bias for ReLU (keep units active early)\n#   LSTM forget-gate bias = 1" },
+ { title:"9. Interaction with BatchNorm / LayerNorm", why:"Normalization layers (Days 19 and 27) re-standardise activations at every layer, so they largely erase the scale drift that init controls — a net with BatchNorm or LayerNorm is far less sensitive to how its weights were initialised. But 'less sensitive' is not 'immune': the very first optimisation steps, any sub-block without a norm, and very deep residual stacks still depend on sane init. Modern deep nets combine good init with tricks like scaling each residual branch down by 1/√(2L). Init and normalization are complementary, not substitutes.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">Norm re-centers activations each layer<br>&rarr; reduces sensitivity to init<br>but NOT immunity: first steps, no-norm blocks,<br>very deep residuals still need good init</div>`, code:"# normalization softens init sensitivity, does not remove it\nln = nn.LayerNorm(d); nn.init.ones_(ln.weight); nn.init.zeros_(ln.bias)\n# very deep residual nets scale the branch down on TOP of He:\n#   out = x + (1/sqrt(2*num_layers)) * sublayer(x)\n# init + norm are complementary" },
+ { title:"10. Modern defaults & how to choose", why:"In practice: use He (kaiming) for ReLU/GELU-family networks and Xavier (glorot) for tanh/sigmoid layers and attention projections; set biases to 0; and let calculate_gain adjust the scale for the exact nonlinearity. PyTorch's own nn.Linear default is a kaiming-uniform variant, which is a reasonable middle ground but often worth overriding to match your activation. The mental model is simple and portable: pick the scale that keeps the activation (and gradient) variance ~constant with depth, then get out of the way and let training do its job.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">ReLU / GELU &rarr; He (kaiming)<br>tanh / sigmoid / attention &rarr; Xavier<br>bias &rarr; 0 · gain &rarr; calculate_gain<br>keep Var(activations) &asymp; const with depth</div>`, code:"# rule of thumb\n# ReLU / GELU:      nn.init.kaiming_normal_(w, nonlinearity='relu')\n# tanh / sigmoid:   nn.init.xavier_normal_(w)\n# attention proj:   xavier is a good default\n# bias:             nn.init.zeros_(b)\n# gain:             nn.init.calculate_gain('tanh')  # per-activation scale" }
+];
+</script>
+
+<script>
+const stepsEl=document.getElementById("steps");
+const prevB=document.getElementById("prev"), nextB=document.getElementById("next-btn"), autoB=document.getElementById("auto");
+let curS=0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },4200); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>
