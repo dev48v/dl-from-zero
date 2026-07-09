@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 29 — Positional Encoding</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  #cv { background:#fff; border:2px solid #0f172a; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,.12); cursor:crosshair; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  table.res { width:100%; border-collapse:collapse; font-size:12px; }
+  table.res th, table.res td { padding:5px 8px; text-align:left; border-bottom:1px solid #e2e8f0; }
+  table.res th { color:#64748b; font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:.04em; }
+  table.res td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.win { background:#fff1f2; }
+  .tokbtn { border:2px solid #e2e8f0; }
+  .tokbtn.on { border-color:#f43f5e; background:#fff1f2; color:#be123c; }
+  .vcell { display:inline-block; width:16px; height:22px; border:1px solid rgba(15,23,42,.08); }
+  input[type=range]{ accent-color:#f43f5e; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 29</div>
+      <h1 class="text-xl font-bold">&#128208; Positional Encoding — attention reads every token at once, so order has to be injected by hand</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">A Transformer sees a bag of tokens, not a sequence. Position is something you add.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto">Self-attention is <strong>permutation-invariant</strong> — shuffle the tokens and the outputs just shuffle with them, so the model cannot tell token&nbsp;1 from token&nbsp;100. The original Transformer fixes this by <strong>adding</strong> a fixed <strong>positional-encoding</strong> vector to every token embedding. Below is the <strong>real</strong> sinusoidal encoding: <code>PE(pos,2i)=sin(pos/10000<sup>2i/d</sup>)</code> and <code>PE(pos,2i+1)=cos(pos/10000<sup>2i/d</sup>)</code>. The left panel is the classic <span class="text-rose-600 font-bold">position × dimension heatmap</span> — its signature vertical stripes come from a <em>geometric ladder of frequencies</em>: low dimensions oscillate fast, high dimensions barely move. <strong>Click any row</strong> to read that position's encoding vector and its per-dimension formula. The right panel is the payoff: the <span class="text-rose-600 font-bold">similarity between two positions depends only on their offset</span> (it peaks at 0 and decays with distance), which is exactly why attention can learn relative position. Toggle <strong>Learned</strong> and <strong>RoPE</strong> to compare the alternatives.</p>
+
+      <div class="flex justify-center gap-3 mb-3 flex-wrap items-center">
+        <span class="text-sm text-slate-600 self-center">method:</span>
+        <div id="methodPick" class="flex gap-1 flex-wrap justify-center">
+          <button data-m="sinusoidal" class="tokbtn on px-3 py-1.5 rounded-lg font-bold text-sm">Sinusoidal</button>
+          <button data-m="learned"    class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">Learned (note)</button>
+          <button data-m="rope"       class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">RoPE (note)</button>
+        </div>
+      </div>
+
+      <div class="flex justify-center gap-6 mb-4 flex-wrap items-center">
+        <span class="text-sm text-slate-600 self-center">model dim&nbsp;d:</span>
+        <div id="dimPick" class="flex gap-1">
+          <button data-d="8"  class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">8</button>
+          <button data-d="16" class="tokbtn on px-3 py-1.5 rounded-lg font-bold text-sm">16</button>
+          <button data-d="32" class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">32</button>
+          <button data-d="64" class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">64</button>
+        </div>
+        <span class="text-sm text-slate-600 self-center ml-2">sequence length:</span>
+        <input id="seqSlider" type="range" min="8" max="64" step="1" value="32" class="w-40 align-middle">
+        <span id="seqVal" class="stat text-sm font-bold text-rose-600 w-8 text-left">32</span>
+      </div>
+
+      <div style="overflow:auto" class="bg-white rounded-xl border border-slate-200 p-2 mb-3">
+        <canvas id="cv" width="900" height="470" class="mx-auto"></canvas>
+      </div>
+      <p class="text-xs text-slate-400 mb-4">Left: the <strong>position × dimension</strong> heatmap — <span style="color:#e11d48;font-weight:700">rose</span> = +1, <span style="color:#4f46e5;font-weight:700">indigo</span> = &minus;1, white = 0. Columns on the left flip fast (short wavelength), columns on the right change slowly (long wavelength). The <strong>highlighted row</strong> is the position you clicked. Right: <strong>cosine similarity vs offset</strong> between the selected position and every other — for sinusoidal/RoPE it depends purely on distance and peaks at offset 0.</p>
+
+      <div class="grid lg:grid-cols-2 gap-4 items-start text-left">
+        <div class="bg-white rounded-xl border border-rose-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">Selected position &mdash; its encoding vector</div>
+          <div id="selHead" class="text-sm text-slate-700 mb-2">Click a row in the heatmap to inspect that position.</div>
+          <div id="vecStrip" class="mb-3 whitespace-nowrap" style="overflow-x:auto"></div>
+          <div class="bg-slate-900 text-slate-100 rounded-lg p-3 text-xs font-mono mb-3" id="selFormula"></div>
+          <table class="res"><thead><tr><th>pair i</th><th>dims</th><th class="num">ω&#7522; = 10000<sup>&minus;2i/d</sup></th><th class="num">sin(pos·ω)</th><th class="num">cos(pos·ω)</th></tr></thead><tbody id="selExamples"></tbody></table>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">Three ways to tell the model where a token is</div>
+          <table class="res">
+            <thead><tr><th>method</th><th>how</th><th>extrapolates?</th><th>params</th></tr></thead>
+            <tbody>
+              <tr id="rowSin"><td class="font-semibold">Sinusoidal</td><td>add fixed sin/cos vector</td><td>yes (any length)</td><td>0</td></tr>
+              <tr id="rowLearn"><td class="font-semibold">Learned</td><td>trainable table per position</td><td>no (capped at max_len)</td><td>max_len·d</td></tr>
+              <tr id="rowRope"><td class="font-semibold">RoPE (rotary)</td><td>rotate Q/K by pos·ω</td><td>yes, best in practice</td><td>0</td></tr>
+            </tbody>
+          </table>
+          <div id="methodNote" class="text-sm text-slate-700 mt-3 min-h-[64px]"></div>
+          <div class="mt-3 grid grid-cols-3 gap-2 text-center">
+            <div class="bg-slate-50 rounded-lg p-2"><div class="text-[10px] uppercase font-bold text-slate-400">sim @ offset 0</div><div id="sim0Stat" class="stat text-base font-bold text-slate-700">&mdash;</div></div>
+            <div class="bg-slate-50 rounded-lg p-2"><div class="text-[10px] uppercase font-bold text-slate-400">sim @ offset&nbsp;+1</div><div id="sim1Stat" class="stat text-base font-bold text-slate-700">&mdash;</div></div>
+            <div class="bg-rose-50 rounded-lg p-2"><div class="text-[10px] uppercase font-bold text-rose-400">depends on</div><div id="depStat" class="stat text-base font-bold text-rose-600">&mdash;</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">From "attention is order-blind" to rotary embeddings</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">You just saw that self-attention is permutation-blind, that a fixed sinusoidal vector added to each token fixes it, and that the dot product of two encodings depends only on their offset. Here it is in code: prove attention ignores order, build the sinusoidal table from the raw formula, add it to embeddings, verify the relative-offset property, then swap in a learned table and finally RoPE — the rotary scheme almost every modern LLM now uses.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Prove it: attention is permutation-invariant</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Run plain self-attention on a sequence, then on a shuffled copy. The outputs come back in the <em>same shuffled order</em>, value-for-value — no positional information survives. That is the entire problem positional encoding exists to solve.</p>
+        <div class="relative"><pre>import numpy as np
+np.random.seed(0)
+
+def attention(X):                      # X: (seq, d)  — no position info
+    Q = K = V = X
+    A = Q @ K.T / np.sqrt(X.shape[1])
+    A = np.exp(A - A.max(1, keepdims=True)); A /= A.sum(1, keepdims=True)
+    return A @ V
+
+X = np.random.randn(4, 8)
+perm = [2, 0, 3, 1]
+out_a = attention(X)[perm]             # attend, then permute
+out_b = attention(X[perm])             # permute, then attend
+print(np.allclose(out_a, out_b))       # True -> attention is order-blind</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">The sinusoidal table from the raw formula</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Even dimensions get a sine, odd dimensions a cosine, at a frequency <code>ω&#7522; = 10000<sup>&minus;2i/d</sup></code>. As <code>i</code> grows the wavelength grows geometrically, from <code>2&pi;</code> up to <code>~10000&middot;2&pi;</code> — the frequency ladder you see as stripes in the heatmap.</p>
+        <div class="relative"><pre>import numpy as np
+
+def sinusoidal_pe(seq_len, d):
+    pos = np.arange(seq_len)[:, None]              # (seq, 1)
+    i   = np.arange(d // 2)[None, :]               # (1, d/2)
+    omega = 10000.0 ** (-(2 * i) / d)              # geometric frequency ladder
+    pe = np.zeros((seq_len, d))
+    pe[:, 0::2] = np.sin(pos * omega)              # even dims -> sin
+    pe[:, 1::2] = np.cos(pos * omega)              # odd  dims -> cos
+    return pe
+
+PE = sinusoidal_pe(32, 16)
+print(PE[0])          # position 0: sin=0, cos=1  -> [0,1,0,1,...]
+# low dims (small i) oscillate fast; high dims (large i) barely move</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Add it to the token embeddings</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Positional encoding is <em>added</em> (not concatenated) to the token embeddings before the first attention layer, so the width <code>d</code> stays the same and the network learns to blend content and position. Now two identical tokens at different positions have different inputs.</p>
+        <div class="relative"><pre>import numpy as np
+
+vocab, d, seq_len = 1000, 16, 32
+token_embed = np.random.randn(vocab, d) * 0.1     # learned lookup table
+PE = sinusoidal_pe(seq_len, d)                    # from step 2
+
+tokens = np.array([5, 42, 42, 7])                 # note: token 42 twice
+x = token_embed[tokens] + PE[:len(tokens)]        # add position in-place
+# the two 42s are now DIFFERENT vectors: content is shared, position is not
+print(np.allclose(x[1], x[2]))                    # False</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Verify the relative-offset property</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The dot product of two sinusoidal encodings is <code>&sum;&#7522; cos((pos&minus;pos')&middot;&omega;&#7522;)</code> — a function of the <strong>offset only</strong>. So the similarity between positions 3&amp;5 equals that of 30&amp;32. This is the similarity-vs-offset curve in the demo, and the reason attention can learn "look k tokens back".</p>
+        <div class="relative"><pre>import numpy as np
+PE = sinusoidal_pe(64, 16)
+
+def sim(a, b):                                     # cosine similarity
+    return PE[a] @ PE[b] / (np.linalg.norm(PE[a]) * np.linalg.norm(PE[b]))
+
+print(round(sim(3, 5),  6))    # offset 2
+print(round(sim(30, 32),6))    # offset 2 -> SAME value (depends on offset only)
+print(round(sim(10, 10),6))    # offset 0 -> 1.0 (peak)
+# PE(pos+k) is a fixed linear (rotation) function of PE(pos)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Learned positional embeddings (BERT / GPT-2)</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Skip the formula and just make position a trainable lookup table. Simple and often slightly better in-distribution, but it has a hard cap at <code>max_len</code> and cannot extrapolate to longer sequences — the row for position 5000 was never trained.</p>
+        <div class="relative"><pre>import torch, torch.nn as nn
+
+class LearnedPE(nn.Module):
+    def __init__(self, max_len, d):
+        super().__init__()
+        self.pos = nn.Embedding(max_len, d)        # trainable, one row per position
+    def forward(self, x):                          # x: (batch, seq, d)
+        idx = torch.arange(x.size(1), device=x.device)
+        return x + self.pos(idx)                   # add, like sinusoidal
+
+# tradeoff: adapts to the task, but hard-capped at max_len (no extrapolation)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">RoPE — rotate Q and K (the modern default)</h3></div>
+        <p class="text-sm text-slate-600 mb-3">RoPE (LLaMA, GPT-NeoX, PaLM) adds <em>nothing</em> to the embeddings. It rotates each query and key by an angle <code>pos&middot;&omega;&#7522;</code> on every 2-D sub-pair, right before the dot product. Because a dot of two rotated vectors depends only on the difference of angles, the attention score becomes an explicit function of the relative offset — parameter-free and better at extrapolation.</p>
+        <div class="relative"><pre>import numpy as np
+
+def rope(x, pos):                        # x: (d,) with d even
+    d = x.shape[0]
+    i = np.arange(d // 2)
+    theta = pos * (10000.0 ** (-(2 * i) / d))     # angle per 2-D pair
+    x1, x2 = x[0::2], x[1::2]
+    xr = np.empty_like(x)
+    xr[0::2] = x1 * np.cos(theta) - x2 * np.sin(theta)   # rotate each pair
+    xr[1::2] = x1 * np.sin(theta) + x2 * np.cos(theta)
+    return xr
+
+q = np.random.randn(8); k = np.random.randn(8)
+# score(rope(q,m), rope(k,n)) depends on (m - n): relative position, for free
+print(rope(q, 3) @ rope(k, 5))           # == rope(q,30) @ rope(k,32)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 29 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">Self-attention is <strong>permutation-invariant</strong>, so a Transformer has no built-in sense of order — you must inject it. The original fix <strong>adds</strong> a fixed <strong>sinusoidal</strong> vector to each token embedding: even dims are <code>sin(pos/10000<sup>2i/d</sup>)</code>, odd dims <code>cos(&middot;)</code>, forming a geometric <em>frequency ladder</em> (fast low dims, slow high dims — the heatmap stripes). Sinusoids are bounded, unique per position, and extend to any length, and their dot product depends only on the <strong>offset</strong>, so <code>PE(pos+k)</code> is a fixed linear function of <code>PE(pos)</code> — attention gets relative position for free. <strong>Learned</strong> tables adapt but cannot extrapolate past <code>max_len</code>; <strong>RoPE</strong> rotates Q/K by <code>pos&middot;&omega;</code> and has become the default in modern LLMs. The arc runs from absolute added vectors toward relative offsets baked into the attention score. <strong>&#128073; Tomorrow, Day 30:</strong> Multi-Head Attention — one attention is a single viewpoint; run h of them in parallel on different subspaces and concatenate, and the model reads several relationships at once.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+
+// ============================================================
+// REAL sinusoidal positional encoding.
+//   PE(pos, 2i)   = sin(pos / 10000^(2i/d))
+//   PE(pos, 2i+1) = cos(pos / 10000^(2i/d))
+//   omega_i = 10000^(-2i/d)  -> geometric frequency ladder:
+//     i = 0        -> omega = 1        (fastest, wavelength 2*pi)
+//     i = d/2 - 1  -> omega ~ 1/10000  (slowest)
+//   The dot product PE(a)·PE(b) = sum_i cos((a-b)*omega_i),
+//   which depends ONLY on the offset (a-b) -> relative position.
+//   Learned PE = a seeded-random trainable table (no structure).
+//   RoPE reuses the SAME frequencies as rotation angles on Q/K;
+//   its relative-offset similarity matches the sinusoidal curve.
+// ============================================================
+function omega(i, d){ return Math.pow(10000, -(2 * i) / d); }
+
+function peVector(pos, d){
+  const v = new Array(d).fill(0);
+  const half = Math.floor(d / 2);
+  for(let i = 0; i < half; i++){
+    const ang = pos * omega(i, d);
+    v[2 * i]     = Math.sin(ang);
+    v[2 * i + 1] = Math.cos(ang);
+  }
+  return v;
+}
+
+// deterministic PRNG so the learned-table demo + Node checks match exactly
+function mulberry32(a){ return function(){ a|=0; a=(a+0x6D2B79F5)|0; let t=Math.imul(a^(a>>>15),1|a); t=(t+Math.imul(t^(t>>>7),61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; }; }
+function buildLearned(seqLen, d, seed){ const r = mulberry32(seed); const M = []; for(let p=0;p<seqLen;p++){ const row=[]; for(let k=0;k<d;k++) row.push(r()*2-1); M.push(row); } return M; }
+
+const dot   = (a,b) => { let s=0; for(let i=0;i<a.length;i++) s+=a[i]*b[i]; return s; };
+const norm  = a => Math.sqrt(dot(a,a));
+const cosSim = (a,b) => { const na=norm(a), nb=norm(b); return (na===0||nb===0) ? 0 : dot(a,b)/(na*nb); };
+
+let state = { method:"sinusoidal", d:16, seqLen:32, sel:4, learned:null };
+function rebuildLearned(){ state.learned = buildLearned(state.seqLen, state.d, 12345); }
+function vecFor(p){ return state.method==="learned" ? state.learned[p] : peVector(p, state.d); }
+rebuildLearned();
+</script>
+
+<script>
+const cv=document.getElementById("cv"), c2=cv.getContext("2d");
+const HMX0=64, HMX1=560, HMY0=80, HMY1=432;      // heatmap: positions (rows) x dims (cols)
+const SMX0=636, SMX1=884, SMY0=104, SMY1=372;    // similarity-vs-offset chart
+
+function heatColor(v){
+  if(v>=0){ const t=Math.min(1,v); return `rgb(${Math.round(255+(244-255)*t)},${Math.round(255+(63-255)*t)},${Math.round(255+(94-255)*t)})`; }
+  const t=Math.min(1,-v); return `rgb(${Math.round(255+(79-255)*t)},${Math.round(255+(70-255)*t)},${Math.round(255+(229-255)*t)})`;
+}
+
+function drawHeatmap(){
+  const d=state.d, sl=state.seqLen;
+  const cw=(HMX1-HMX0)/d, ch=(HMY1-HMY0)/sl;
+  for(let p=0;p<sl;p++){
+    const v=vecFor(p);
+    for(let k=0;k<d;k++){
+      c2.fillStyle=heatColor(v[k]);
+      c2.fillRect(HMX0+k*cw, HMY0+p*ch, Math.ceil(cw), Math.ceil(ch));
+    }
+  }
+  // selected row highlight
+  c2.strokeStyle="#0f172a"; c2.lineWidth=2;
+  c2.strokeRect(HMX0-1, HMY0+state.sel*ch-1, (HMX1-HMX0)+2, ch+2);
+  c2.fillStyle="#0f172a"; c2.font="bold 10px sans-serif"; c2.textAlign="right"; c2.textBaseline="middle";
+  c2.fillText("p="+state.sel, HMX0-6, HMY0+state.sel*ch+ch/2);
+  // frame
+  c2.strokeStyle="#e2e8f0"; c2.lineWidth=1; c2.strokeRect(HMX0,HMY0,HMX1-HMX0,HMY1-HMY0);
+  // axis labels
+  c2.fillStyle="#64748b"; c2.font="10px sans-serif"; c2.textAlign="center"; c2.textBaseline="top";
+  c2.fillText("dimension  0 .. "+(d-1)+"   (fast  →  slow)", (HMX0+HMX1)/2, HMY1+6);
+  c2.save(); c2.translate(HMX0-40, (HMY0+HMY1)/2); c2.rotate(-Math.PI/2);
+  c2.textAlign="center"; c2.textBaseline="bottom"; c2.fillText("position  0 .. "+(sl-1), 0, 0); c2.restore();
+}
+
+function drawSim(){
+  const sl=state.seqLen, cx=(SMX0+SMX1)/2, hw=(SMX1-SMX0)/2, dom=Math.max(1,sl-1);
+  const xOff = off => cx + (off/dom)*hw;
+  const ySim = s   => SMY1 - (s+1)/2*(SMY1-SMY0);
+  // frame + gridlines
+  c2.strokeStyle="#e2e8f0"; c2.lineWidth=1; c2.strokeRect(SMX0,SMY0,SMX1-SMX0,SMY1-SMY0);
+  c2.textAlign="right"; c2.textBaseline="middle"; c2.font="9px monospace"; c2.fillStyle="#94a3b8";
+  [1,0,-1].forEach(s=>{ const y=ySim(s); c2.strokeStyle= s===0?"#cbd5e1":"#eef2f6"; c2.setLineDash(s===0?[4,3]:[]); c2.beginPath(); c2.moveTo(SMX0,y); c2.lineTo(SMX1,y); c2.stroke(); c2.setLineDash([]); c2.fillText(s.toFixed(0), SMX0-4, y); });
+  // offset 0 vertical
+  c2.strokeStyle="#fca5a5"; c2.setLineDash([3,3]); c2.beginPath(); c2.moveTo(xOff(0),SMY0); c2.lineTo(xOff(0),SMY1); c2.stroke(); c2.setLineDash([]);
+  // curve
+  const v0=vecFor(state.sel);
+  c2.strokeStyle="#f43f5e"; c2.lineWidth=2.4; c2.beginPath(); let first=true;
+  for(let p=0;p<sl;p++){ const off=p-state.sel, x=xOff(off), y=ySim(cosSim(v0,vecFor(p))); first?(c2.moveTo(x,y),first=false):c2.lineTo(x,y); }
+  c2.stroke();
+  for(let p=0;p<sl;p++){ const off=p-state.sel; c2.fillStyle=(off===0)?"#0f172a":"#e11d48"; c2.beginPath(); c2.arc(xOff(off),ySim(cosSim(v0,vecFor(p))),(off===0)?4:2.4,0,7); c2.fill(); }
+  // labels
+  c2.fillStyle="#64748b"; c2.font="10px sans-serif"; c2.textAlign="center"; c2.textBaseline="top";
+  c2.fillText("offset  (position − "+state.sel+")", (SMX0+SMX1)/2, SMY1+6);
+  c2.textBaseline="bottom"; c2.fillText("← "+(-Math.min(state.sel,dom)), SMX0+2, SMY0-2); c2.textAlign="right"; c2.fillText(""+(sl-1-state.sel)+" →", SMX1-2, SMY0-2);
+}
+
+function draw(){
+  c2.clearRect(0,0,cv.width,cv.height);
+  const names={sinusoidal:"Sinusoidal PE",learned:"Learned PE (illustrative)",rope:"RoPE — sinusoidal frequencies as rotations"};
+  c2.textAlign="left"; c2.textBaseline="alphabetic";
+  c2.font="bold 13px sans-serif"; c2.fillStyle="#0f172a";
+  c2.fillText(names[state.method]+"  ·  d = "+state.d+"  ·  seq = "+state.seqLen, 20, 28);
+  c2.font="11px sans-serif"; c2.fillStyle="#94a3b8";
+  c2.fillText(state.method==="learned" ? "trainable table — no closed form, no offset structure" : "PE(pos,2i)=sin(pos/10000^(2i/d)),  PE(pos,2i+1)=cos(...)", 20, 46);
+  c2.font="bold 11px sans-serif"; c2.fillStyle="#be123c"; c2.textAlign="left";
+  c2.fillText("cosine similarity vs offset", SMX0, 70);
+  c2.font="9px sans-serif"; c2.fillStyle="#94a3b8"; c2.fillText("(click a heatmap row to move the reference)", SMX0, 84);
+  drawHeatmap();
+  drawSim();
+  updateInfo();
+}
+</script>
+
+<script>
+function fmt(v){ const a=Math.abs(v); if(a===0) return "0"; if(a>=1e4||a<1e-3) return v.toExponential(1); return v.toFixed(3); }
+
+function updateInfo(){
+  const p=state.sel, d=state.d, v=vecFor(p), half=Math.floor(d/2);
+  document.getElementById("selHead").innerHTML = state.method==="learned"
+    ? "<strong>Position "+p+"</strong> — a learned table has no formula; these values are arbitrary trainable parameters (shown seeded-random for illustration)."
+    : "<strong>Position "+p+"</strong> — encoded as "+d+" numbers, one sin/cos per frequency in the ladder.";
+
+  // colored strip of this position's vector
+  let strip=""; for(let k=0;k<d;k++){ strip += `<span class="vcell" style="background:${heatColor(v[k])}" title="dim ${k} = ${v[k].toFixed(3)}"></span>`; }
+  document.getElementById("vecStrip").innerHTML = strip;
+
+  // formula box
+  const fb=document.getElementById("selFormula");
+  if(state.method==="learned"){ fb.textContent = "PE[pos] = Embedding(pos)   # trainable, learned by backprop"; }
+  else if(state.method==="rope"){ fb.textContent = "RoPE: rotate (x[2i], x[2i+1]) by angle pos·ωᵢ\n      ωᵢ = 10000^(-2i/d)   # same ladder, applied to Q/K"; }
+  else { fb.textContent = "PE(pos,2i)   = sin(pos / 10000^(2i/d))\nPE(pos,2i+1) = cos(pos / 10000^(2i/d))\npos = "+p; }
+
+  // per-pair numeric examples
+  const tb=document.getElementById("selExamples"); tb.innerHTML="";
+  const rows=Math.min(half,5);
+  for(let i=0;i<rows;i++){ const w=omega(i,d), ang=p*w; const win=(i===0)?" class='win'":"";
+    tb.insertAdjacentHTML("beforeend", `<tr${win}><td>${i}</td><td>${2*i},${2*i+1}</td><td class="num">${fmt(w)}</td><td class="num">${Math.sin(ang).toFixed(3)}</td><td class="num">${Math.cos(ang).toFixed(3)}</td></tr>`); }
+  if(half>rows) tb.insertAdjacentHTML("beforeend", `<tr><td colspan="5" class="text-slate-400" style="text-align:center">… ${half-rows} slower pairs (higher dims change ever more slowly)</td></tr>`);
+
+  // similarity stats
+  const s0=cosSim(v, vecFor(p)), pn=(p+1<state.seqLen)?(p+1):(p-1), s1=cosSim(v, vecFor(pn));
+  document.getElementById("sim0Stat").textContent=fmt(s0);
+  document.getElementById("sim1Stat").textContent=fmt(s1);
+  document.getElementById("depStat").textContent = state.method==="learned" ? "abs. position" : "offset only";
+
+  // method note + row highlight
+  ["rowSin","rowLearn","rowRope"].forEach(id=>document.getElementById(id).classList.remove("win"));
+  const note=document.getElementById("methodNote"); let msg="";
+  if(state.method==="sinusoidal"){ document.getElementById("rowSin").classList.add("win");
+    msg="<strong>Sinusoidal (Vaswani et al., 2017).</strong> A parameter-free formula. Bounded in [−1,1], unique per position, and defined for any real <code>pos</code>, so it extends to sequences longer than training. The similarity curve on the right depends only on the offset — that is the relative-position signal attention exploits."; }
+  else if(state.method==="learned"){ document.getElementById("rowLearn").classList.add("win");
+    msg="<strong>Learned (BERT, GPT-2).</strong> Replace the formula with a trainable <code>nn.Embedding(max_len, d)</code>. Flexible and often slightly better in-distribution, but the heatmap has <em>no structure</em> and the similarity is noisy — it encodes <em>absolute</em> position and is hard-capped at <code>max_len</code>, so it cannot extrapolate."; }
+  else { document.getElementById("rowRope").classList.add("win");
+    msg="<strong>RoPE (rotary — LLaMA, PaLM, most modern LLMs).</strong> Adds nothing; it <em>rotates</em> each query/key pair by <code>pos·ωᵢ</code> before the dot product. A dot of two rotated vectors depends only on the angle difference, so the score is an explicit function of the relative offset — the same clean curve on the right, but parameter-free and better at extrapolation."; }
+  note.innerHTML=msg;
+}
+</script>
+
+<script>
+document.querySelectorAll("#methodPick button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("#methodPick button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); state.method=b.dataset.m; draw(); });
+document.querySelectorAll("#dimPick button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("#dimPick button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); state.d=+b.dataset.d; rebuildLearned(); draw(); });
+const seqSlider=document.getElementById("seqSlider");
+seqSlider.oninput=()=>{ state.seqLen=+seqSlider.value; document.getElementById("seqVal").textContent=state.seqLen; if(state.sel>=state.seqLen) state.sel=state.seqLen-1; rebuildLearned(); draw(); };
+cv.onclick=e=>{ const r=cv.getBoundingClientRect(); const mx=(e.clientX-r.left)*(cv.width/r.width), my=(e.clientY-r.top)*(cv.height/r.height);
+  if(mx<HMX0||mx>HMX1||my<HMY0||my>HMY1) return;
+  const ch=(HMY1-HMY0)/state.seqLen; let row=Math.floor((my-HMY0)/ch); state.sel=Math.max(0,Math.min(state.seqLen-1,row)); draw(); };
+draw();
+</script>
+
+<script>
+const STEPS = [
+ { title:"1. Attention is permutation-invariant", why:"Self-attention builds each token's output as a weighted sum over all tokens, and the weights come purely from query·key dot products of the token contents. Nothing in that math refers to where a token sits. Permute the input tokens and the outputs come back in exactly the same permuted order, value for value — so \"the cat sat\" and \"sat the cat\" produce the same set of representations. RNNs got word order for free by stepping through the sequence one token at a time; attention throws that away to gain parallelism, so order must be supplied explicitly. That single fact is the reason positional encoding exists.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">out = softmax(QK&#7451;/&radic;d) &middot; V<br>weights depend on CONTENT only, not index<br>permute inputs &rarr; outputs just permute too<br>&rArr; the model cannot tell token 1 from token 100</div>`, code:"# attention on X vs a shuffled X -> same outputs, reordered\nout_a = attention(X)[perm]     # attend, then permute\nout_b = attention(X[perm])     # permute, then attend\nassert np.allclose(out_a, out_b)   # order-blind" },
+ { title:"2. Add a position vector to each token", why:"The fix is to give every position its own vector and add it to the token embedding before the first attention layer: x = TokenEmbed(token) + PE(pos). Now two copies of the same word at different positions have different input vectors, so attention can react to where things are. Addition is chosen over concatenation so the model width d is unchanged and the network is free to blend content and position in whatever proportion it learns. This is the original Transformer recipe; everything else on this page is about how to choose PE(pos).", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">x = TokenEmbed(token) + PE(pos)<br>same token, different pos &rarr; different vector<br>ADD (not concat): width stays d<br>done once, before layer 1</div>`, code:"x = token_embed[tokens] + PE[:len(tokens)]\n# identical tokens at different positions now differ:\n#   x[i] != x[j]  even if tokens[i] == tokens[j]" },
+ { title:"3. The sinusoidal formula & frequency ladder", why:"The Transformer defines PE(pos,2i)=sin(pos/10000^(2i/d)) and PE(pos,2i+1)=cos(pos/10000^(2i/d)). Each consecutive pair of dimensions (2i,2i+1) is a sine and cosine at one frequency ω_i = 10000^(-2i/d). As i climbs from 0 to d/2, the wavelength grows geometrically from 2π up to roughly 10000·2π — a ladder from very fast to very slow oscillation. Dimension 0 flips sign every couple of positions; the highest dimension barely changes across the whole sequence. The base 10000 sets how wide that span of wavelengths is.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">&omega;&#7522; = 10000^(&minus;2i/d)<br>PE(pos,2i)=sin(pos&middot;&omega;&#7522;) &nbsp; PE(pos,2i+1)=cos(pos&middot;&omega;&#7522;)<br>i=0 &rarr; fast (&lambda;=2&pi;) &nbsp;·&nbsp; i=d/2 &rarr; slow (&lambda;&asymp;10000&middot;2&pi;)<br>a geometric ladder of frequencies</div>`, code:"i = np.arange(d//2)\nomega = 10000.0 ** (-(2*i)/d)   # frequency ladder\npe[:, 0::2] = np.sin(pos * omega)   # even dims\npe[:, 1::2] = np.cos(pos * omega)   # odd  dims" },
+ { title:"4. Why sinusoids (four reasons)", why:"Sinusoids are a deliberate choice, not a hack. (1) They are bounded in [-1,1], so adding them never blows up the embedding no matter how long the sequence. (2) Across the whole frequency ladder every position gets a unique fingerprint — like a continuous analogue of a binary counter, where fast bits and slow bits together name a number. (3) Because sin and cos are defined for any real number, the encoding is defined for positions never seen in training, so the model can (in principle) handle longer sequences. (4) The offset between two positions corresponds to a fixed rotation of each sin/cos pair — a linear relationship independent of absolute position — which is what lets attention reason about relative distance.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">bounded in [&minus;1,1] &rarr; never explodes<br>unique per position (ladder = continuous binary clock)<br>defined for any real pos &rarr; extends to longer seqs<br>offset &rarr; fixed rotation &rarr; relative position</div>`, code:"# 1. bounded:   |sin|, |cos| <= 1\n# 2. unique:    the ladder gives each pos a distinct pattern\n# 3. extends:   sin/cos defined for pos > max training length\n# 4. relative:  PE(pos+k) is a linear (rotation) fn of PE(pos)" },
+ { title:"5. Reading the heatmap", why:"In the position×dimension heatmap, each row is one position's full encoding and each column is one dimension over all positions. Sweep down a low-index column (small i) and the color oscillates rapidly — a short wavelength. Sweep down a high-index column and it changes slowly — a long wavelength. That is why the picture shows fast vertical stripes on the left fading to broad smooth bands on the right: it is the frequency ladder made visible. Reading across a single row gives that one position's unique combination of sin/cos values — its fingerprint.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">row = one position's encoding (its fingerprint)<br>column = one dimension across positions<br>left columns flip FAST · right columns flip SLOW<br>stripes = the geometric frequency ladder</div>`, code:"# down a low-i column  -> rapid sign flips (short wavelength)\n# down a high-i column -> slow drift      (long wavelength)\n# across a row         -> that position's unique fingerprint" },
+ { title:"6. The relative-position property", why:"Here is the property that makes sinusoids special. Shifting position by k rotates each (sin,cos) pair by a fixed angle k·ω_i, and that rotation matrix does not depend on pos — so PE(pos+k) is a fixed linear function of PE(pos). A direct consequence: the dot product PE(pos)·PE(pos') = Σ_i cos((pos−pos')·ω_i) depends only on the offset pos−pos', never on the absolute positions. That is exactly the similarity-vs-offset curve in the demo: it peaks at offset 0 and decays with distance, identically whether you compare positions 3&5 or 300&302. So attention can learn a pattern like \"attend k tokens back\" as one constant relationship.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">PE(pos+k) = R(k) &middot; PE(pos)   (R independent of pos)<br>PE(a)&middot;PE(b) = &sum;&#7522; cos((a&minus;b)&middot;&omega;&#7522;)<br>&rArr; similarity depends on OFFSET only<br>sim(3,5) = sim(300,302)</div>`, code:"def sim(a, b):\n    return PE[a] @ PE[b] / (norm(PE[a]) * norm(PE[b]))\nassert round(sim(3,5),6) == round(sim(30,32),6)   # offset only\n# PE(pos+k) = rotation(k) applied to PE(pos)" },
+ { title:"7. Learned PE vs sinusoidal", why:"Instead of a formula you can make position a trainable table: nn.Embedding(max_len, d), one learned vector per slot, updated by gradient descent (BERT and GPT-2 do exactly this). Learned tables often match or slightly beat sinusoidal on in-distribution data because they can adapt to the task, but they have two costs: they add max_len·d parameters, and they have a hard ceiling at max_len — position 5000 has no row if you only trained to 512, so they cannot extrapolate. Sinusoidal is parameter-free and length-agnostic but fixed. The tradeoff is task-flexibility versus extrapolation and parameter budget.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">learned: nn.Embedding(max_len, d) &mdash; trainable rows<br>+ adapts to task, often better in-distribution<br>&minus; hard cap at max_len (no extrapolation)<br>sinusoidal: fixed, free, any length</div>`, code:"class LearnedPE(nn.Module):\n    def __init__(self, max_len, d):\n        self.pos = nn.Embedding(max_len, d)   # trainable table\n    def forward(self, x):\n        idx = torch.arange(x.size(1))\n        return x + self.pos(idx)   # hard-capped at max_len" },
+ { title:"8. RoPE — rotary embeddings (modern default)", why:"Rotary Position Embedding (RoPE), used by LLaMA, GPT-NeoX, PaLM and most current LLMs, does not add anything to the embeddings. It rotates each query and key vector by an angle proportional to its position — pos·ω_i on every 2-D sub-pair — immediately before the attention dot product. Because the dot product of two rotated vectors depends only on the difference of their rotation angles, the attention score becomes an explicit function of the relative offset (m−n). You get relative-position awareness with zero extra parameters, and it tends to extrapolate to longer contexts far better than absolute schemes — which is why RoPE has largely replaced additive positional encoding.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">rotate q,k by pos&middot;&omega;&#7522; (per 2-D pair) before Q&middot;K<br>&lang;R(m)q, R(n)k&rang; depends on (m&minus;n)<br>&rArr; relative offset baked into the score<br>0 extra params · extrapolates well · today's default</div>`, code:"def rope(x, pos):\n    theta = pos * 10000.0 ** (-(2*np.arange(len(x)//2))/len(x))\n    x1, x2 = x[0::2], x[1::2]\n    xr = np.empty_like(x)\n    xr[0::2] = x1*np.cos(theta) - x2*np.sin(theta)\n    xr[1::2] = x1*np.sin(theta) + x2*np.cos(theta)\n    return xr   # score(rope(q,m),rope(k,n)) ~ f(m-n)" },
+ { title:"9. Absolute vs relative position", why:"Step back and the whole field has one axis. Additive sinusoidal and learned encodings are absolute: they tell the model \"this is token #5\", and attention must work out relative distance from the difference of two absolute vectors. Relative schemes — RoPE, ALiBi (a linear distance penalty on the scores), and T5's learned relative bias — instead inject the offset directly into the attention score, which generalizes better to unseen lengths and is now standard in large models. The through-line for the day: attention needs some position signal, and practice has migrated from adding absolute vectors up front toward encoding relative offsets right where the query meets the key.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">ABSOLUTE: sinusoidal, learned &mdash; \"you are token #5\"<br>RELATIVE: RoPE, ALiBi, T5 bias &mdash; \"you are k apart\"<br>relative generalizes better to new lengths<br>trend: offset injected AT the Q&middot;K score</div>`, code:"# absolute:  x = embed + PE(pos)         (sinusoidal / learned)\n# relative:  score(i,j) += f(i - j)       (RoPE / ALiBi / T5)\n# modern LLMs favour relative -> better length generalization" }
+];
+</script>
+
+<script>
+const stepsEl=document.getElementById("steps");
+const prevB=document.getElementById("prev"), nextB=document.getElementById("next-btn"), autoB=document.getElementById("auto");
+let curS=0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },4200); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>
