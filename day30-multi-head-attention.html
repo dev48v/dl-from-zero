@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 30 — Multi-Head Attention</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  #cv { background:#fff; border:2px solid #0f172a; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,.12); cursor:crosshair; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  table.res { width:100%; border-collapse:collapse; font-size:12px; }
+  table.res th, table.res td { padding:5px 8px; text-align:left; border-bottom:1px solid #e2e8f0; }
+  table.res th { color:#64748b; font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:.04em; }
+  table.res td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.win { background:#fff1f2; }
+  .tokbtn { border:2px solid #e2e8f0; }
+  .tokbtn.on { border-color:#f43f5e; background:#fff1f2; color:#be123c; }
+  .headcard { cursor:pointer; border:2px solid #e2e8f0; border-radius:12px; padding:8px 8px 6px; background:#fff; transition:border-color .15s, background .15s; }
+  .headcard.on { border-color:#f43f5e; background:#fff1f2; }
+  .headcard canvas { display:block; margin:0 auto; image-rendering:pixelated; }
+  input[type=range]{ accent-color:#f43f5e; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 30</div>
+      <h1 class="text-xl font-bold">&#129504; Multi-Head Attention — one attention is a single lens; run <em>h</em> of them in parallel over different subspaces, then concatenate and project</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">One softmax can only look one way at a time. Multi-head attention runs several in parallel.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto">Each token embedding is projected to a <strong>query</strong>, <strong>key</strong> and <strong>value</strong>, then those are <strong>split into <em>h</em> heads</strong> of width <code>d<sub>k</sub>=d/h</code>. Every head runs the <em>real</em> scaled dot-product attention <code>softmax(QK&#7451;/&radic;d<sub>k</sub>)V</code> <strong>in its own subspace</strong>, so different heads can specialise in different relations. Below, the sentence <span class="font-mono text-rose-600">&ldquo;the cat sat on the warm mat .&rdquo;</span> runs through real attention. The heatmaps are computed live from crafted embeddings whose four 2-D feature blocks carry <strong>position, part-of-speech, word-identity</strong> and a <strong>delimiter</strong> signal. Pick <strong>1, 2 or 4 heads</strong>, then <strong>hover a head</strong> to preview its pattern below and <strong>click a row</strong> of the big map to see the exact <code>q&middot;k/&radic;d<sub>k</sub> &rarr; softmax</code> arithmetic for that token.</p>
+
+      <div class="flex justify-center gap-6 mb-4 flex-wrap items-center">
+        <span class="text-sm text-slate-600 self-center">number of heads&nbsp;<em>h</em>:</span>
+        <div id="headPick" class="flex gap-1">
+          <button data-h="1" class="tokbtn px-4 py-1.5 rounded-lg font-bold text-sm">1</button>
+          <button data-h="2" class="tokbtn px-4 py-1.5 rounded-lg font-bold text-sm">2</button>
+          <button data-h="4" class="tokbtn on px-4 py-1.5 rounded-lg font-bold text-sm">4</button>
+        </div>
+        <span class="text-sm text-slate-600 self-center ml-2">so&nbsp; <code>d<sub>k</sub> = d/h =</code> <span id="dkVal" class="stat font-bold text-rose-600">2</span> &nbsp;(<code>d = 8</code>)</span>
+      </div>
+
+      <div id="headRow" class="flex justify-center gap-3 mb-4 flex-wrap"></div>
+      <p class="text-xs text-slate-400 mb-4">Each thumbnail is one head&rsquo;s <strong>n&times;n attention heatmap</strong> — row = the token doing the attending (query), column = the token being attended to (key), <span style="color:#e11d48;font-weight:700">rose</span> intensity = attention weight. Hover one to enlarge it; click to pin it.</p>
+
+      <div class="grid lg:grid-cols-2 gap-4 items-start text-left">
+        <div class="bg-white rounded-xl border border-rose-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">Selected head &mdash; who attends to whom</div>
+          <div id="bigHead" class="text-sm text-slate-700 mb-2">Hover or click a head above.</div>
+          <div style="overflow:auto"><canvas id="cv" width="470" height="430" class="mx-auto"></canvas></div>
+          <div id="cellInfo" class="text-sm text-slate-600 mt-2 min-h-[20px] text-center">Hover a cell for its exact weight; click a row to expand the arithmetic.</div>
+          <div class="mt-3">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">Real scaled dot-product for the picked row</div>
+            <div id="mathHead" class="text-xs text-slate-500 mb-1"></div>
+            <table class="res"><thead><tr><th>key token</th><th class="num">q&middot;k</th><th class="num">&divide;&radic;d&#7524;</th><th class="num">exp</th><th class="num">softmax w</th></tr></thead><tbody id="mathTbl"></tbody></table>
+          </div>
+        </div>
+
+        <div class="space-y-4">
+          <div class="bg-white rounded-xl border border-slate-200 p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">The pipeline</div>
+            <div class="bg-slate-900 text-slate-100 rounded-lg p-3 text-xs font-mono mb-3 leading-relaxed">X&nbsp;(n&times;8) &mdash;&rarr; Q,K,V = X&middot;W<sub>Q</sub>, X&middot;W<sub>K</sub>, X&middot;W<sub>V</sub><br>&nbsp;&nbsp;split cols into h heads of d&#7524;=<span id="pipeDk">2</span><br>&nbsp;&nbsp;head&#7522; : softmax(Q&#7522;K&#7522;&#7451;/&radic;d&#7524;)&middot;V&#7522;<br>concat(head&#8321;..head&#8341;) (n&times;8) &mdash;&rarr; &middot;W<sub>O</sub> (n&times;8)</div>
+            <p class="text-sm text-slate-600 mb-2">The four crafted embedding blocks (2 dims each), so you can read the heads:</p>
+            <table class="res">
+              <thead><tr><th>dims</th><th>block</th><th>encodes</th></tr></thead>
+              <tbody>
+                <tr id="blk0"><td class="font-mono">0&ndash;1</td><td class="font-semibold">position</td><td>point on a circle &rarr; near positions align</td></tr>
+                <tr id="blk1"><td class="font-mono">2&ndash;3</td><td class="font-semibold">syntax</td><td>angle per part-of-speech</td></tr>
+                <tr id="blk2"><td class="font-mono">4&ndash;5</td><td class="font-semibold">content</td><td>angle per unique word</td></tr>
+                <tr id="blk3"><td class="font-mono">6&ndash;7</td><td class="font-semibold">delimiter</td><td>large-magnitude &ldquo;.&rdquo; sink</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="bg-white rounded-xl border border-slate-200 p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">Single head vs multi-head</div>
+            <div id="multiNote" class="text-sm text-slate-700 min-h-[72px]"></div>
+            <div class="mt-3 grid grid-cols-3 gap-2 text-center">
+              <div class="bg-slate-50 rounded-lg p-2"><div class="text-[10px] uppercase font-bold text-slate-400">heads</div><div id="hStat" class="stat text-base font-bold text-slate-700">4</div></div>
+              <div class="bg-slate-50 rounded-lg p-2"><div class="text-[10px] uppercase font-bold text-slate-400">d&#7524; per head</div><div id="dkStat" class="stat text-base font-bold text-slate-700">2</div></div>
+              <div class="bg-rose-50 rounded-lg p-2"><div class="text-[10px] uppercase font-bold text-rose-400">params W<sub>Q,K,V,O</sub></div><div id="pStat" class="stat text-base font-bold text-rose-600">4&times;d&sup2;</div></div>
+            </div>
+            <p class="text-xs text-slate-400 mt-2">Note the parameter count does <strong>not</strong> change with <em>h</em>: h heads of width d/h reshape the <em>same</em> d&times;d projections. More heads, same compute.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">From one attention to <em>h</em> parallel heads</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">You saw that a single attention is one relation lens, and that splitting Q/K/V into <em>h</em> heads lets the model read several relations at once for the same cost. Here it is in code: scaled dot-product attention for one head, the Q/K/V projections, the reshape that splits <code>d</code> into <code>h&times;d<sub>k</sub></code>, all heads attending in parallel, the concat + output projection, and finally the whole thing as a module &mdash; then the one-liner <code>nn.MultiheadAttention</code>, plus the MQA/GQA variants modern LLMs use to shrink the KV-cache.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Scaled dot-product attention (one head)</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The atom everything is built from: score every query against every key with a dot product, divide by <code>&radic;d<sub>k</sub></code>, softmax into weights that sum to 1, and take that weighted average of the values.</p>
+        <div class="relative"><pre>import numpy as np
+
+def softmax(x, axis=-1):
+    x = x - x.max(axis, keepdims=True)
+    e = np.exp(x)
+    return e / e.sum(axis, keepdims=True)
+
+def attention(Q, K, V):                 # Q:(t,dk) K:(s,dk) V:(s,dv)
+    dk = Q.shape[-1]
+    scores = Q @ K.T / np.sqrt(dk)       # (t,s)  -- the scaling matters
+    W = softmax(scores, axis=-1)         # each row sums to 1
+    return W @ V, W
+
+out, W = attention(np.random.randn(4,2), np.random.randn(4,2), np.random.randn(4,2))
+print(W.sum(1))                          # [1. 1. 1. 1.]</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Project the tokens into Q, K, V</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Each token embedding <code>x</code> (width <code>d</code>) is linearly mapped to a query, a key and a value by three learned matrices. Query = &ldquo;what am I looking for&rdquo;, key = &ldquo;what do I offer&rdquo;, value = &ldquo;what I pass on&rdquo;.</p>
+        <div class="relative"><pre>import numpy as np
+d = 8
+X = np.random.randn(7, d)               # 7 tokens, width d
+Wq, Wk, Wv = (np.random.randn(d, d) for _ in range(3))
+
+Q = X @ Wq                              # (7, d)
+K = X @ Wk
+V = X @ Wv
+# all three are still width d -- we split that width across heads next</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Split the width into <em>h</em> heads</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Multi-head attention is a <em>reshape</em>, not new parameters. Cut the width <code>d</code> into <code>h</code> contiguous chunks of <code>d<sub>k</sub>=d/h</code>. Each chunk is one head&rsquo;s subspace. In PyTorch you reshape <code>(B,T,d) &rarr; (B,T,h,d<sub>k</sub>)</code> and move the head axis up front.</p>
+        <div class="relative"><pre>import torch
+B, T, d, h = 1, 7, 8, 4
+dk = d // h                             # 2
+
+Q = torch.randn(B, T, d)
+def split_heads(x):                     # (B,T,d) -> (B,h,T,dk)
+    B, T, d = x.shape
+    return x.view(B, T, h, dk).transpose(1, 2)
+
+Qh = split_heads(Q)
+print(Qh.shape)                         # torch.Size([1, 4, 7, 2])
+assert h * dk == d                      # the split is exact</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">All heads attend in parallel</h3></div>
+        <p class="text-sm text-slate-600 mb-3">With the head axis batched, one set of matrix multiplies runs every head at once. Each head has its own <code>d<sub>k</sub></code>-dim scores and its own softmax &mdash; that independence is what lets them specialise.</p>
+        <div class="relative"><pre>import torch, torch.nn.functional as F
+
+def mha_scores(Qh, Kh, Vh):             # each (B,h,T,dk)
+    dk = Qh.shape[-1]
+    scores = Qh @ Kh.transpose(-2, -1) / dk ** 0.5   # (B,h,T,T)
+    W = F.softmax(scores, dim=-1)                     # per-head, per-row
+    return W @ Vh, W                                  # (B,h,T,dk)
+
+ctx, W = mha_scores(Qh, Kh, Vh)
+print(W.sum(-1))                        # all ones: every head's rows sum to 1</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Concatenate heads, then project with W&#8338;</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Glue the <code>h</code> head outputs (<code>d<sub>k</sub></code> each) back into one width-<code>d</code> vector, then pass through a final learned matrix <code>W<sub>O</sub></code> that lets information mix <em>across</em> heads. Without <code>W<sub>O</sub></code> the heads would never talk to each other.</p>
+        <div class="relative"><pre>def merge_heads(x):                     # (B,h,T,dk) -> (B,T,d)
+    B, h, T, dk = x.shape
+    return x.transpose(1, 2).contiguous().view(B, T, h * dk)
+
+Wo = torch.randn(d, d)
+out = merge_heads(ctx) @ Wo             # (B,T,d) -- back to model width
+# concat width == d_model, ready for the residual add + LayerNorm</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">The whole module &mdash; and the one-liner</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Wrapped as a layer, and then the batteries-included version. <code>nn.MultiheadAttention</code> does exactly the six steps above. The comment shows <strong>MQA/GQA</strong>: share K/V across heads to shrink the KV-cache at inference &mdash; the trick behind fast modern LLM decoding.</p>
+        <div class="relative"><pre>import torch, torch.nn as nn
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, d, h):
+        super().__init__()
+        self.h, self.dk = h, d // h
+        self.Wq = nn.Linear(d, d); self.Wk = nn.Linear(d, d)
+        self.Wv = nn.Linear(d, d); self.Wo = nn.Linear(d, d)
+    def forward(self, x):               # x: (B,T,d)
+        B, T, d = x.shape
+        sh = lambda t: t.view(B, T, self.h, self.dk).transpose(1, 2)
+        q, k, v = sh(self.Wq(x)), sh(self.Wk(x)), sh(self.Wv(x))
+        a = (q @ k.transpose(-2,-1) / self.dk**0.5).softmax(-1)
+        o = (a @ v).transpose(1,2).reshape(B, T, d)
+        return self.Wo(o)
+
+# batteries included -- identical math:
+mha = nn.MultiheadAttention(embed_dim=8, num_heads=4, batch_first=True)
+y, attn_w = mha(x, x, x)                # self-attention
+
+# MQA (num_kv_heads=1) / GQA (a few kv heads) share K,V across query heads
+#   -> smaller KV-cache, faster decoding, used by Llama-2 70B, Mistral, ...</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 30 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">A single attention is one <strong>lens</strong>: one softmax over one dot-product space, so it can only track <em>one</em> kind of relation at a time. <strong>Multi-head attention</strong> projects each token to Q/K/V, <strong>splits the width <code>d</code> into <code>h</code> heads of <code>d<sub>k</sub>=d/h</code></strong>, and runs <code>softmax(QK&#7451;/&radic;d<sub>k</sub>)V</code> <em>independently in each subspace</em>, then <strong>concatenates</strong> the heads back to width <code>d</code> and mixes them with an output projection <code>W<sub>O</sub></code>. The <code>&radic;d<sub>k</sub></code> keeps the dot products from saturating softmax as dimensions grow. Crucially the <strong>cost is identical to one big head</strong> &mdash; the same four <code>d&times;d</code> matrices, just reshaped &mdash; yet the model gains the ability to read adjacency, syntax, word-identity and delimiter/sink relations all at once, as you saw in the four heatmaps. Empirically trained heads really do split this way, and many are redundant enough to prune; <strong>MQA/GQA</strong> share K/V across heads to shrink the inference KV-cache. <strong>&#128073; Tomorrow, Day 31:</strong> RMSNorm &mdash; the leaner LayerNorm (drop the mean-centering, keep only the scale) that Llama and most modern transformers now use.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+</script>
+
+<script>
+// ============================================================
+// REAL multi-head attention on "the cat sat on the warm mat ."
+//   X (n x d)  -- crafted embeddings, 4 interpretable 2-D blocks:
+//     dims 0-1 POSITION  : [2cos(i*0.6), 2sin(i*0.6)]  -> near positions align
+//     dims 2-3 SYNTAX    : angle per part-of-speech     -> same POS aligns
+//     dims 4-5 CONTENT   : angle per unique word        -> same word aligns
+//     dims 6-7 DELIMITER : "." gets a large-magnitude vector -> attention sink
+//   Q,K,V = X.Wq, X.Wk, X.Wv.  Wq==Wk is block-diagonal orthogonal, so each
+//   head's d_k-slice reads exactly its feature block(s); the attention math
+//   (QK^T/sqrt(dk) -> softmax -> weighted V) is fully real. Wv, Wo are dense.
+//   Split into h heads of dk=d/h; concat(h heads)=d; then output projection Wo.
+// ============================================================
+const TOKENS = ["the","cat","sat","on","the","warm","mat","."];
+const POS    = ["det","noun","verb","prep","det","adj","noun","punct"];
+const N = TOKENS.length, D = 8;
+const POS_ANG = { det:0, noun:Math.PI/3, verb:2*Math.PI/3, prep:Math.PI, adj:4*Math.PI/3, punct:5*Math.PI/3 };
+const WORDS = [...new Set(TOKENS)];
+const WORD_ANG = {}; WORDS.forEach((w,i)=> WORD_ANG[w] = i*2*Math.PI/WORDS.length);
+
+function buildX(){
+  const X=[];
+  for(let i=0;i<N;i++){
+    const r=new Array(D).fill(0);
+    r[0]=2.0*Math.cos(i*0.6); r[1]=2.0*Math.sin(i*0.6);
+    const a=POS_ANG[POS[i]];  r[2]=1.8*Math.cos(a); r[3]=1.8*Math.sin(a);
+    const w=WORD_ANG[TOKENS[i]]; r[4]=1.6*Math.cos(w); r[5]=1.6*Math.sin(w);
+    if(TOKENS[i]==="."){ r[6]=0; r[7]=5.0; } else { r[6]=0.15; r[7]=0.9; }
+    X.push(r);
+  }
+  return X;
+}
+function blockRot(angles){
+  const M=Array.from({length:D},()=>new Array(D).fill(0));
+  for(let b=0;b<4;b++){ const t=angles[b],c=Math.cos(t),s=Math.sin(t);
+    M[2*b][2*b]=c; M[2*b][2*b+1]=-s; M[2*b+1][2*b]=s; M[2*b+1][2*b+1]=c; }
+  return M;
+}
+function mulberry32(a){ return function(){ a|=0; a=(a+0x6D2B79F5)|0; let t=Math.imul(a^(a>>>15),1|a); t=(t+Math.imul(t^(t>>>7),61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; }; }
+function denseMat(seed){ const r=mulberry32(seed); const M=[]; for(let i=0;i<D;i++){const row=[];for(let j=0;j<D;j++)row.push((r()*2-1)*0.5); M.push(row);} return M; }
+function matmul(A,B){ const m=A.length,k=B.length,n=B[0].length; const C=Array.from({length:m},()=>new Array(n).fill(0));
+  for(let i=0;i<m;i++)for(let t=0;t<k;t++){const a=A[i][t]; for(let j=0;j<n;j++)C[i][j]+=a*B[t][j];} return C; }
+function slice(M,c0,c1){ return M.map(r=>r.slice(c0,c1)); }
+function softmaxRow(row){ const mx=Math.max(...row); const ex=row.map(v=>Math.exp(v-mx)); const s=ex.reduce((a,b)=>a+b,0); return ex.map(v=>v/s); }
+
+const X  = buildX();
+const Wq = blockRot([0.30,-0.45,0.55,-0.20]);
+const Wk = blockRot([0.30,-0.45,0.55,-0.20]);
+const Wv = denseMat(7);
+const Wo = denseMat(99);
+
+function forward(h){
+  const dk=D/h;
+  const Q=matmul(X,Wq), K=matmul(X,Wk), V=matmul(X,Wv);
+  const heads=[]; const concat=Array.from({length:N},()=>[]);
+  for(let hd=0;hd<h;hd++){
+    const Qh=slice(Q,hd*dk,(hd+1)*dk), Kh=slice(K,hd*dk,(hd+1)*dk), Vh=slice(V,hd*dk,(hd+1)*dk);
+    const scale=Math.sqrt(dk), attn=[], out=[];
+    for(let i=0;i<N;i++){
+      const logits=[]; for(let j=0;j<N;j++){ let d=0; for(let t=0;t<dk;t++) d+=Qh[i][t]*Kh[j][t]; logits.push(d/scale); }
+      const w=softmaxRow(logits); attn.push(w);
+      const o=new Array(dk).fill(0); for(let j=0;j<N;j++) for(let t=0;t<dk;t++) o[t]+=w[j]*Vh[j][t]; out.push(o);
+    }
+    heads.push({attn,out,Qh,Kh,dk,scale});
+    for(let i=0;i<N;i++) concat[i]=concat[i].concat(out[i]);
+  }
+  const output=matmul(concat,Wo);
+  return {heads,concat,output,dk};
+}
+
+// role metadata per head-count
+const ROLES = {
+  4:[{t:"POSITION · adjacency",   blk:"dims 0-1", d:"Every token attends to its immediate <strong>neighbours</strong> &mdash; a local/positional head. The bright band hugs the diagonal."},
+     {t:"SYNTAX · same POS",      blk:"dims 2-3", d:"Tokens attend to others of the <strong>same part-of-speech</strong>: the two determiners lock onto each other, the two nouns (cat, mat) pair up, verb and preposition attend to themselves."},
+     {t:"CONTENT · same word",    blk:"dims 4-5", d:"<strong>Lexical identity</strong>: the two copies of &ldquo;the&rdquo; attend strongly to each other; every other word mostly to itself. Same word, NOT same category &mdash; note cat and mat do <em>not</em> link here."},
+     {t:"DELIMITER · \".\" sink", blk:"dims 6-7", d:"A <strong>delimiter / attention-sink</strong> head: almost every token dumps its weight on the final &ldquo;.&rdquo; &mdash; exactly the kind of no-op parking head real LLMs grow."}],
+  2:[{t:"POSITION + SYNTAX", blk:"dims 0-3", d:"A coarser head over a 4-D subspace fusing <strong>position and part-of-speech</strong> &mdash; neighbours and same-POS tokens both light up, blurred together."},
+     {t:"CONTENT + DELIMITER", blk:"dims 4-7", d:"Word-identity and the delimiter in one 4-D subspace; the large-magnitude &ldquo;.&rdquo; signal dominates, so this head behaves mostly like a <strong>sink</strong>."}],
+  1:[{t:"ALL relations, one subspace", blk:"dims 0-7", d:"One big head over the full 8-D space. Every relation is squeezed into a <strong>single softmax</strong>, so the loudest signals (delimiter, position) swamp the subtler syntactic and lexical ones &mdash; the model can only look one way at a time."}]
+};
+const MULTINOTE = {
+  1:"<strong>Single head.</strong> One softmax must serve every relation at once. The loudest signal wins and the rest are averaged away &mdash; you cannot read adjacency AND word-identity AND syntax at the same time.",
+  2:"<strong>2 heads.</strong> Two independent softmaxes, each over a 4-D subspace &mdash; better, but each head still fuses two relations into one pattern.",
+  4:"<strong>4 heads.</strong> Four independent softmaxes, each d&#7524;=2. Now position, syntax, content and the delimiter each get their <em>own</em> clean attention pattern. That separation is the entire point of multi-head attention."
+};
+</script>
+
+<script>
+const cv=document.getElementById("cv"), c2=cv.getContext("2d");
+let state = { h:4, selHead:0, previewHead:null, selQuery:0, hoverCell:null };
+let current = forward(state.h);
+
+function attnColor(w){ const t=Math.pow(Math.max(0,Math.min(1,w)),0.7);
+  return `rgb(${Math.round(255-30*t)},${Math.round(255-226*t)},${Math.round(255-183*t)})`; }
+const activeHead = () => state.previewHead!=null ? state.previewHead : state.selHead;
+
+// -------- per-head mini heatmaps in #headRow --------
+function buildHeadRow(){
+  const row=document.getElementById("headRow"); row.innerHTML="";
+  const roles=ROLES[state.h];
+  current.heads.forEach((hd,k)=>{
+    const card=document.createElement("div"); card.className="headcard"+(k===state.selHead?" on":"");
+    const mc=document.createElement("canvas"); mc.width=104; mc.height=104;
+    const g=mc.getContext("2d"); const cs=13;
+    for(let i=0;i<N;i++)for(let j=0;j<N;j++){ g.fillStyle=attnColor(hd.attn[i][j]); g.fillRect(j*cs,i*cs,cs,cs); }
+    g.strokeStyle="#e2e8f0"; g.strokeRect(0,0,N*cs,N*cs);
+    const lab=document.createElement("div"); lab.className="text-[11px] font-bold text-slate-700 mt-1 text-center";
+    lab.innerHTML="Head "+k+"<br><span class='text-[10px] font-semibold text-rose-600'>"+roles[k].t+"</span>";
+    card.appendChild(mc); card.appendChild(lab);
+    card.onmouseenter=()=>{ state.previewHead=k; drawBig(); markCards(); };
+    card.onmouseleave=()=>{ state.previewHead=null; drawBig(); markCards(); };
+    card.onclick=()=>{ state.selHead=k; state.previewHead=null; drawBig(); markCards(); };
+    row.appendChild(card);
+  });
+}
+function markCards(){ const cards=document.querySelectorAll("#headRow .headcard");
+  cards.forEach((c,k)=> c.classList.toggle("on", k===activeHead())); }
+
+// -------- big heatmap of the active head --------
+const GX0=70, GY0=54, CELL=44;
+function drawBig(){
+  const hd=current.heads[activeHead()]; const roles=ROLES[state.h][activeHead()];
+  c2.clearRect(0,0,cv.width,cv.height);
+  // title
+  c2.fillStyle="#0f172a"; c2.font="bold 13px sans-serif"; c2.textAlign="left"; c2.textBaseline="alphabetic";
+  c2.fillText("Head "+activeHead()+"  ·  "+roles.t+"  ("+roles.blk+")", 14, 22);
+  c2.fillStyle="#94a3b8"; c2.font="10px sans-serif"; c2.fillText("row = query (attends)   ·   column = key (attended-to)", 14, 38);
+  // cells
+  for(let i=0;i<N;i++)for(let j=0;j<N;j++){
+    c2.fillStyle=attnColor(hd.attn[i][j]);
+    c2.fillRect(GX0+j*CELL, GY0+i*CELL, CELL, CELL);
+    if(hd.attn[i][j]>=0.18){ c2.fillStyle="#4c0519"; c2.font="9px monospace"; c2.textAlign="center"; c2.textBaseline="middle";
+      c2.fillText(hd.attn[i][j].toFixed(2), GX0+j*CELL+CELL/2, GY0+i*CELL+CELL/2); }
+  }
+  // grid
+  c2.strokeStyle="#e2e8f0"; c2.lineWidth=1;
+  for(let i=0;i<=N;i++){ c2.beginPath(); c2.moveTo(GX0,GY0+i*CELL); c2.lineTo(GX0+N*CELL,GY0+i*CELL); c2.stroke();
+    c2.beginPath(); c2.moveTo(GX0+i*CELL,GY0); c2.lineTo(GX0+i*CELL,GY0+N*CELL); c2.stroke(); }
+  // labels
+  c2.fillStyle="#334155"; c2.font="10px sans-serif";
+  for(let j=0;j<N;j++){ c2.textAlign="center"; c2.textBaseline="bottom"; c2.fillText(TOKENS[j], GX0+j*CELL+CELL/2, GY0-4); }
+  for(let i=0;i<N;i++){ c2.textAlign="right"; c2.textBaseline="middle"; c2.fillText(TOKENS[i], GX0-6, GY0+i*CELL+CELL/2); }
+  // selected-query row outline
+  c2.strokeStyle="#f43f5e"; c2.lineWidth=2.5; c2.strokeRect(GX0-1, GY0+state.selQuery*CELL-1, N*CELL+2, CELL+2);
+  // hovered cell outline
+  if(state.hoverCell){ const {i,j}=state.hoverCell; c2.strokeStyle="#0f172a"; c2.lineWidth=2.5;
+    c2.strokeRect(GX0+j*CELL, GY0+i*CELL, CELL, CELL); }
+  // axis captions
+  c2.fillStyle="#94a3b8"; c2.font="10px sans-serif"; c2.textAlign="center"; c2.textBaseline="top";
+  c2.fillText("keys (attended-to) →", GX0+N*CELL/2, GY0+N*CELL+6);
+  updatePanels();
+}
+
+function cellFromEvent(e){ const r=cv.getBoundingClientRect();
+  const mx=(e.clientX-r.left)*(cv.width/r.width), my=(e.clientY-r.top)*(cv.height/r.height);
+  if(mx<GX0||mx>GX0+N*CELL||my<GY0||my>GY0+N*CELL) return null;
+  return { j:Math.floor((mx-GX0)/CELL), i:Math.floor((my-GY0)/CELL) }; }
+
+cv.onmousemove=e=>{ const c=cellFromEvent(e); state.hoverCell=c; drawBig();
+  const info=document.getElementById("cellInfo");
+  if(c){ const w=current.heads[activeHead()].attn[c.i][c.j];
+    info.innerHTML=`<span class="font-mono"><strong>${TOKENS[c.i]}</strong> (q${c.i}) attends to <strong>${TOKENS[c.j]}</strong> (k${c.j})</span> &rarr; weight <strong class="text-rose-600">${w.toFixed(3)}</strong>`; }
+  else info.textContent="Hover a cell for its exact weight; click a row to expand the arithmetic."; };
+cv.onmouseleave=()=>{ state.hoverCell=null; drawBig();
+  document.getElementById("cellInfo").textContent="Hover a cell for its exact weight; click a row to expand the arithmetic."; };
+cv.onclick=e=>{ const c=cellFromEvent(e); if(c){ state.selQuery=c.i; drawBig(); } };
+
+// -------- side panels + real-math table --------
+function updatePanels(){
+  const hd=current.heads[activeHead()]; const roles=ROLES[state.h][activeHead()];
+  document.getElementById("bigHead").innerHTML=roles.d;
+  document.getElementById("multiNote").innerHTML=MULTINOTE[state.h];
+  document.getElementById("hStat").textContent=state.h;
+  document.getElementById("dkStat").textContent=current.dk;
+  document.getElementById("dkVal").textContent=current.dk;
+  document.getElementById("pipeDk").textContent=current.dk;
+  // block-row highlight (only meaningful at h=4)
+  ["blk0","blk1","blk2","blk3"].forEach((id,k)=>document.getElementById(id).classList.toggle("win", state.h===4 && k===activeHead()));
+  // real scaled-dot-product for the selected query row
+  const i=state.selQuery, dk=hd.dk, scale=hd.scale;
+  document.getElementById("mathHead").innerHTML=`query = <strong>${TOKENS[i]}</strong> (row ${i}) · d&#7524;=${dk} · &radic;d&#7524;=${scale.toFixed(3)}`;
+  const logits=[]; for(let j=0;j<N;j++){ let d=0; for(let t=0;t<dk;t++) d+=hd.Qh[i][t]*hd.Kh[j][t]; logits.push(d); }
+  const mx=Math.max(...logits.map(l=>l/scale)); const exps=logits.map(l=>Math.exp(l/scale-mx)); const s=exps.reduce((a,b)=>a+b,0);
+  const tb=document.getElementById("mathTbl"); tb.innerHTML=""; let wsum=0;
+  for(let j=0;j<N;j++){ const w=exps[j]/s; wsum+=w; const win=(w===Math.max(...hd.attn[i]))?" class='win'":"";
+    tb.insertAdjacentHTML("beforeend",`<tr${win}><td>${TOKENS[j]} <span class="text-slate-400">k${j}</span></td><td class="num">${logits[j].toFixed(2)}</td><td class="num">${(logits[j]/scale).toFixed(2)}</td><td class="num">${exps[j].toFixed(2)}</td><td class="num">${w.toFixed(3)}</td></tr>`); }
+  tb.insertAdjacentHTML("beforeend",`<tr style="border-top:2px solid #cbd5e1"><td class="font-bold">softmax row sum</td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num font-bold text-rose-600">${wsum.toFixed(3)}</td></tr>`);
+}
+
+// -------- heads picker --------
+document.querySelectorAll("#headPick button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("#headPick button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); state.h=+b.dataset.h; current=forward(state.h);
+  state.selHead=0; state.previewHead=null; if(state.selQuery>=N) state.selQuery=0;
+  buildHeadRow(); drawBig(); });
+
+buildHeadRow(); drawBig();
+</script>
+
+<script>
+const STEPS = [
+ { title:"1. Recap: scaled dot-product attention", why:"One attention head turns a set of tokens into context-aware tokens. Each token emits a query, every token offers a key, and the query·key dot product scores how much this token should listen to that one. Divide the scores by √dk, softmax each row into weights that sum to 1, and take that weighted average of the value vectors. The output for a token is a blend of the values it chose to attend to. That is the whole atom of a Transformer: attention(Q,K,V) = softmax(QKᵀ/√dk) V. Everything about multi-head attention is about running several of these atoms at once.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">Attention(Q,K,V) = softmax(QK&#7451;/&radic;d&#7524;) &middot; V<br>score = query&middot;key &nbsp;→  how much to listen<br>softmax row → weights that sum to 1<br>output = weighted average of the values</div>`, code:"scores = Q @ K.T / np.sqrt(dk)   # (t, s)\nW = softmax(scores, axis=-1)     # each row sums to 1\nout = W @ V                      # weighted average of values" },
+ { title:"2. Why the √dk scaling", why:"A dot product of two dk-dimensional vectors is a sum of dk products. If the entries are roughly unit-variance and independent, that sum has variance about dk, so the raw scores grow like √dk as the head gets wider. Feed large scores into softmax and it saturates: nearly all the weight lands on a single key and the gradient through the other logits collapses toward zero, so learning stalls. Dividing by √dk rescales the scores back to unit variance regardless of dk, keeping softmax in its responsive range and gradients healthy. It is a tiny constant with an outsized effect on trainability — drop it and deep Transformers train badly.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">Var(q&middot;k) ≈ d&#7524; &nbsp;(sum of d&#7524; products)<br>big scores → softmax saturates → gradient ≈ 0<br>divide by &radic;d&#7524; → unit-variance scores<br>softmax stays responsive, training stays stable</div>`, code:"# without scaling, scores ~ N(0, dk) -> softmax saturates\nscores = Q @ K.T / np.sqrt(dk)   # rescale to ~unit variance\n# tiny constant, large effect on trainability" },
+ { title:"3. Q, K, V projections", why:"The tokens do not attend in their raw embedding space; they are first projected. Three learned matrices Wq, Wk, Wv map each width-d embedding into a query, a key and a value. The query encodes what a token is looking for, the key what it advertises, the value what it will pass on if attended to. Splitting these three roles is what lets a token ask for something different from what it offers, which a single shared representation could not express. In self-attention Q, K and V all come from the same input X, but through different matrices — X·Wq, X·Wk, X·Wv.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">Q = X&middot;W_q &nbsp; K = X&middot;W_k &nbsp; V = X&middot;W_v<br>query = what I'm looking for<br>key&nbsp;&nbsp;= what I advertise<br>value = what I pass on</div>`, code:"Q = X @ Wq      # (n, d)  what each token seeks\nK = X @ Wk      # (n, d)  what each token offers\nV = X @ Wv      # (n, d)  what each token contributes" },
+ { title:"4. The key idea: many heads, many relations", why:"A single attention head is one lens: one dot-product space, one softmax, so it can only emphasise one kind of relationship at a time. But language has many overlapping relations at once — a word relates to its neighbour, to its syntactic head, to an earlier mention of the same entity, to sentence boundaries. Force all of that through one softmax and the strongest signal drowns the rest (you saw this with h=1 in the demo, where the delimiter and position swamped syntax and word-identity). Multi-head attention runs h attention functions in parallel, each in its own subspace, so the model reads several relations simultaneously and keeps them separate.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">1 head = 1 relation lens (1 softmax)<br>language has many relations at once<br>⇒ run h heads in parallel, one per subspace<br>each head specialises → relations stay separate</div>`, code:"# one softmax can emphasise only ONE relation at a time\n# language needs several at once (adjacency, syntax, coref...)\n# -> h parallel heads, each attending in its own subspace" },
+ { title:"5. Split d into h heads of dk = d/h", why:"Here is the mechanical trick, and it adds no parameters. After projecting to Q, K, V of width d, you slice that width into h contiguous chunks of size dk = d/h. Each chunk is one head's private subspace. In tensor terms you reshape (batch, seq, d) into (batch, seq, h, dk) and move the head axis next to the batch, giving (batch, h, seq, dk). Head 0 sees dimensions 0..dk-1, head 1 sees the next dk, and so on. The split must be exact: h × dk = d, so the heads together still span the full width. In the demo with d=8 and h=4 that is four heads of dk=2 — one feature block each.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">d&#7524; = d / h &nbsp;(here 8/4 = 2)<br>reshape (B,T,d) → (B,T,h,d&#7524;) → (B,h,T,d&#7524;)<br>head k gets columns [k&middot;d&#7524; : (k+1)&middot;d&#7524;]<br>h &times; d&#7524; = d &nbsp;(exact split, no new params)</div>`, code:"dk = d // h                       # 8 // 4 = 2\ndef split_heads(x):               # (B,T,d) -> (B,h,T,dk)\n    B,T,d = x.shape\n    return x.view(B,T,h,dk).transpose(1,2)\nassert h * dk == d" },
+ { title:"6. Every head attends in parallel", why:"With the head axis batched alongside the batch axis, a single set of matrix multiplies computes all heads at once: scores = Qh @ Khᵀ / √dk over the head dimension, then a softmax over each head's rows, then weights @ Vh. Every head has its own dk-dimensional scores and its own independent softmax, and that independence is exactly what lets them diverge during training. In the visualiser the four heads produce visibly different heatmaps — a diagonal adjacency band, a same-part-of-speech pattern, a same-word pattern, and a delimiter sink — from the same sentence, computed simultaneously.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">for every head in parallel:<br>&nbsp;&nbsp;W&#7522; = softmax(Q&#7522;K&#7522;&#7451; / &radic;d&#7524;)<br>&nbsp;&nbsp;head&#7522; = W&#7522; &middot; V&#7522;<br>independent softmaxes → distinct patterns</div>`, code:"scores = Qh @ Kh.transpose(-2,-1) / dk**0.5  # (B,h,T,T)\nW = softmax(scores, dim=-1)                  # per head, per row\nheads = W @ Vh                               # (B,h,T,dk)" },
+ { title:"7. Concat, then output projection Wₒ", why:"Each head returns a dk-wide context vector per token. Concatenate the h of them back into a single width-d vector — concat is the inverse of the split — and then multiply by a learned output matrix Wo. That final projection is essential: without it the heads sit in fixed disjoint slots and never combine, but Wo lets the layer mix information across heads and reshape it for the residual stream. So the full head count is: Wq, Wk, Wv to fan out, per-head attention, concat, and Wo to fan back in.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">concat(head&#8321;,…,head&#8341;) → width d again<br>out = concat &middot; W&#8338;<br>W&#8338; mixes information ACROSS heads<br>ready for the residual add + norm</div>`, code:"def merge_heads(x):               # (B,h,T,dk) -> (B,T,d)\n    B,h,T,dk = x.shape\n    return x.transpose(1,2).reshape(B,T,h*dk)\nout = merge_heads(heads) @ Wo     # (B,T,d), mixes across heads" },
+ { title:"8. Params & compute: same as one big head", why:"A natural worry: are h heads h times as expensive? No. The three input projections and the output projection are each d×d whether you use one head or many — splitting the width into heads is a reshape, not extra weights. Total parameters stay 4d² (plus biases), and the attention FLOPs are essentially unchanged because the per-head scores are dk-wide but there are h of them: h × dk = d. So multi-head attention buys expressiveness — several relation types read at once — for free relative to a single head of the same total width. That is why it is the default, not an expensive upgrade.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">params = 4d&sup2; (W_q,W_k,W_v,W_o) — independent of h<br>splitting into heads = a reshape, not new weights<br>compute: h heads &times; d&#7524; width = d total<br>&#8756; multi-head ≈ one big head in cost, richer in power</div>`, code:"# one head of width d   vs   h heads of width d/h\n# projections: d x d either way -> params = 4*d**2\n# attention cost ~ same:  h * dk == d\n# multi-head = more expressive at ~no extra cost" },
+ { title:"9. What heads learn empirically", why:"When you probe a trained Transformer, heads specialise in interpretable ways that echo the demo. Some are positional — attend to the previous or next token. Some are syntactic — verbs attend to their subjects, determiners to their nouns, an object to its verb. Some track coreference or rare/salient tokens, and many are delimiter or 'attention-sink' heads that park weight on the first token or on punctuation as a soft no-op. Studies (Voita et al., Clark et al.) also found heavy redundancy: a large fraction of heads can be pruned after training with little loss, which is why head count is a tunable, forgiving hyperparameter.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">positional heads: attend prev / next token<br>syntactic heads: verb→subject, det→noun<br>rare-token & delimiter / sink heads<br>many heads are redundant → prunable</div>`, code:"# probing trained models (BERT/GPT) finds heads that:\n#   - attend to previous / next token   (positional)\n#   - link verb<->subject, det<->noun    (syntactic)\n#   - dump weight on [SEP]/'.'/BOS        (delimiter sink)\n# and many heads can be pruned with little loss" },
+ { title:"10. Why h>1, and MQA / GQA", why:"The single-head demo shows the failure mode: one softmax averages every relation together and the loudest wins, so subtle syntactic and lexical signals are lost. Multiple heads give each relation its own subspace and its own softmax, so they coexist. The modern refinement is about the inference KV-cache, not quality: standard multi-head attention (MHA) stores a separate K and V per head, which dominates memory during long-context decoding. Multi-Query Attention (MQA) shares one K/V across all query heads; Grouped-Query Attention (GQA) shares K/V within small groups — a middle ground. Both keep many query heads but shrink the KV-cache dramatically, which is why Llama-2 70B, Mistral and most current LLMs use GQA.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">h > 1: separate subspaces → relations coexist<br>MHA: K,V per head — big KV-cache<br>MQA: 1 shared K,V &nbsp;·&nbsp; GQA: K,V per small group<br>fewer K,V → smaller cache → faster decoding</div>`, code:"# MHA : h query heads, h key/value heads   (largest KV-cache)\n# MQA : h query heads, 1 key/value head     (smallest cache)\n# GQA : h query heads, g key/value groups    (1 < g < h)\n# GQA powers Llama-2 70B, Mistral, ... : fast long-context decode" }
+];
+</script>
+
+<script>
+const stepsEl=document.getElementById("steps");
+const prevB=document.getElementById("prev"), nextB=document.getElementById("next-btn"), autoB=document.getElementById("auto");
+let curS=0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },4200); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>

@@ -36,6 +36,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 27 — Layer Normalization](https://dev48v.infy.uk/dl/day27-layer-norm.html) — `day27-layer-norm.html`
 - [DeepLearningFromZero · Day 28 — Weight Initialization](https://dev48v.infy.uk/dl/day28-weight-init.html) — `day28-weight-init.html`
 - [DeepLearningFromZero · Day 29 — Positional Encoding](https://dev48v.infy.uk/dl/day29-positional-encoding.html) — `day29-positional-encoding.html`
+- [DeepLearningFromZero · Day 30 — Multi-Head Attention](https://dev48v.infy.uk/dl/day30-multi-head-attention.html) — `day30-multi-head-attention.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk
