@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 31 — RMSNorm</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  #cv { background:#fff; border:2px solid #0f172a; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,.12); }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  table.res { width:100%; border-collapse:collapse; font-size:12px; }
+  table.res th, table.res td { padding:5px 8px; text-align:left; border-bottom:1px solid #e2e8f0; }
+  table.res th { color:#64748b; font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:.04em; }
+  table.res td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.win { background:#fff1f2; }
+  .tokbtn { border:2px solid #e2e8f0; }
+  .tokbtn.on { border-color:#f43f5e; background:#fff1f2; color:#be123c; }
+  .headcard { cursor:pointer; border:2px solid #e2e8f0; border-radius:12px; padding:8px 8px 6px; background:#fff; transition:border-color .15s, background .15s; }
+  .headcard.on { border-color:#f43f5e; background:#fff1f2; }
+  .headcard canvas { display:block; margin:0 auto; image-rendering:pixelated; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .vec { font-family:ui-monospace,Menlo,monospace; font-size:11px; }
+  .sk { color:#be123c; font-weight:700; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 31</div>
+      <h1 class="text-xl font-bold">&#129718; RMSNorm — LayerNorm minus the mean-centering and the bias: divide by the root-mean-square, rescale by &gamma;. Fewer ops, half the params, what LLaMA and T5 use</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Same job, minus the mean. RMSNorm skips the centering LayerNorm does &mdash; and lands in the same place when the input is already centered.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto">Both normalizers take one token&rsquo;s feature vector and tame its scale. <strong>LayerNorm</strong> subtracts the mean <code>&mu;</code>, divides by the standard deviation <code>&sigma;</code>, then applies a learnable gain <code>&gamma;</code> and bias <code>&beta;</code>. <strong>RMSNorm</strong> throws away the mean <em>and</em> the bias: it divides by the root-mean-square <code>RMS(x)=&radic;(mean(x&sup2;)+&epsilon;)</code> and rescales by <code>&gamma;</code> only. Drag the six input features (and <code>&gamma;</code>, <code>&beta;</code>) and read the exact arithmetic on both sides. Hit <em>&asymp; zero-mean</em>: with a centered input the two outputs are <strong>identical</strong>, because variance equals mean-of-squares, so <code>&sigma; = RMS</code>. Then add a <em>large offset</em> and watch LayerNorm erase it while RMSNorm lets it ride through.</p>
+
+      <div class="flex justify-center gap-3 mb-4 flex-wrap items-center">
+        <span class="text-sm text-slate-600 self-center">presets:</span>
+        <div id="presets" class="flex gap-1 flex-wrap justify-center">
+          <button data-p="zero"  class="tokbtn on px-3 py-1.5 rounded-lg font-bold text-sm">&asymp; zero-mean</button>
+          <button data-p="off"   class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">large offset (+2.5)</button>
+          <button data-p="spiky" class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">one spike</button>
+          <button data-p="rand"  class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">randomize</button>
+        </div>
+        <span class="text-sm text-slate-600 self-center ml-3"><code>&gamma;</code>=<span id="gVal" class="stat font-bold text-rose-600">1.00</span></span>
+        <input id="gSl" type="range" min="0" max="2" step="0.05" value="1" class="w-28 self-center">
+        <span class="text-sm text-slate-600 self-center ml-2"><code>&beta;</code>=<span id="bVal" class="stat font-bold text-slate-500">0.00</span></span>
+        <input id="bSl" type="range" min="-2" max="2" step="0.1" value="0" class="w-28 self-center">
+        <span class="text-[11px] text-slate-400 self-center">(&beta; is LayerNorm-only)</span>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-4 items-start text-left">
+        <div class="bg-white rounded-xl border border-rose-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">Input vector x &mdash; drag the six features</div>
+          <div id="xSliders" class="grid grid-cols-2 gap-x-6 gap-y-2 mb-3"></div>
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">x &nbsp;&rarr;&nbsp; LayerNorm(x) &nbsp;vs&nbsp; RMSNorm(x)</div>
+          <canvas id="cv" width="470" height="430" class="mx-auto w-full"></canvas>
+          <p class="text-xs text-slate-400 mt-2">Bars are signed (up = positive, down = negative), all three rows share one scale. Notice the <strong>LayerNorm</strong> row balances around zero (its features sum to &asymp;0); the <strong>RMSNorm</strong> row does not have to.</p>
+        </div>
+
+        <div class="space-y-4">
+          <div class="bg-white rounded-xl border border-slate-200 p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">LayerNorm &mdash; re-center + re-scale + &gamma;,&beta;</div>
+            <div class="bg-slate-900 text-slate-100 rounded-lg p-3 text-xs font-mono mb-3 leading-relaxed">y = &gamma; &middot; (x &minus; &mu;) / &radic;(&sigma;&sup2;+&epsilon;) + &beta;</div>
+            <table class="res">
+              <tbody>
+                <tr><td>mean &mu; = mean(x)</td><td class="num"><span id="lnMean" class="stat font-bold">0</span></td></tr>
+                <tr><td>variance &sigma;&sup2; = var(x)</td><td class="num"><span id="lnVar" class="stat font-bold">0</span></td></tr>
+                <tr><td>std &sigma; = &radic;(&sigma;&sup2;+&epsilon;)</td><td class="num"><span id="lnStd" class="stat font-bold text-rose-600">0</span></td></tr>
+              </tbody>
+            </table>
+            <div class="mt-2 text-xs text-slate-500">x&#770; = (x&minus;&mu;)/&sigma; &nbsp;=&nbsp; <span id="lnHat" class="vec text-slate-700"></span></div>
+            <div class="mt-1 text-xs text-slate-500">y &nbsp;=&nbsp; <span id="lnY" class="vec text-rose-700 font-bold"></span></div>
+          </div>
+
+          <div class="bg-white rounded-xl border border-rose-200 p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">RMSNorm &mdash; re-scale only</div>
+            <div class="bg-slate-900 text-slate-100 rounded-lg p-3 text-xs font-mono mb-3 leading-relaxed">y = &gamma; &middot; x / &radic;(mean(x&sup2;)+&epsilon;) &nbsp;&nbsp;<span class="sk">// no &minus;&mu;, no +&beta;</span></div>
+            <table class="res">
+              <tbody>
+                <tr class="win"><td>mean subtraction (&minus;&mu;)</td><td class="num"><span class="sk">skipped</span></td></tr>
+                <tr><td>mean of squares = mean(x&sup2;)</td><td class="num"><span id="rmsMS" class="stat font-bold">0</span></td></tr>
+                <tr><td>RMS = &radic;(mean(x&sup2;)+&epsilon;)</td><td class="num"><span id="rmsRMS" class="stat font-bold text-rose-600">0</span></td></tr>
+                <tr class="win"><td>bias &beta;</td><td class="num"><span class="sk">none</span></td></tr>
+              </tbody>
+            </table>
+            <div class="mt-2 text-xs text-slate-500">x&#770; = x/RMS &nbsp;=&nbsp; <span id="rmsHat" class="vec text-slate-700"></span></div>
+            <div class="mt-1 text-xs text-slate-500">y &nbsp;=&nbsp; <span id="rmsY" class="vec text-rose-700 font-bold"></span></div>
+          </div>
+
+          <div id="diffNote" class="rounded-xl border p-4 text-sm"></div>
+
+          <div class="bg-white rounded-xl border border-slate-200 p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">What RMSNorm skips &mdash; per token vector (d features)</div>
+            <table class="res">
+              <thead><tr><th>step</th><th>LayerNorm</th><th>RMSNorm</th></tr></thead>
+              <tbody>
+                <tr><td>reductions over features</td><td>2 &nbsp;(mean, var)</td><td class="win"><span class="sk">1</span> &nbsp;(mean of squares)</td></tr>
+                <tr><td>mean subtraction &minus;&mu;</td><td>yes &nbsp;(d subs)</td><td class="win"><span class="sk">skipped</span></td></tr>
+                <tr><td>learnable params</td><td>2d &nbsp;(&gamma;, &beta;)</td><td class="win"><span class="sk">d</span> &nbsp;(&gamma; only)</td></tr>
+                <tr><td>bias term &beta;</td><td>yes</td><td class="win"><span class="sk">none</span></td></tr>
+                <tr><td>sqrt</td><td>1</td><td>1</td></tr>
+              </tbody>
+            </table>
+            <p class="text-xs text-slate-400 mt-2">Per layer the saving is tiny; multiplied across every layer and every token of an LLM it is real. The original RMSNorm paper (Zhang &amp; Sennrich, 2019) reports up to <strong>~64%</strong> run-time reduction on some RNN tasks, single digits on Transformers &mdash; plus <strong>half</strong> the norm parameters.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">From LayerNorm to RMSNorm</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">You saw that LayerNorm does two things &mdash; re-center (subtract the mean) and re-scale (divide by the spread) &mdash; and that RMSNorm keeps only the re-scaling, dividing by the root-mean-square and rescaling by <code>&gamma;</code>, with no mean and no <code>&beta;</code>. Here it is in code: RMSNorm from scratch in NumPy, a side-by-side check against LayerNorm (identical on zero-mean input, different once you add an offset), the LLaMA-style PyTorch module with the fp32 trick, dropping it into a pre-norm Transformer block, and finally the one-liner <code>nn.RMSNorm</code>.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">RMSNorm from scratch</h3></div>
+        <p class="text-sm text-slate-600 mb-3">One statistic, no mean. Square the features, average them, take the square root (that is the RMS), divide, then scale by the learnable gain <code>g</code>. With <code>g=1</code> the output has unit RMS.</p>
+        <div class="relative"><pre>import numpy as np
+
+def rmsnorm(x, g, eps=1e-6):          # x: (..., d)   g: (d,)
+    ms  = np.mean(x**2, axis=-1, keepdims=True)   # mean of squares (no mean subtracted)
+    rms = np.sqrt(ms + eps)                        # root-mean-square
+    return g * x / rms                             # scale by gamma -- no beta
+
+x = np.array([2.0, -1.0, 0.5, -1.5])
+y = rmsnorm(x, np.ones_like(x))
+print(y)                              # x divided by its RMS
+print(np.sqrt((y**2).mean()))         # ~1.0  -> unit RMS when g=1</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Side by side with LayerNorm</h3></div>
+        <p class="text-sm text-slate-600 mb-3">On an already-centered vector the two are the same (variance == mean-of-squares, so <code>&sigma; == RMS</code>). Add a constant offset and LayerNorm removes it while RMSNorm keeps it &mdash; the whole difference in one experiment.</p>
+        <div class="relative"><pre>import numpy as np
+def layernorm(x, g, b, eps=1e-6):
+    mu, var = x.mean(-1, keepdims=True), x.var(-1, keepdims=True)
+    return g * (x - mu) / np.sqrt(var + eps) + b
+def rmsnorm(x, g, eps=1e-6):
+    return g * x / np.sqrt((x**2).mean(-1, keepdims=True) + eps)
+
+d = 4; g = np.ones(d); b = np.zeros(d)
+z = np.array([1.0, -0.5, 0.5, -1.0])              # already zero-mean
+print(np.allclose(layernorm(z, g, b), rmsnorm(z, g), atol=1e-3))  # True
+
+s = z + 3.0                                         # add a big offset
+print(layernorm(s, g, b).round(3))                 # offset ERASED (same as z)
+print(rmsnorm(s,  g).round(3))                      # offset SURVIVES -> different</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">The PyTorch module (LLaMA style)</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A single learnable vector <code>g</code>, no bias. The one production detail: compute the RMS in float32 even for a bf16/fp16 model, then cast back &mdash; the mean-of-squares is the part that overflows or loses precision.</p>
+        <div class="relative"><pre>import torch, torch.nn as nn
+
+class RMSNorm(nn.Module):
+    def __init__(self, d, eps=1e-6):
+        super().__init__()
+        self.eps = eps
+        self.g = nn.Parameter(torch.ones(d))      # gain only -- no bias
+    def forward(self, x):
+        dt = x.dtype
+        x  = x.float()                             # RMS in fp32 for stability
+        rms = x.pow(2).mean(-1, keepdim=True).add(self.eps).sqrt()
+        return (self.g * (x / rms)).to(dt)
+
+y = RMSNorm(512)(torch.randn(2, 7, 512))
+print(y.shape)                                     # torch.Size([2, 7, 512])</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Drop it into a pre-norm block</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Modern Transformers are pre-norm: normalize the <em>input</em> of each sub-layer, inside the residual branch, so the residual stream stays a clean identity path. RMSNorm is the norm plugged into that slot in essentially every recent LLM.</p>
+        <div class="relative"><pre>import torch.nn as nn
+
+class Block(nn.Module):
+    def __init__(self, d, h):
+        super().__init__()
+        self.n1, self.n2 = RMSNorm(d), RMSNorm(d)
+        self.attn = nn.MultiheadAttention(d, h, batch_first=True)
+        self.mlp  = nn.Sequential(nn.Linear(d, 4*d), nn.GELU(), nn.Linear(4*d, d))
+    def forward(self, x):
+        a, _ = self.attn(self.n1(x), self.n1(x), self.n1(x))
+        x = x + a                        # pre-norm: normalize the branch input
+        x = x + self.mlp(self.n2(x))     # residual path is untouched -> stable depth
+        return x</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">The one-liner &mdash; <code>nn.RMSNorm</code></h3></div>
+        <p class="text-sm text-slate-600 mb-3">PyTorch 2.4+ ships it. Same math as the module above, plus a functional form. This is the norm inside LLaMA, T5, Mistral and Gemma.</p>
+        <div class="relative"><pre>import torch, torch.nn as nn, torch.nn.functional as F
+
+norm = nn.RMSNorm(512, eps=1e-6)          # elementwise_affine=True -> learns gamma
+x = torch.randn(2, 7, 512)
+y = norm(x)
+
+# functional form -- identical result:
+y = F.rms_norm(x, (512,), weight=norm.weight, eps=1e-6)
+
+# used in place of LayerNorm by LLaMA 1/2/3, T5, Mistral, Gemma, PaLM, ...</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 31 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">LayerNorm does two jobs &mdash; <strong>re-center</strong> (subtract the mean) and <strong>re-scale</strong> (divide by the spread) &mdash; then applies a learnable <code>&gamma;</code> and <code>&beta;</code>. <strong>RMSNorm</strong> asks whether the re-centering earns its keep, and the answer at scale is no: it drops the mean subtraction <em>and</em> the bias, keeping only <code>y = &gamma; &middot; x / &radic;(mean(x&sup2;)+&epsilon;)</code>. That is <strong>one statistic instead of two</strong>, <strong>half the parameters</strong> (gain, no bias), and fewer element-wise ops &mdash; and because variance equals mean-of-squares whenever the input is already centered, it lands on the same answer as LayerNorm in the regime that dominates deep nets, while letting a genuine offset ride through when there is one. Trained models show no quality loss, which is why <strong>LLaMA, T5, Mistral, Gemma and PaLM</strong> all use RMSNorm in the pre-norm slot, with a final RMSNorm before the output head. The <code>&epsilon;</code> inside the square root is the one detail you cannot omit. <strong>&#128073; Tomorrow, Day 32:</strong> Learning-Rate Schedules &mdash; warmup then cosine decay, the training-time knob that decides whether a Transformer converges or diverges.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+</script>
+
+<script>
+// ============================================================
+// REAL LayerNorm vs RMSNorm on one token's feature vector (d=6).
+//   LayerNorm : y = g*(x - mean)/sqrt(var + eps) + b      (re-center + re-scale + g,b)
+//   RMSNorm   : y = g* x /sqrt(mean(x^2) + eps)           (re-scale only, no mean, no b)
+//   When mean(x)==0 : var == mean(x^2) => std == RMS => the two coincide (b=0).
+//   When mean(x)!=0 : LayerNorm removes the offset; RMSNorm keeps it.
+// ============================================================
+const EPS = 1e-5, N = 6;
+const PRESETS = {
+  zero:  { x:[-1.2, 0.8, -0.5, 1.1, -0.9, 0.7], g:1.0, b:0.0 },
+  off:   { x:[ 1.3, 3.3,  2.0, 3.6,  1.6, 3.2], g:1.0, b:0.0 },
+  spiky: { x:[ 0.2, 0.1,  2.8, -0.1, 0.3, 0.0], g:1.2, b:0.0 }
+};
+const state = { x: PRESETS.zero.x.slice(), gamma: 1.0, beta: 0.0 };
+
+function computeAll(){
+  const x = state.x, g = state.gamma, b = state.beta;
+  const mean = x.reduce((a,v)=>a+v,0)/N;
+  const varr = x.reduce((a,v)=>a+(v-mean)*(v-mean),0)/N;
+  const std  = Math.sqrt(varr + EPS);
+  const lnHat = x.map(v => (v - mean)/std);
+  const lnY   = lnHat.map(v => g*v + b);
+  const ms  = x.reduce((a,v)=>a+v*v,0)/N;
+  const rms = Math.sqrt(ms + EPS);
+  const rmsHat = x.map(v => v/rms);
+  const rmsY   = rmsHat.map(v => g*v);
+  return { mean, varr, std, lnHat, lnY, ms, rms, rmsHat, rmsY, g, b };
+}
+
+const fmtVec = a => "[" + a.map(v => v.toFixed(2)).join(", ") + "]";
+
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+const X0 = 92, X1 = 452;
+const ROWS = [
+  { cy: 82,  key: "x",    t: "input   x",                        col: "#64748b" },
+  { cy: 214, key: "lnY",  t: "LayerNorm   y = g(x-mu)/sigma + b", col: "#f43f5e" },
+  { cy: 346, key: "rmsY", t: "RMSNorm   y = g*x / RMS(x)",        col: "#fb7185" }
+];
+const HALF = 46;
+
+function draw(){
+  const s = computeAll();
+  const sets = { x: state.x, lnY: s.lnY, rmsY: s.rmsY };
+  let scale = 0;
+  Object.values(sets).forEach(arr => arr.forEach(v => scale = Math.max(scale, Math.abs(v))));
+  scale = (scale || 1) * 1.18;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const barW = (X1 - X0) / N;
+  ROWS.forEach(row => {
+    const arr = sets[row.key];
+    ctx.fillStyle = "#0f172a"; ctx.font = "bold 12px sans-serif";
+    ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    ctx.fillText(row.t, 14, row.cy - HALF - 12);
+    ctx.strokeStyle = "#cbd5e1"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(X0, row.cy); ctx.lineTo(X1, row.cy); ctx.stroke();
+    ctx.fillStyle = "#94a3b8"; ctx.font = "9px sans-serif"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    ctx.fillText("0", X0 - 6, row.cy);
+    for(let i=0;i<N;i++){
+      const v = arr[i], h = v/scale*HALF;
+      const bx = X0 + i*barW + 6, bw = barW - 12;
+      ctx.fillStyle = row.col;
+      ctx.globalAlpha = v >= 0 ? 1 : 0.55;
+      ctx.fillRect(bx, v >= 0 ? row.cy - h : row.cy, bw, Math.abs(h));
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#334155"; ctx.font = "9px monospace"; ctx.textAlign = "center";
+      ctx.textBaseline = v >= 0 ? "bottom" : "top";
+      ctx.fillText(v.toFixed(2), bx + bw/2, v >= 0 ? row.cy - h - 2 : row.cy - h + 2);
+    }
+  });
+  updateCards(s);
+}
+
+function updateCards(s){
+  document.getElementById("lnMean").textContent = s.mean.toFixed(3);
+  document.getElementById("lnVar").textContent  = s.varr.toFixed(3);
+  document.getElementById("lnStd").textContent  = s.std.toFixed(3);
+  document.getElementById("lnHat").textContent  = fmtVec(s.lnHat);
+  document.getElementById("lnY").textContent    = fmtVec(s.lnY);
+  document.getElementById("rmsMS").textContent  = s.ms.toFixed(3);
+  document.getElementById("rmsRMS").textContent = s.rms.toFixed(3);
+  document.getElementById("rmsHat").textContent = fmtVec(s.rmsHat);
+  document.getElementById("rmsY").textContent   = fmtVec(s.rmsY);
+  document.getElementById("gVal").textContent   = s.g.toFixed(2);
+  document.getElementById("bVal").textContent   = s.b.toFixed(2);
+  let md = 0; for(let i=0;i<N;i++) md = Math.max(md, Math.abs(s.lnY[i]-s.rmsY[i]));
+  const lnSum  = s.lnY.reduce((a,v)=>a+v,0);
+  const rmsSum = s.rmsY.reduce((a,v)=>a+v,0);
+  const note = document.getElementById("diffNote");
+  if(Math.abs(s.mean) < 0.05 && Math.abs(s.b) < 1e-9){
+    note.className = "rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-900";
+    note.innerHTML = "<strong>Input is &asymp; zero-mean and &beta;=0.</strong> Then variance = mean(x&sup2;), so <code>&sigma; = RMS</code> and the two outputs are <strong>identical</strong> (max |LN&minus;RMS| = " + md.toFixed(3) + "). RMSNorm reached LayerNorm&rsquo;s answer without ever computing the mean.";
+  } else {
+    note.className = "rounded-xl border border-rose-300 bg-rose-50 p-4 text-sm text-rose-900";
+    note.innerHTML = "<strong>Input mean &mu; = " + s.mean.toFixed(2) + (Math.abs(s.b) > 1e-9 ? ", &beta; = " + s.b.toFixed(2) : "") + ".</strong> LayerNorm subtracts &mu; &rarr; its output sums to &asymp; " + lnSum.toFixed(2) + ". RMSNorm keeps the offset &rarr; its output sums to " + rmsSum.toFixed(2) + ". The offset survives its normalization. Max |LN&minus;RMS| = " + md.toFixed(2) + ".";
+  }
+}
+
+const box = document.getElementById("xSliders");
+for(let i=0;i<N;i++){
+  const wrap = document.createElement("div");
+  wrap.className = "flex items-center gap-2";
+  wrap.innerHTML = "<span class='text-xs text-slate-500 w-10'>x<sub>" + i + "</sub>=<span id='xv" + i + "' class='stat font-bold text-slate-700'></span></span>" +
+    "<input id='xs" + i + "' type='range' min='-3' max='3' step='0.1' class='flex-1'>";
+  box.appendChild(wrap);
+}
+function syncSliders(){
+  for(let i=0;i<N;i++){
+    document.getElementById("xs"+i).value = state.x[i];
+    document.getElementById("xv"+i).textContent = state.x[i].toFixed(1);
+  }
+  document.getElementById("gSl").value = state.gamma;
+  document.getElementById("bSl").value = state.beta;
+}
+for(let i=0;i<N;i++){
+  document.getElementById("xs"+i).addEventListener("input", e => {
+    state.x[i] = +e.target.value;
+    document.getElementById("xv"+i).textContent = state.x[i].toFixed(1);
+    draw();
+  });
+}
+document.getElementById("gSl").addEventListener("input", e => { state.gamma = +e.target.value; draw(); });
+document.getElementById("bSl").addEventListener("input", e => { state.beta  = +e.target.value; draw(); });
+
+document.querySelectorAll("#presets button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#presets button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on");
+  const p = b.dataset.p;
+  if(p === "rand"){
+    state.x = Array.from({length:N}, () => +((Math.random()*4 - 2).toFixed(1)));
+    state.gamma = 1.0; state.beta = 0.0;
+  } else {
+    const pr = PRESETS[p];
+    state.x = pr.x.slice(); state.gamma = pr.g; state.beta = pr.b;
+  }
+  syncSliders(); draw();
+});
+
+syncSliders(); draw();
+</script>
+
+<script>
+const STEPS = [
+ { title:"1. Recap: LayerNorm re-centers and re-scales", why:"LayerNorm normalizes each token vector across its own d features, independently of the batch. It computes the mean mu and the variance sigma^2 over those features, subtracts the mean (re-centering), divides by the standard deviation sqrt(sigma^2+eps) (re-scaling to unit variance), then applies a learnable per-feature gain gamma and bias beta: y = gamma*(x-mu)/sigma + beta. Two statistics, two learnable vectors, batch-independent -- which is exactly why Transformers adopted it over BatchNorm. RMSNorm starts by asking a sharp question about this recipe: do we actually need the mean subtraction and the bias?", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">y = &gamma;&middot;(x&minus;&mu;)/&radic;(&sigma;&sup2;+&epsilon;) + &beta;<br>&mu; = mean(x)&nbsp;&nbsp;&sigma;&sup2; = var(x)<br>re-center (&minus;&mu;) + re-scale (/&sigma;)<br>two learnable vectors: &gamma;, &beta;</div>`, code:"mean = x.mean(-1, keepdim=True)\nvar  = x.var(-1, keepdim=True)\ny = g * (x - mean) / (var + eps).sqrt() + b   # re-center + re-scale + affine" },
+ { title:"2. The insight: re-scaling does most of the work", why:"Zhang and Sennrich (2019) pulled LayerNorm apart and tested its pieces. They found the benefit comes overwhelmingly from the re-scaling -- dividing by a spread statistic to fix the activation magnitude -- and very little from the re-centering. Subtracting the mean makes the vector invariant to a constant shift, but in a deep net with learned weights that particular invariance turns out to matter little for optimization. So the proposal is blunt: drop the mean entirely and keep only a scale normalization. That stripped-down normalizer is RMSNorm.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">LayerNorm = re-center + re-scale<br>ablation: re-scale &asymp; all the benefit<br>re-center &asymp; negligible<br>&rArr; keep the scale, drop the mean</div>`, code:"# Zhang & Sennrich (2019): ablate LayerNorm\n#   remove the -mean step, keep the /spread step  ->  quality holds\n# conclusion: it's the RE-SCALING that matters, not the RE-CENTERING" },
+ { title:"3. The statistic: RMS = sqrt(mean(x^2))", why:"Instead of variance (spread measured around the mean), RMSNorm measures the raw magnitude of the vector with the root-mean-square: RMS(x) = sqrt( (1/d) * sum(x_i^2) ). Crucially it needs no mean, so it is a single reduction over the features rather than two. There is a clean relationship to LayerNorm: when the vector already has zero mean, mean(x^2) equals the variance, so RMS equals the standard deviation and the two norms coincide. When the mean is non-zero, RMS folds the offset's energy into the denominator instead of removing it.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">RMS(x) = &radic;( (1/d) &Sigma; x&#7522;&sup2; )<br>no mean term &rarr; one reduction pass<br>if mean(x)=0 &rarr; RMS = std<br>magnitude, not spread-around-mean</div>`, code:"ms  = (x**2).mean(-1, keepdim=True)   # mean of squares -- no mean subtracted\nrms = (ms + eps).sqrt()               # a single statistic" },
+ { title:"4. The formula: y = gamma * x / RMS(x)", why:"RMSNorm divides each feature by the RMS and multiplies by a learnable per-feature gain gamma: y = gamma * x / sqrt(mean(x^2)+eps). No subtraction, no beta. Geometrically it projects x onto a sphere of fixed radius sqrt(d) (before gamma is applied), so only the direction of the vector and the per-feature gains survive -- the overall magnitude is thrown away. Fixing the scale of the activations flowing along the residual stream is precisely the property that keeps very deep Transformers stable, and RMSNorm delivers it with the minimum of machinery.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">y = &gamma; &#8857; x / &radic;(mean(x&sup2;)+&epsilon;)<br>scales x to fixed length &radic;d, then &times;&gamma;<br>no &minus;&mu;, no +&beta;<br>direction kept, magnitude fixed</div>`, code:"rms = x.pow(2).mean(-1, keepdim=True).add(eps).sqrt()\ny = g * x / rms          # gain only -- no mean, no bias" },
+ { title:"5. What's dropped: mean and beta -> fewer ops, half the params", why:"Against LayerNorm, RMSNorm removes two things. First the mean: no mean reduction and no per-feature subtraction, so one fewer pass over the features and d fewer subtractions per vector. Second the bias beta: the layer now carries a single learnable vector gamma instead of two, halving the normalizer's parameters. Each saving is trivial in isolation, but an LLM applies these norms to enormous activation tensors, twice per layer, across dozens of layers -- so it adds up. The original paper reports up to ~64% run-time reduction on some RNN tasks and single-digit percentages on Transformers.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">dropped: mean pass, &minus;&mu;, and &beta;<br>params: 2d (&gamma;,&beta;) &rarr; d (&gamma; only)<br>stats: 2 (&mu;,&sigma;&sup2;) &rarr; 1 (RMS)<br>cheaper element-wise + one reduction</div>`, code:"# LayerNorm : mean + var  (2 reductions) , gamma & beta (2d params)\n# RMSNorm   : mean of x^2  (1 reduction)  , gamma only   (d  params)\n# -> fewer ops per token, half the norm parameters" },
+ { title:"6. Why it trains just as well", why:"The natural worry is that discarding re-centering costs accuracy. Empirically it does not. RMSNorm matches LayerNorm quality across machine translation, language modelling and vision, and the evidence at scale is now overwhelming: LLaMA 1/2/3, T5, Mistral, Gemma, PaLM and most 2023+ large models use RMSNorm rather than LayerNorm, with a final RMSNorm before the output projection. When a normalizer is cheaper, has fewer parameters, and matches quality, it becomes the default -- and it has.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">quality: RMSNorm &asymp; LayerNorm (empirical)<br>used by LLaMA, T5, Mistral, Gemma, PaLM<br>cheaper + equal quality<br>&rArr; default norm for modern LLMs</div>`, code:"# same loss curves as LayerNorm, fewer FLOPs and fewer params\n# adopted by LLaMA / T5 / Mistral / Gemma / PaLM in the pre-norm slot" },
+ { title:"7. Where it sits: pre-norm placement", why:"Modern Transformers are pre-norm: the normalizer is applied to the INPUT of each sub-layer, inside the residual branch -- x + Attn(Norm(x)) and x + MLP(Norm(x)) -- not after the addition (post-norm, as in the original 2017 Transformer). Pre-norm leaves a clean identity path running down the residual stream, so gradients flow straight through and you can stack dozens of layers without learning-rate warmup gymnastics. RMSNorm is the norm plugged into that Norm(.) slot in essentially every recent LLM, plus one final RMSNorm before the LM head.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">pre-norm: x + Sublayer(Norm(x))<br>norm INSIDE the residual branch<br>clean identity path &rarr; stable deep stacks<br>+ final RMSNorm before the LM head</div>`, code:"# pre-norm block (what LLaMA does)\nh = x + attn(rmsnorm_1(x))\nh = h + mlp( rmsnorm_2(h))\n# residual stream is never normalized directly -> gradients flow" },
+ { title:"8. Numerical stability: the epsilon", why:"Dividing by the RMS blows up if the vector is near zero, so an epsilon is added inside the square root: sqrt(mean(x^2)+eps). Typical values are 1e-5 or 1e-6. It guards against divide-by-zero and against exploding gradients when magnitudes are tiny, at the cost of a slight bias toward smaller outputs for very small inputs. LLaMA uses 1e-6. A related production detail: compute the mean-of-squares in float32 even for a bf16/fp16 model, then cast back, because that squared sum is where precision is lost. Leave the epsilon out and training NaNs.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">y = &gamma; &middot; x / &radic;(mean(x&sup2;) + &epsilon;)<br>&epsilon; &asymp; 1e-5 ... 1e-6 (LLaMA: 1e-6)<br>prevents &divide;0 and exploding grads<br>inside the sqrt, and compute in fp32</div>`, code:"rms = x.float().pow(2).mean(-1, keepdim=True).add(eps).sqrt()\ny = (g * x.float() / rms).to(x.dtype)   # eps guards div-by-0; fp32 for stability" },
+ { title:"9. When centering actually matters", why:"RMSNorm is not a universal free lunch. Re-centering earns its keep when the input carries a large, informative DC offset that the layer should not be forced to preserve: LayerNorm removes it, whereas RMSNorm lets it ride through and pushes the burden of dealing with it onto the weights. For inputs that are already roughly zero-mean -- common a few layers in, and after learned linear projections -- the two normalizers are near-identical, which is the regime where RMSNorm's savings come for free. If you ever see a persistent mean drift hurting a model, LayerNorm's explicit subtraction is the tool that fixes it.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">RMSNorm keeps any DC offset (mean)<br>LayerNorm removes it<br>&asymp; equal when input &asymp; zero-mean<br>offset-heavy inputs &rarr; centering can help</div>`, code:"# non-zero-mean input:\n#   LayerNorm output sums to ~0   (offset removed)\n#   RMSNorm  output keeps the offset direction (offset survives)\n# already-centered input -> the two are the same" },
+ { title:"10. Cousins: LayerNorm, ScaleNorm and friends", why:"RMSNorm sits in a family of feature-normalizers that differ in how much they strip away. LayerNorm is the full recipe: re-center, re-scale, plus gamma and beta. RMSNorm drops the mean and the bias, keeping a per-feature gain over an RMS scale. ScaleNorm goes further still, replacing the per-feature gamma with a single scalar and normalizing by the L2 norm of the whole vector. The direction of travel is unmistakable: strip the normalizer down to the cheapest operation that keeps activation scale under control, and let the rest of the network learn around it. RMSNorm is the point on that curve that today's LLMs settled on.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">LayerNorm: &minus;&mu;, /&sigma;, then &gamma;,&beta;<br>RMSNorm : /RMS, then &gamma;<br>ScaleNorm: /&#8214;x&#8214;&#8322;, one scalar g<br>trend &rarr; cheapest scale control that still trains</div>`, code:"# LayerNorm : y = g*(x-mean)/std + b\n# RMSNorm   : y = g * x / rms(x)\n# ScaleNorm : y = g * x / (x.norm(dim=-1, keepdim=True) + eps)  # single scalar g" }
+];
+</script>
+
+<script>
+const stepsEl=document.getElementById("steps");
+const prevB=document.getElementById("prev"), nextB=document.getElementById("next-btn"), autoB=document.getElementById("auto");
+let curS=0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },4200); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>
