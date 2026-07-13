@@ -38,6 +38,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 29 — Positional Encoding](https://dev48v.infy.uk/dl/day29-positional-encoding.html) — `day29-positional-encoding.html`
 - [DeepLearningFromZero · Day 30 — Multi-Head Attention](https://dev48v.infy.uk/dl/day30-multi-head-attention.html) — `day30-multi-head-attention.html`
 - [DeepLearningFromZero · Day 31 — RMSNorm](https://dev48v.infy.uk/dl/day31-rmsnorm.html) — `day31-rmsnorm.html`
+- [DeepLearningFromZero · Day 32 — Learning-Rate Schedules](https://dev48v.infy.uk/dl/day32-lr-schedules.html) — `day32-lr-schedules.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk

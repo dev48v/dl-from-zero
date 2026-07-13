@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 32 — Learning-Rate Schedules</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  #cv, #curve, #bowl { background:#fff; border:2px solid #0f172a; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,.12); }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  table.res { width:100%; border-collapse:collapse; font-size:12px; }
+  table.res th, table.res td { padding:5px 8px; text-align:left; border-bottom:1px solid #e2e8f0; }
+  table.res th { color:#64748b; font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:.04em; }
+  table.res td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.win { background:#fff1f2; }
+  .tokbtn { border:2px solid #e2e8f0; }
+  .tokbtn.on { border-color:#f43f5e; background:#fff1f2; color:#be123c; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .vec { font-family:ui-monospace,Menlo,monospace; font-size:11px; }
+  .sk { color:#be123c; font-weight:700; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 32</div>
+      <h1 class="text-xl font-bold">&#128200; Learning-Rate Schedules &mdash; the LR is the single most important knob, and <em>changing it over training</em> &mdash; a warmup ramp, then a cosine glide down to zero &mdash; often decides convergence more than the number you pick</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Same model, same data &mdash; only the shape of the learning rate changes. Watch it decide whether the optimizer converges, crawls, or blows up.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto">A schedule is just a function <code>lr(t)</code> that returns the step size at training step <code>t</code>. Pick a schedule and its parameters on the left and read the <strong>signature curve</strong> &mdash; a flat line, a staircase, a smooth cosine glide, sawtooth restarts, or the 1-cycle hump. On the right, that <em>same</em> curve drives a real gradient-descent run on an ill-conditioned bowl (steep in one direction, shallow in the other). A <strong class="text-rose-600">too-high</strong> constant rate oscillates and diverges up the steep wall; a <strong>too-low</strong> one crawls and never arrives; the <strong class="text-rose-600">scheduled</strong> rate &mdash; warm up so the first steps do not overshoot, then decay to near zero so it settles &mdash; lands cleanly in the basin. The value matters; the <em>shape</em> matters just as much.</p>
+
+      <div class="flex justify-center gap-3 mb-4 flex-wrap items-center">
+        <span class="text-sm text-slate-600 self-center">schedule:</span>
+        <div id="scheds" class="flex gap-1 flex-wrap justify-center">
+          <button data-s="const"    class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">Constant</button>
+          <button data-s="step"     class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">Step decay</button>
+          <button data-s="exp"      class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">Exponential</button>
+          <button data-s="cosine"   class="tokbtn on px-3 py-1.5 rounded-lg font-bold text-sm">Cosine anneal</button>
+          <button data-s="sgdr"     class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">Cosine + restarts</button>
+          <button data-s="linwd"    class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">Warmup + linear</button>
+          <button data-s="onecycle" class="tokbtn px-3 py-1.5 rounded-lg font-bold text-sm">1-cycle</button>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-4 items-start text-left">
+        <div class="bg-white rounded-xl border border-rose-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">The schedule &mdash; lr vs training step</div>
+          <div id="ctrls" class="grid grid-cols-2 gap-x-6 gap-y-2 mb-3"></div>
+          <canvas id="curve" width="470" height="270" class="mx-auto w-full"></canvas>
+          <p class="text-xs text-slate-400 mt-2">Shaded band = the <strong>warmup</strong> phase (linear ramp <code>0&rarr;base</code>). The rose curve is the exact <code>lr(t)</code> fed to the optimizer at every step. Peak LR <span id="peak" class="sk stat"></span>, final LR <span id="last" class="sk stat"></span>.</p>
+        </div>
+
+        <div class="space-y-4">
+          <div class="bg-white rounded-xl border border-slate-200 p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">The same curve, driving descent on a bowl</div>
+            <canvas id="bowl" width="470" height="270" class="mx-auto w-full"></canvas>
+            <div class="flex gap-4 justify-center mt-2 text-xs">
+              <span class="inline-flex items-center gap-1"><span style="width:14px;height:3px;background:#ef4444;display:inline-block;"></span> too-high (fixed)</span>
+              <span class="inline-flex items-center gap-1"><span style="width:14px;height:3px;background:#94a3b8;display:inline-block;"></span> too-low (fixed)</span>
+              <span class="inline-flex items-center gap-1"><span style="width:14px;height:4px;background:#f43f5e;display:inline-block;"></span> the schedule</span>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-xl border border-rose-200 p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">After 130 steps &mdash; final loss (0 = optimum)</div>
+            <table class="res">
+              <thead><tr><th>strategy</th><th>step size</th><th>final loss</th><th>outcome</th></tr></thead>
+              <tbody>
+                <tr><td>too-high (fixed)</td><td class="num">0.110</td><td class="num"><span id="fHi" class="stat font-bold">0</span></td><td><span id="oHi" class="pill"></span></td></tr>
+                <tr><td>too-low (fixed)</td><td class="num">0.008</td><td class="num"><span id="fLo" class="stat font-bold">0</span></td><td><span id="oLo" class="pill"></span></td></tr>
+                <tr class="win"><td><strong>the schedule</strong></td><td class="num">curve &darr;</td><td class="num"><span id="fSc" class="sk font-bold">0</span></td><td><span id="oSc" class="pill"></span></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div id="note" class="rounded-xl border p-4 text-sm"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Shaping the learning rate</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">A schedule is nothing more than a rule for setting <code>optimizer.param_groups[i]["lr"]</code> before each step. You saw the shapes; here is how PyTorch gives them to you &mdash; first the from-scratch version so the mechanism is unmistakable, then the built-in schedulers, then how to chain a warmup in front of a cosine (the transformer recipe), <code>OneCycleLR</code> with its inverse momentum, and finally where <code>scheduler.step()</code> actually goes in the loop.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">From scratch: a schedule is just a function of the step</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Warmup is a linear ramp <code>0&rarr;base</code> over the first <code>W</code> steps; after that, cosine annealing rides <code>base&rarr;0</code>. Compute the multiplier, write it into the optimizer. That is the whole idea &mdash; every scheduler below is a packaged version of this.</p>
+        <div class="relative"><pre>import math
+
+def lr_at(step, base, warmup, total):
+    if step &lt; warmup:                       # linear warmup: 0 -> base
+        return base * step / max(1, warmup)
+    progress = (step - warmup) / max(1, total - warmup)   # 0 -> 1
+    return base * 0.5 * (1 + math.cos(math.pi * progress)) # cosine: base -> 0
+
+base, W, T = 3e-4, 500, 10000
+for step in [0, 250, 500, 5000, 10000]:
+    for g in optimizer.param_groups:
+        g["lr"] = lr_at(step, base, W, T)
+    # ... optimizer.step() ...</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Built-in staircases: StepLR &amp; ExponentialLR</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The classic decays. <code>StepLR</code> multiplies the LR by <code>gamma</code> every <code>step_size</code> epochs (a staircase); <code>ExponentialLR</code> multiplies by <code>gamma</code> every epoch (a smooth version of the same). Call <code>scheduler.step()</code> once per epoch here.</p>
+        <div class="relative"><pre>import torch
+opt = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
+
+# drop LR x0.1 at epoch 30 and 60:
+sched = torch.optim.lr_scheduler.StepLR(opt, step_size=30, gamma=0.1)
+# or a milestone list:
+# sched = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=[30,60,90], gamma=0.1)
+# or smooth exponential decay every epoch:
+# sched = torch.optim.lr_scheduler.ExponentialLR(opt, gamma=0.95)
+
+for epoch in range(90):
+    train_one_epoch(...)
+    sched.step()                 # after the epoch
+    print(epoch, sched.get_last_lr()[0])</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Cosine annealing &amp; SGDR warm restarts</h3></div>
+        <p class="text-sm text-slate-600 mb-3"><code>CosineAnnealingLR</code> glides <code>base&rarr;eta_min</code> over <code>T_max</code> steps &mdash; the modern default. <code>CosineAnnealingWarmRestarts</code> is SGDR: it anneals over a cycle of <code>T_0</code> steps, then jumps the LR back up and starts again (<code>T_mult</code> lengthens each cycle). The jumps help the optimizer hop out of one basin into another.</p>
+        <div class="relative"><pre>import torch
+opt = torch.optim.SGD(model.parameters(), lr=0.1)
+
+# smooth cosine to ~0 over the whole run:
+cos = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=1000, eta_min=0.0)
+
+# SGDR: restart every T_0 steps, each cycle 2x longer:
+sgdr = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            opt, T_0=200, T_mult=2, eta_min=1e-5)
+
+for step in range(1000):
+    train_step(...)
+    sgdr.step()                  # per-step scheduler</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Warmup + cosine &mdash; the transformer recipe</h3></div>
+        <p class="text-sm text-slate-600 mb-3">This is what actually trains modern models. Either chain a <code>LinearLR</code> warmup in front of a <code>CosineAnnealingLR</code> with <code>SequentialLR</code>, or use the one call from HuggingFace <code>transformers</code>. Both give the ramp-then-glide shape.</p>
+        <div class="relative"><pre>import torch
+opt = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=0.1)
+W, T = 500, 10000
+
+warm = torch.optim.lr_scheduler.LinearLR(opt, start_factor=1e-8, total_iters=W)
+cos  = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=T - W)
+sched = torch.optim.lr_scheduler.SequentialLR(opt, [warm, cos], milestones=[W])
+
+# --- or the one-liner every HF trainer uses: ---
+from transformers import get_cosine_schedule_with_warmup
+sched = get_cosine_schedule_with_warmup(
+            opt, num_warmup_steps=W, num_training_steps=T)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">1-cycle &mdash; up then down, momentum inverse</h3></div>
+        <p class="text-sm text-slate-600 mb-3"><code>OneCycleLR</code> ramps the LR from <code>max_lr/div_factor</code> up to <code>max_lr</code>, then anneals it down to near zero &mdash; and moves <em>momentum the opposite way</em> (high while LR is low, low while LR is high). Set <code>max_lr</code> from an LR range test; it drives the "super-convergence" fast-training regime.</p>
+        <div class="relative"><pre>import torch
+opt = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
+
+steps_per_epoch, epochs = len(train_loader), 30
+sched = torch.optim.lr_scheduler.OneCycleLR(
+            opt, max_lr=0.5,
+            steps_per_epoch=steps_per_epoch, epochs=epochs,
+            pct_start=0.3,           # fraction spent ramping up
+            div_factor=25,           # start lr = max_lr / 25
+            base_momentum=0.85, max_momentum=0.95)  # cycled inversely
+
+for epoch in range(epochs):
+    for batch in train_loader:
+        train_step(batch)
+        sched.step()                 # per BATCH for OneCycle</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Wiring it into the loop correctly</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The one bug everyone hits: <code>scheduler.step()</code> goes <strong>after</strong> <code>optimizer.step()</code>, and per-step schedulers (cosine warmup, OneCycle, SGDR) step every <em>batch</em>, not every epoch. <code>ReduceLROnPlateau</code> is the exception &mdash; it reads a validation metric.</p>
+        <div class="relative"><pre>for epoch in range(epochs):
+    for batch in train_loader:
+        opt.zero_grad()
+        loss = compute_loss(model, batch)
+        loss.backward()
+        opt.step()          # 1. update weights
+        sched.step()        # 2. THEN advance the LR (per-step schedulers)
+
+    # metric-driven schedulers step once per epoch, on a number:
+    # plateau = ReduceLROnPlateau(opt, mode="min", factor=0.5, patience=5)
+    # plateau.step(val_loss)
+
+    print(epoch, opt.param_groups[0]["lr"])</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 32 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">A learning-rate schedule is a function <code>lr(t)</code> the optimizer reads every step. One fixed value is a compromise: high enough to make early progress means overshooting near the minimum; low enough to settle means crawling at the start. Schedules resolve the tension in time. <strong>Warmup</strong> ramps <code>0&rarr;base</code> so the first, noisiest steps (large-batch, Adam's cold variance estimates, deep transformers) do not blow up. <strong>Step</strong> and <strong>exponential</strong> decay are the classic staircases; <strong>cosine annealing</strong> <code>&frac12;&middot;base&middot;(1+cos(&pi;t/T))</code> is the smooth modern default, gliding to near zero so the model settles; <strong>SGDR</strong> adds periodic restarts to escape basins; <strong>1-cycle</strong> goes up-then-down with inverse momentum for fast training. The schedule also couples to batch size (linear scaling rule) and optimizer (Adam needs warmup more than SGD). The recipe that trains essentially every transformer is simply <strong>linear warmup then cosine decay</strong>. <strong>&#128073; Tomorrow, Day 33:</strong> Knowledge Distillation &mdash; training a small student to match a big teacher's soft predictions.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+</script>
+
+<script>
+// ============================================================
+// REAL learning-rate schedules -> lr(t), plotted, and driving a real
+// gradient-descent run on an ill-conditioned quadratic bowl.
+//   warmup     : linear ramp 0 -> base over `warmup` steps
+//   step       : base * gamma^floor(t/stepSize)
+//   exp        : base * gamma^(t/stepSize)            (smooth staircase)
+//   cosine     : 0.5*base*(1 + cos(pi * t / T))       base -> 0
+//   sgdr       : cosine within each restart period stepSize
+//   linwd      : warmup then LINEAR decay base -> 0
+//   onecycle   : cosine up to base, then cosine down to ~0 (+ inverse momentum)
+// The chosen curve drives the descent; two fixed rates bracket it.
+// ============================================================
+const state = { sched:"cosine", base:0.30, warmup:60, total:500, gamma:0.90, stepSize:100 };
+
+function lrAt(t){
+  const { sched, base, warmup, total, gamma, stepSize } = state;
+  if(sched === "const")    return base;                       // the naive baseline: flat
+  if(sched === "onecycle") return oneCycle(t);
+  if(warmup > 0 && t < warmup) return base * (t / warmup);     // linear warmup: 0 -> base
+  const t2 = t - warmup;
+  const T2 = Math.max(1, total - warmup);
+  switch(sched){
+    case "step":   return base * Math.pow(gamma, Math.floor(t2 / stepSize));
+    case "exp":    return base * Math.pow(gamma, t2 / stepSize);
+    case "cosine": return 0.5 * base * (1 + Math.cos(Math.PI * Math.min(t2, T2) / T2));
+    case "sgdr": { const Ti = Math.max(1, stepSize); const tc = t2 % Ti;
+                   return 0.5 * base * (1 + Math.cos(Math.PI * tc / Ti)); }
+    case "linwd":  return base * (T2 - Math.min(t2, T2)) / T2;  // linear base -> 0
+  }
+  return base;
+}
+function oneCycle(t){
+  const { base, total } = state;
+  const maxLr = base, initLr = base / 25, finalLr = base / 2500;
+  const up = Math.max(1, Math.floor(0.30 * total));
+  if(t <= up){ const p = t / up;                       // cosine ramp up
+    return initLr + (maxLr - initLr) * 0.5 * (1 - Math.cos(Math.PI * p)); }
+  const p = (t - up) / Math.max(1, total - up);        // cosine anneal down
+  return finalLr + (maxLr - finalLr) * 0.5 * (1 + Math.cos(Math.PI * p));
+}
+function momAt(t){ // 1-cycle momentum runs inverse to LR (display only)
+  const { total } = state; const up = Math.max(1, Math.floor(0.30 * total)), hi=0.95, lo=0.85;
+  if(t <= up){ const p = t/up; return hi - (hi-lo)*0.5*(1-Math.cos(Math.PI*p)); }
+  const p=(t-up)/Math.max(1,total-up); return lo + (hi-lo)*0.5*(1+Math.cos(Math.PI*p));
+}
+
+// ---------- descent on f(x,y) = 0.5*(x^2 + C*y^2) ----------
+const C = 25;
+const lossF = (x,y) => 0.5*(x*x + C*y*y);
+function runPath(lrFn, steps){
+  let x = 2.6, y = 2.2; const pts = [[x,y]];
+  for(let t=0;t<steps;t++){
+    const lr = lrFn(t);
+    x -= lr * x; y -= lr * (C*y);
+    if(!isFinite(x) || Math.abs(x) > 1e4) x = Math.sign(x||1)*1e4;
+    if(!isFinite(y) || Math.abs(y) > 1e4) y = Math.sign(y||1)*1e4;
+    pts.push([x,y]);
+  }
+  return pts;
+}
+const SIM = 130;
+
+// ---------- curve canvas ----------
+const cc = document.getElementById("curve"), cx = cc.getContext("2d");
+function drawCurve(){
+  const T = state.total;
+  const lrs = []; let peak = 0;
+  for(let t=0;t<=T;t++){ const v = lrAt(t); lrs.push(v); if(v>peak) peak=v; }
+  const ymax = (peak || state.base) * 1.12;
+  const L=44, R=cc.width-12, B=cc.height-26, Tp=14;
+  cx.clearRect(0,0,cc.width,cc.height);
+  const X = t => L + (t/T)*(R-L);
+  const Y = v => B - (v/ymax)*(B-Tp);
+  // warmup band
+  if(state.warmup>0 && state.sched!=="const" && state.sched!=="onecycle"){
+    cx.fillStyle="#fff1f2"; cx.fillRect(X(0), Tp, X(state.warmup)-X(0), B-Tp);
+  }
+  // axes + gridlines
+  cx.strokeStyle="#e2e8f0"; cx.lineWidth=1;
+  for(let g=0; g<=4; g++){ const yy=Tp+(B-Tp)*g/4; cx.beginPath(); cx.moveTo(L,yy); cx.lineTo(R,yy); cx.stroke(); }
+  cx.strokeStyle="#94a3b8"; cx.beginPath(); cx.moveTo(L,Tp); cx.lineTo(L,B); cx.lineTo(R,B); cx.stroke();
+  cx.fillStyle="#94a3b8"; cx.font="9px sans-serif"; cx.textAlign="right"; cx.textBaseline="middle";
+  cx.fillText(ymax.toFixed(2), L-5, Tp); cx.fillText("0", L-5, B);
+  cx.textAlign="center"; cx.textBaseline="top";
+  cx.fillText("step 0", L, B+4); cx.fillText("step "+T, R, B+4);
+  cx.save(); cx.translate(11,(Tp+B)/2); cx.rotate(-Math.PI/2); cx.textBaseline="alphabetic"; cx.textAlign="center"; cx.fillText("learning rate", 0, 0); cx.restore();
+  // momentum (1-cycle only), faint
+  if(state.sched==="onecycle"){
+    cx.strokeStyle="#cbd5e1"; cx.lineWidth=1.5; cx.beginPath();
+    for(let t=0;t<=T;t++){ const m=momAt(t); const yy=B-((m-0.80)/(1.0-0.80))*(B-Tp); (t===0?cx.moveTo(X(t),yy):cx.lineTo(X(t),yy)); }
+    cx.stroke();
+    cx.fillStyle="#94a3b8"; cx.font="9px sans-serif"; cx.textAlign="left"; cx.textBaseline="top"; cx.fillText("momentum (inverse), faint", L+4, Tp+2);
+  }
+  // the LR curve
+  cx.strokeStyle="#f43f5e"; cx.lineWidth=2.4; cx.beginPath();
+  for(let t=0;t<=T;t++){ (t===0?cx.moveTo(X(t),Y(lrs[t])):cx.lineTo(X(t),Y(lrs[t]))); }
+  cx.stroke();
+  // peak dot
+  const pk = lrs.indexOf(peak);
+  cx.fillStyle="#be123c"; cx.beginPath(); cx.arc(X(pk),Y(peak),3.2,0,7); cx.fill();
+  document.getElementById("peak").textContent = peak.toFixed(3);
+  document.getElementById("last").textContent = lrs[T].toFixed(3);
+}
+
+// ---------- bowl canvas ----------
+const bc = document.getElementById("bowl"), bx = bc.getContext("2d");
+function drawBowl(){
+  const cxp = bc.width/2, cyp = bc.height/2, sX = 66, sY = 42;
+  const W = (x,y) => [cxp + x*sX, cyp - y*sY];
+  bx.clearRect(0,0,bc.width,bc.height);
+  // contour ellipses of f = L
+  bx.strokeStyle="#e2e8f0"; bx.lineWidth=1;
+  [0.4,1.2,2.6,4.5].forEach(Lv=>{
+    const ax = Math.sqrt(2*Lv)*sX, ay = Math.sqrt(2*Lv/C)*sY;
+    bx.beginPath(); bx.ellipse(cxp,cyp,ax,ay,0,0,7); bx.stroke();
+  });
+  // axes
+  bx.strokeStyle="#cbd5e1"; bx.beginPath(); bx.moveTo(0,cyp); bx.lineTo(bc.width,cyp); bx.moveTo(cxp,0); bx.lineTo(cxp,bc.height); bx.stroke();
+  // optimum
+  bx.fillStyle="#10b981"; bx.beginPath(); bx.arc(cxp,cyp,4,0,7); bx.fill();
+  bx.fillStyle="#059669"; bx.font="9px sans-serif"; bx.textAlign="left"; bx.textBaseline="bottom"; bx.fillText("optimum", cxp+6, cyp-4);
+  // three paths
+  const simScale = 0.06 / state.base;
+  const paths = [
+    { fn:()=>0.110,                                       col:"#ef4444", w:1.6, id:"Hi" },
+    { fn:()=>0.008,                                       col:"#94a3b8", w:1.6, id:"Lo" },
+    { fn:(t)=> lrAt(Math.floor(t/SIM*state.total))*simScale, col:"#f43f5e", w:2.6, id:"Sc" }
+  ];
+  paths.forEach(p=>{
+    const pts = runPath(p.fn, SIM);
+    bx.strokeStyle=p.col; bx.lineWidth=p.w; bx.beginPath();
+    pts.forEach((pt,i)=>{ const [px,py]=W(pt[0],pt[1]);
+      const qx=Math.max(-40,Math.min(bc.width+40,px)), qy=Math.max(-40,Math.min(bc.height+40,py));
+      (i===0?bx.moveTo(qx,qy):bx.lineTo(qx,qy)); });
+    bx.stroke();
+    // end marker + result
+    const last = pts[pts.length-1]; const fl = lossF(last[0],last[1]);
+    const [ex,ey]=W(last[0],last[1]);
+    if(Math.abs(ex)<bc.width+30 && Math.abs(ey)<bc.height+30){ bx.fillStyle=p.col; bx.beginPath(); bx.arc(Math.max(4,Math.min(bc.width-4,ex)),Math.max(4,Math.min(bc.height-4,ey)),3,0,7); bx.fill(); }
+    const el = document.getElementById("f"+p.id), ol = document.getElementById("o"+p.id);
+    const diverged = !isFinite(fl) || fl > 50;
+    el.textContent = diverged ? "→ ∞" : fl.toFixed(3);
+    if(diverged){ ol.className="pill"; ol.style.background="#fee2e2"; ol.style.color="#b91c1c"; ol.textContent="diverged"; }
+    else if(fl < 0.05){ ol.className="pill"; ol.style.background="#dcfce7"; ol.style.color="#15803d"; ol.textContent="converged"; }
+    else { ol.className="pill"; ol.style.background="#fef9c3"; ol.style.color="#a16207"; ol.textContent="crawling"; }
+  });
+}
+
+const NOTES = {
+  const:   ["border-rose-300 bg-rose-50 text-rose-900",  "<strong>Constant LR.</strong> One value for all of training. Pick it high and it overshoots the narrow valley (the steep axis oscillates); pick it low and the shallow axis barely moves. There is no single number that is both fast early and precise late &mdash; that is the whole reason schedules exist."],
+  step:    ["border-slate-300 bg-slate-50 text-slate-800","<strong>Step decay.</strong> Hold the LR, then cut it by <code>&gamma;</code> at fixed boundaries. Each drop lets the optimizer settle into a finer minimum. Simple and effective &mdash; the classic ImageNet recipe (x0.1 at 30/60/90 epochs)."],
+  exp:     ["border-slate-300 bg-slate-50 text-slate-800","<strong>Exponential decay.</strong> The smooth version of the staircase: <code>base&middot;&gamma;^(t/step)</code>. No abrupt jumps, but you have to tune the rate so it does not decay to nothing before training finishes."],
+  cosine:  ["border-rose-300 bg-rose-50 text-rose-900",   "<strong>Cosine annealing.</strong> <code>&frac12;&middot;base&middot;(1+cos(&pi;t/T))</code> glides smoothly from <code>base</code> to ~0. Fast progress early, a long gentle tail that settles the model precisely. With a warmup in front this is the modern default and what trains most transformers."],
+  sgdr:    ["border-rose-300 bg-rose-50 text-rose-900",   "<strong>Cosine with warm restarts (SGDR).</strong> Anneal to near zero, then snap the LR back up and repeat. The jumps kick the optimizer out of one basin to explore another; snapshots taken at each restart's end make a cheap ensemble."],
+  linwd:   ["border-slate-300 bg-slate-50 text-slate-800","<strong>Warmup + linear decay.</strong> Ramp up, then draw a straight line down to zero. The plainer cousin of warmup+cosine and the default in many NLP fine-tuning scripts (BERT-style)."],
+  onecycle:["border-rose-300 bg-rose-50 text-rose-900",   "<strong>1-cycle.</strong> One big hump: ramp up to a high <code>max_lr</code>, then anneal below the start &mdash; with <em>momentum moving the opposite way</em>. The brief high-LR phase acts as regularization and enables 'super-convergence': strong accuracy in far fewer epochs."]
+};
+function drawNote(){ const n=document.getElementById("note"); const [cls,html]=NOTES[state.sched]; n.className="rounded-xl border p-4 text-sm "+cls; n.innerHTML=html; }
+
+function redraw(){ drawCurve(); drawBowl(); drawNote(); }
+
+// ---------- controls ----------
+const CTRL = [
+  { k:"base",     label:"base LR",     min:0.02, max:1.0,  step:0.01, fmt:v=>v.toFixed(2) },
+  { k:"warmup",   label:"warmup steps",min:0,    max:250,  step:5,    fmt:v=>v.toFixed(0) },
+  { k:"total",    label:"total steps", min:100,  max:1000, step:20,   fmt:v=>v.toFixed(0) },
+  { k:"gamma",    label:"decay γ (step/exp)", min:0.50, max:0.99, step:0.01, fmt:v=>v.toFixed(2) },
+  { k:"stepSize", label:"step size / period", min:20, max:250, step:10, fmt:v=>v.toFixed(0) }
+];
+const ctrlBox = document.getElementById("ctrls");
+CTRL.forEach(c=>{
+  const wrap=document.createElement("div"); wrap.className="flex items-center gap-2";
+  wrap.innerHTML = "<span class='text-xs text-slate-500 w-28'>"+c.label+"=<span id='v_"+c.k+"' class='stat font-bold text-rose-600'></span></span>"+
+    "<input id='s_"+c.k+"' type='range' min='"+c.min+"' max='"+c.max+"' step='"+c.step+"' value='"+state[c.k]+"' class='flex-1'>";
+  ctrlBox.appendChild(wrap);
+});
+CTRL.forEach(c=>{
+  const sl=document.getElementById("s_"+c.k), lab=document.getElementById("v_"+c.k);
+  lab.textContent=c.fmt(state[c.k]);
+  sl.addEventListener("input", e=>{ state[c.k]=+e.target.value; lab.textContent=c.fmt(state[c.k]); redraw(); });
+});
+document.querySelectorAll("#scheds button").forEach(b=> b.onclick=()=>{
+  document.querySelectorAll("#scheds button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); state.sched=b.dataset.s; redraw();
+});
+redraw();
+</script>
+
+<script>
+const STEPS = [
+ { title:"1. The LR is the master knob, and one value is a compromise", why:"The learning rate scales every gradient step: theta <- theta - lr * grad. It is consistently the single most impactful hyperparameter, and unlike weights it is not learned -- you set it. A constant LR forces an impossible trade-off. Set it high and early progress is fast but near a minimum the steps overshoot and the loss bounces or diverges; set it low and it is stable but crawls, wasting compute and sometimes stalling in a poor region. A schedule resolves the tension across TIME: be bold early, cautious late. That is why in practice the schedule can matter as much as the peak value.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">&theta; &larr; &theta; &minus; lr &middot; &nabla;<sub>&theta;</sub> L<br>lr too high &rarr; overshoot / diverge<br>lr too low &rarr; crawl / stall<br>fixed lr = one compromise for all of training</div>`, code:"# a schedule is just lr as a function of the step:\nlr = schedule(step)                 # <- changes over training\nfor p in optimizer.param_groups:\n    p['lr'] = lr\n# high early = fast, low late = precise. no single constant does both." },
+ { title:"2. Warmup: ease in so the first steps don't explode", why:"Early training is the most fragile moment. Weights are random, the loss surface is steep, and gradients are large and noisy. Two things make it worse: adaptive optimizers like Adam start with almost no history, so their per-parameter variance estimates are unreliable and produce wildly scaled steps; and large batches (and deep pre-norm transformers) amplify this. Warmup linearly ramps the LR from ~0 up to the base value over the first few hundred to few thousand steps, so the model settles in before taking full-size steps. Skip it on a big transformer and the loss often diverges in the first hundred steps. Warmup is the front end of nearly every modern schedule.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">lr(t) = base &middot; t / W&nbsp;&nbsp;(t &lt; W)<br>0 &rarr; base over W warmup steps<br>tames noisy early grads + Adam's cold variance<br>essential for large batch / transformers</div>`, code:"def warmup(step, base, W):\n    return base * step / max(1, W)      # linear 0 -> base\n# Adam's 1st/2nd-moment estimates are unreliable early ->\n# a full-size step can blow up. ramp in instead." },
+ { title:"3. Step & exponential decay: the classic staircases", why:"The oldest schedules just shrink the LR over time. STEP DECAY holds the rate, then multiplies it by gamma (e.g. 0.1) at fixed boundaries -- the ImageNet standard was x0.1 at epochs 30, 60, 90. Each cut lets SGD drop into a finer minimum it was bouncing over before. EXPONENTIAL DECAY is the smooth version, multiplying by gamma every step (or epoch), so lr = base * gamma^t traces a smooth curve instead of a staircase. Both are easy to reason about; the cost is that the boundaries or the rate are extra things to tune, and a mis-set rate can starve training before it finishes.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">step: lr = base &middot; &gamma;<sup>&lfloor;t/S&rfloor;</sup>&nbsp;&nbsp;(drops at S,2S,3S)<br>exp:&nbsp; lr = base &middot; &gamma;<sup>t</sup>&nbsp;&nbsp;(smooth version)<br>&gamma; &asymp; 0.1 at milestones (step)<br>each cut &rarr; settle into a finer minimum</div>`, code:"# StepLR: x gamma every step_size epochs\nsched = StepLR(opt, step_size=30, gamma=0.1)\n# ExponentialLR: x gamma every epoch (smooth staircase)\nsched = ExponentialLR(opt, gamma=0.95)" },
+ { title:"4. Cosine annealing: the smooth glide to zero", why:"Cosine annealing is today's default decay. It follows lr(t) = 0.5 * base * (1 + cos(pi * t / T)): starting at the base rate, decaying slowly at first, fastest in the middle, and flattening as it approaches ~0 at the end of training. That shape is well matched to optimization -- keep moving boldly while far from a good region, then spend the final steps taking tiny, careful steps that let the model settle precisely into a minimum. It has essentially no hyperparameters beyond the total length T, removing the guesswork of where to place decay boundaries. Paired with warmup, cosine is what trains most modern networks.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">lr(t) = &frac12; &middot; base &middot; (1 + cos(&pi; t / T))<br>t=0 &rarr; base&nbsp;&nbsp;&middot;&nbsp;&nbsp;t=T &rarr; 0<br>slow, then fast, then gentle tail<br>~no knobs but T &rarr; the modern default</div>`, code:"import math\ndef cosine(step, base, T):\n    return 0.5 * base * (1 + math.cos(math.pi * step / T))\n# base -> 0 over T steps; long gentle tail settles the model\n# PyTorch: CosineAnnealingLR(opt, T_max=T, eta_min=0.0)" },
+ { title:"5. Warm restarts (SGDR): jump back up to escape", why:"Cosine Annealing with Warm Restarts (Loshchilov & Hutter, SGDR) runs a cosine decay over a cycle of T_0 steps, then SNAPS the LR back up to the base value and starts a fresh cosine -- repeating, with each cycle optionally T_mult times longer than the last. The sudden increase gives the optimizer a kick: it can climb out of a sharp minimum and explore a different basin, often finding a flatter, better-generalizing one. A bonus is snapshot ensembling: saving the model at the low point of each cycle gives several distinct good models for the price of one training run, which you can average at test time.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">cosine to ~0 over T&#8320;, then RESTART to base<br>each cycle T&#8320; &rarr; T&#8320;&middot;T_mult longer<br>the jump escapes sharp minima<br>snapshot at each valley &rarr; free ensemble</div>`, code:"# SGDR: sawtooth of cosine decays\nsched = CosineAnnealingWarmRestarts(opt, T_0=200, T_mult=2, eta_min=1e-5)\nfor step in range(total):\n    train_step(...)\n    sched.step()          # LR jumps back up every T_0 (then 2T_0, 4T_0, ...)" },
+ { title:"6. 1-cycle: up, then down, with momentum inverse", why:"Smith's 1-cycle policy uses a single hump for the whole run: ramp the LR from a low start up to a high max_lr over roughly the first 30% of steps, then anneal it all the way down below the starting value. Crucially, MOMENTUM moves the opposite way -- high when the LR is low, low when the LR is high -- because a large step and a large momentum together would be unstable. The brief high-LR phase acts as a strong regularizer that discourages sharp minima, enabling super-convergence: reaching strong accuracy in far fewer epochs. You set max_lr from a quick LR range test (increase LR until the loss starts climbing).", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">lr:&nbsp; low &rarr; max_lr &rarr; ~0&nbsp;&nbsp;(one hump)<br>momentum: high &rarr; low &rarr; high&nbsp;&nbsp;(inverse)<br>high-LR phase = regularizer<br>&rArr; super-convergence, fewer epochs</div>`, code:"sched = OneCycleLR(opt, max_lr=0.5,\n                   total_steps=total, pct_start=0.3, div_factor=25,\n                   base_momentum=0.85, max_momentum=0.95)  # inverse to LR\nfor step in range(total):\n    train_step(...); sched.step()   # step every BATCH" },
+ { title:"7. It couples to batch size and to the optimizer", why:"A schedule is not chosen in isolation. BATCH SIZE: bigger batches give lower-variance gradients, so you can and should use a larger LR -- the linear scaling rule says multiply the base LR by the same factor you multiply the batch size (k x batch -> k x LR), and larger batches need proportionally longer warmup to stay stable. OPTIMIZER: plain SGD tolerates a constant or lightly decayed LR, but adaptive methods like Adam/AdamW are far more sensitive early and benefit strongly from warmup, since their moment estimates need a few hundred steps to become trustworthy. The takeaway: peak LR, warmup length, batch size and optimizer are tuned together, not one at a time.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">linear scaling: k&times; batch &rarr; k&times; base LR<br>bigger batch &rarr; longer warmup<br>SGD: constant/decay ok<br>Adam/AdamW: warmup strongly helps</div>`, code:"# linear scaling rule (Goyal et al., large-batch ImageNet)\nbase_lr = 0.1 * (batch_size / 256)\nwarmup_steps = max(warmup_steps, int(0.05 * total))  # scale warmup up too\n# Adam early moments are noisy -> warmup matters more than for SGD" },
+ { title:"8. Warmup + cosine: the transformer training standard", why:"Put the pieces together and you get the recipe behind essentially every modern transformer: a LINEAR WARMUP for the first few hundred to few thousand steps, immediately followed by COSINE DECAY down to near zero over the rest of training. Warmup carries the model through the fragile early phase where Adam's variance estimates and large batches would otherwise cause divergence; cosine then spends the bulk of the budget making steadily smaller, more careful steps, settling into a good minimum. GPT, LLaMA, BERT-family and most large models use exactly this (BERT-style fine-tuning often swaps the cosine for a linear decay). It is the sensible default to reach for before anything fancier.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">phase 1: linear warmup 0 &rarr; base (W steps)<br>phase 2: cosine base &rarr; ~0 (T&minus;W steps)<br>the default for GPT / LLaMA / BERT<br>ramp in, then glide out</div>`, code:"from transformers import get_cosine_schedule_with_warmup\nsched = get_cosine_schedule_with_warmup(\n            opt, num_warmup_steps=W, num_training_steps=T)\n# lr: 0 -> base over W, then 0.5*base*(1+cos(pi*progress)) -> ~0" },
+ { title:"9. Tuning: find the peak, pick the length, then the shape", why:"A practical order. First find the PEAK LR with an LR range test: train briefly while increasing the LR exponentially and plot loss vs LR; the largest rate still on the downward slope (just before it turns up) is your ceiling. Second set the TOTAL LENGTH to your compute budget -- cosine and 1-cycle both need to know T up front, and a schedule that decays to zero too early wastes the tail. Third pick warmup at roughly 1-10% of total steps (longer for bigger batches / Adam). The SHAPE usually matters less than getting the peak and length right: warmup+cosine is a safe default, 1-cycle if you want fast training, SGDR if restarts help your problem. Then watch the loss curve and adjust.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">1) LR range test &rarr; peak (largest stable LR)<br>2) T = compute budget (schedules need it)<br>3) warmup &asymp; 1&ndash;10% of steps<br>4) shape: warmup+cosine default; 1-cycle for speed</div>`, code:"# LR range test: sweep LR up, watch the loss\nlrs = torch.logspace(-6, 0, 200)\n# ... record loss at each lr; pick lr just before loss climbs ...\nmax_lr = lr_at_min_loss / 10      # a common safe choice\n# then: warmup ~ 5% of T, cosine decay over the rest" }
+];
+</script>
+
+<script>
+const stepsEl=document.getElementById("steps");
+const prevB=document.getElementById("prev"), nextB=document.getElementById("next-btn"), autoB=document.getElementById("auto");
+let curS=0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },4200); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>
