@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 33 — Knowledge Distillation</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  .barrow { display:flex; align-items:center; gap:8px; margin-bottom:7px; }
+  .barlabel { width:74px; font-size:12px; font-weight:600; color:#334155; text-align:right; flex:none; }
+  .bartrack { position:relative; flex:1; height:22px; background:#f1f5f9; border-radius:6px; overflow:hidden; }
+  .barfill { position:absolute; left:0; top:0; bottom:0; border-radius:6px; transition:width .25s ease; }
+  .barpct { width:52px; font-size:12px; font-variant-numeric:tabular-nums; color:#475569; flex:none; }
+  .ghost { position:absolute; top:0; bottom:0; width:2px; background:#0f172a; opacity:.55; }
+  .dk { display:inline-block; margin-left:5px; font-size:9px; font-weight:700; color:#be123c; background:#fff1f2; border:1px solid #fecdd3; border-radius:4px; padding:0 4px; vertical-align:middle; }
+  table.res { width:100%; border-collapse:collapse; font-size:13px; }
+  table.res th, table.res td { padding:6px 8px; text-align:left; border-bottom:1px solid #e2e8f0; }
+  table.res th { color:#64748b; font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:.04em; }
+  table.res td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.tot { background:#fff1f2; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 33</div>
+      <h1 class="text-xl font-bold">&#127891; Knowledge Distillation &mdash; a tiny <em>student</em> network learns to copy a big <em>teacher</em> not by its final answer but by its whole <em>softened</em> probability distribution &mdash; the "dark knowledge" of how wrong each wrong class is &mdash; and ends up nearly as accurate for a fraction of the cost</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">One image of a cat. Watch the teacher's confident answer <em>melt</em> into a soft distribution &mdash; and watch the student learn far more from that melt than from a bare label.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto">The teacher is a big trained network; for this cat photo it outputs raw scores (<strong>logits</strong>) over five classes. A one-hot label says only <em>"cat = 1, everything else = 0"</em> and throws away everything else. But the teacher <em>knows more</em>: it thinks this cat looks a bit like a dog, slightly like a tiger, and nothing like a car or plane. That inter-class structure is the <strong class="text-rose-600">dark knowledge</strong>. To expose it we divide the logits by a <strong>temperature</strong> <code>T</code> before softmax: at <code>T=1</code> the distribution is peaky (cat &asymp; 1), and as <code>T</code> rises it <strong>softens</strong>, lifting the runner-ups into view. The student is then trained to match this soft distribution &mdash; loss <code>= &alpha;&middot;CE(hard label) + (1&minus;&alpha;)&middot;T&sup2;&middot;KL(teacher-soft &#8214; student)</code>. Turn <code>T</code> and <code>&alpha;</code>, then press <strong class="text-rose-600">Train student</strong> and watch a fresh 5-weight student slide onto the teacher's curve.</p>
+
+      <div class="bg-white rounded-xl border border-rose-200 p-4 mb-4 inline-block text-left">
+        <div class="flex flex-wrap gap-x-8 gap-y-3 items-center justify-center">
+          <label class="flex items-center gap-2 text-sm">
+            <span class="text-slate-600">temperature <code>T</code> = <span id="vT" class="sk stat"></span></span>
+            <input id="sT" type="range" min="1" max="10" step="0.5" value="3" class="w-40">
+          </label>
+          <label class="flex items-center gap-2 text-sm">
+            <span class="text-slate-600">weight <code>&alpha;</code> (hard label) = <span id="vA" class="sk stat"></span></span>
+            <input id="sA" type="range" min="0" max="1" step="0.05" value="0.3" class="w-40">
+          </label>
+          <button id="train" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Train student</button>
+          <button id="reset" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&#8635; Reset student</button>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-4 items-start text-left">
+        <div class="bg-white rounded-xl border border-rose-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">The teacher &mdash; softmax(z / T)</div>
+          <p class="text-xs text-slate-400 mb-3">Same fixed logits <span id="logitStr" class="vec"></span>. Only <code>T</code> changes the shape. Entropy <span id="entT" class="sk stat"></span> nats (rises as it softens; max for 5 classes = 1.609 = uniform).</p>
+          <div id="teachBars"></div>
+          <p class="text-xs text-slate-500 mt-2">A one-hot label keeps only the <strong>cat</strong> bar and zeroes the rest. The teacher's soft bars keep the <span class="dk">dark knowledge</span> &mdash; <em>cat looks somewhat like a dog/tiger, nothing like a car/plane</em> &mdash; a similarity map a hard label can never carry.</p>
+        </div>
+
+        <div class="space-y-4">
+          <div class="bg-white rounded-xl border border-slate-200 p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">The student &mdash; softmax(z<sub>S</sub> / T) &nbsp;<span class="text-slate-400 normal-case font-normal">(black tick = teacher target)</span></div>
+            <p class="text-xs text-slate-400 mb-3">A tiny net (5 raw weights, untrained). Each bar is where it sits now; the tick is the teacher soft target it is being pulled toward. Steps trained: <span id="nsteps" class="sk stat">0</span>.</p>
+            <div id="studBars"></div>
+          </div>
+
+          <div class="bg-white rounded-xl border border-rose-200 p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">The distillation loss &mdash; two teachers, one weighted sum</div>
+            <table class="res">
+              <thead><tr><th>term</th><th>what it matches</th><th>value</th><th>weight</th></tr></thead>
+              <tbody>
+                <tr><td>CE(hard)</td><td>the true one-hot label</td><td class="num"><span id="ce" class="stat font-bold">0</span></td><td class="num">&alpha; = <span id="wA" class="stat">0</span></td></tr>
+                <tr><td>KL(teacher&#8214;student)</td><td>the teacher's soft dist</td><td class="num"><span id="kl" class="stat font-bold">0</span></td><td class="num">&times; T&sup2; then (1&minus;&alpha;)</td></tr>
+                <tr><td class="pl-4 text-slate-500">&#8627; T&sup2;&middot;KL (rescaled)</td><td class="text-slate-500">gradients &prop; 1/T&sup2;, so &times;T&sup2;</td><td class="num"><span id="soft" class="stat">0</span></td><td class="num">1&minus;&alpha; = <span id="wB" class="stat">0</span></td></tr>
+                <tr class="tot"><td><strong>combined loss</strong></td><td>&alpha;&middot;CE + (1&minus;&alpha;)&middot;T&sup2;&middot;KL</td><td class="num"><span id="tot" class="sk font-bold">0</span></td><td></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div id="note" class="rounded-xl border border-rose-200 bg-rose-50 text-rose-900 p-4 text-sm"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Compressing a network into a smaller one</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">Distillation adds almost nothing to a normal training loop: freeze a trained teacher, run it in <code>eval()</code> mode to get soft targets, and swap the plain cross-entropy for a weighted sum of the hard-label loss and a soft-label loss. Here it is from scratch first, so every term is visible, then the idiomatic PyTorch version with <code>KLDivLoss</code>, then the full loop, temperature/alpha tips, and the self-distillation variant.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Temperature softmax &mdash; the only new primitive</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Divide the logits by <code>T</code> before softmax. <code>T=1</code> is ordinary softmax (peaky). Larger <code>T</code> flattens the distribution and lifts the small probabilities &mdash; the dark knowledge &mdash; into a range where they actually contribute to the loss.</p>
+        <div class="relative"><pre>import torch, torch.nn.functional as F
+
+def soft_probs(logits, T):
+    return F.softmax(logits / T, dim=-1)     # T>1 -> softer, higher entropy
+
+z = torch.tensor([4.0, 1.8, 1.0, -1.5, -2.5])   # teacher: a cat image
+print(soft_probs(z, T=1))   # ~[.86, .095, .043, .003, .001]  (peaky)
+print(soft_probs(z, T=4))   # ~[.42, .24, .19, .09, .06]      (dark knowledge visible)
+print(soft_probs(z, T=100)) # -> nearly uniform (all ~0.2)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">The distillation loss from scratch</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Two terms. The <strong>soft</strong> term is the KL divergence from the teacher's soft distribution to the student's, computed at temperature <code>T</code> and multiplied by <code>T&sup2;</code> (the soft gradients scale as <code>1/T&sup2;</code>, so this keeps them on the same footing as the hard term). The <strong>hard</strong> term is ordinary cross-entropy against the true label at <code>T=1</code>. Blend with <code>&alpha;</code>.</p>
+        <div class="relative"><pre>def distill_loss(student_logits, teacher_logits, target, T=4.0, alpha=0.3):
+    # soft: match the teacher's softened distribution
+    p_teacher = F.softmax(teacher_logits / T, dim=-1)
+    log_q_student = F.log_softmax(student_logits / T, dim=-1)
+    kl = F.kl_div(log_q_student, p_teacher, reduction="batchmean")
+    soft = (T * T) * kl                       # <-- the T^2 rescale
+
+    # hard: match the ground-truth label (standard CE, T=1)
+    hard = F.cross_entropy(student_logits, target)
+
+    return alpha * hard + (1 - alpha) * soft</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">The training loop &mdash; freeze the teacher, train the student</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The teacher is loaded, set to <code>eval()</code>, and wrapped in <code>torch.no_grad()</code> &mdash; it produces targets but never learns. Only the (much smaller) student's parameters get gradients. Everything else is a normal loop.</p>
+        <div class="relative"><pre>teacher = load_pretrained().eval()            # big, frozen
+student = SmallNet()                          # e.g. 1/10 the params
+opt = torch.optim.AdamW(student.parameters(), lr=3e-4)
+
+for x, y in loader:
+    with torch.no_grad():                     # teacher never updates
+        t_logits = teacher(x)
+    s_logits = student(x)
+    loss = distill_loss(s_logits, t_logits, y, T=4.0, alpha=0.3)
+    opt.zero_grad(); loss.backward(); opt.step()</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Choosing T and &alpha;</h3></div>
+        <p class="text-sm text-slate-600 mb-3">These are the two knobs that matter. <code>T</code> controls how much dark knowledge you expose (too low = back to one-hot; too high = the signal drowns toward uniform). <code>&alpha;</code> balances trusting the true label vs trusting the teacher. Typical starting points below.</p>
+        <div class="relative"><pre># common defaults (Hinton et al. 2015, and follow-ups)
+T     = 4.0      # try 2-6; higher for a very confident teacher
+alpha = 0.1      # 0.1-0.5: mostly soft targets, a little hard label
+                 # alpha near 0  -> pure teacher-matching
+                 # alpha near 1  -> ignores teacher (plain training)
+
+# sanity: at T=1 with alpha=1 this reduces to ordinary cross-entropy.
+# scale the LR / schedule (Day 32) as usual; T^2 keeps soft grads comparable.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Self-distillation &amp; the "born-again" trick</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The student does not have to be smaller. Distilling a model into a <em>same-size</em> copy (or into itself across generations) often <strong>improves</strong> accuracy &mdash; the soft targets regularize better than one-hot labels. Chain a few generations and average.</p>
+        <div class="relative"><pre># "born-again networks": teacher and student share the architecture
+teacher = model_gen0.eval()
+for gen in range(1, 4):
+    student = same_architecture()
+    train(student, teacher, T=4.0, alpha=0.0)   # pure soft targets
+    teacher = student.eval()                     # this gen teaches the next
+# ensemble/average the generations for a final bump</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Where it shows up in the wild</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Distillation is how big models get shipped. <strong>DistilBERT</strong> keeps ~97% of BERT's performance at 40% the size and 60% faster. On-device vision/speech models are almost always distilled. And modern LLM pipelines distill <em>reasoning traces</em>: a large model generates step-by-step solutions, a small model is trained to reproduce them.</p>
+        <div class="relative"><pre># pattern: distill a large model's *outputs* (or reasoning) into a small one
+big   = load("teacher-70B")           # slow, expensive to serve
+small = load("student-7B")            # what you actually deploy
+
+# 1. collect teacher outputs (logits, or generated CoT text) on your data
+# 2. train `small` to match them (KL on logits, or SFT on the traces)
+# 3. deploy `small`: ~same task quality, a fraction of the latency/cost</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 33 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">Knowledge distillation trains a small <strong>student</strong> to imitate a big <strong>teacher</strong>, not by its final label but by its whole <strong>softened probability distribution</strong>. Dividing logits by a <strong>temperature</strong> <code>T&gt;1</code> flattens that distribution and reveals the <strong>dark knowledge</strong> &mdash; the teacher's sense of how the classes relate (a cat looks a little like a dog, nothing like a car) &mdash; information a one-hot label throws away entirely. The loss blends two teachers: cross-entropy to the true label and <code>T&sup2;&middot;KL</code> to the teacher's soft targets, weighted by <code>&alpha;</code>; the <code>T&sup2;</code> factor rescales the soft gradients (which shrink as <code>1/T&sup2;</code>) so both terms pull with comparable strength. The student often <em>generalizes better</em> than one trained on hard labels alone, because soft targets carry a richer, less overconfident signal. It is complementary to <strong>quantization</strong> and <strong>pruning</strong> (you can stack all three), and it is how DistilBERT, on-device models, and small reasoning models are made. <strong>&#128073; Tomorrow, Day 34:</strong> VAEs &mdash; autoencoders that learn a smooth, samplable latent distribution via the reparameterization trick.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+</script>
+
+<script>
+// ============================================================
+// REAL knowledge distillation on a 5-class toy example.
+//   classes : cat, dog, tiger, car, plane   (the image is a CAT)
+//   teacher : fixed logits zT (a big trained net's raw scores)
+//   student : 5 raw logits zS, initialized untrained, trained by
+//             gradient descent on the true distillation loss.
+//   soft targets : p = softmax(zT / T)   (temperature T)
+//   student soft : q = softmax(zS / T)
+//   loss = alpha * CE(student, true_label)          (hard, at T=1)
+//        + (1-alpha) * T^2 * KL(p || q)             (soft, at T)
+//   d/dzS :  alpha*(softmax(zS) - y)  +  (1-alpha)*T*(q - p)
+//            (the T^2 on KL cancels one 1/T from d(softmax(z/T)) -> T)
+// ============================================================
+const CLASSES = [
+  { name:"cat",   emoji:"🐱" },
+  { name:"dog",   emoji:"🐶" },
+  { name:"tiger", emoji:"🐯" },
+  { name:"car",   emoji:"🚗" },
+  { name:"plane", emoji:"✈️" }
+];
+const TRUE = 0;                              // the image is a cat
+const zT = [4.0, 1.8, 1.0, -1.5, -2.5];      // teacher logits (fixed)
+const zS0 = [0.5, 0.3, 0.2, 0.1, 0.0];       // student init (untrained)
+let zS = zS0.slice();
+const S = { T:3, alpha:0.3, steps:0 };
+
+function softmaxT(z, T){
+  const scaled = z.map(v => v / T);
+  const m = Math.max(...scaled);
+  const ex = scaled.map(v => Math.exp(v - m));
+  const s = ex.reduce((a,b)=>a+b, 0);
+  return ex.map(e => e / s);
+}
+function entropy(p){
+  let h = 0; for(const pi of p){ if(pi > 1e-12) h -= pi * Math.log(pi); } return h;
+}
+function klDiv(p, q){ // KL(p || q), p = teacher soft, q = student soft
+  let k = 0; for(let i=0;i<p.length;i++){ if(p[i] > 1e-12) k += p[i] * Math.log(p[i] / Math.max(1e-12, q[i])); } return k;
+}
+function ceHard(z){ // cross-entropy vs true one-hot, ordinary softmax (T=1)
+  const s = softmaxT(z, 1);
+  return -Math.log(Math.max(1e-12, s[TRUE]));
+}
+function metrics(){
+  const T = S.T, a = S.alpha;
+  const p = softmaxT(zT, T);           // teacher soft
+  const q = softmaxT(zS, T);           // student soft
+  const ce = ceHard(zS);
+  const kl = klDiv(p, q);
+  const soft = T * T * kl;
+  const tot = a * ce + (1 - a) * soft;
+  return { p, q, ce, kl, soft, tot };
+}
+function trainStep(lr){
+  const T = S.T, a = S.alpha;
+  const p  = softmaxT(zT, T);
+  const q  = softmaxT(zS, T);
+  const s1 = softmaxT(zS, 1);
+  for(let i=0;i<zS.length;i++){
+    const y     = (i === TRUE) ? 1 : 0;
+    const gHard = s1[i] - y;            // d CE / d zS
+    const gSoft = T * (q[i] - p[i]);    // d (T^2 * KL) / d zS
+    zS[i] -= lr * (a * gHard + (1 - a) * gSoft);
+  }
+}
+
+// ---------- rendering ----------
+const COL = ["#f43f5e","#fb7185","#fda4af","#cbd5e1","#e2e8f0"];
+function bars(container, dist, opts){
+  const el = document.getElementById(container);
+  el.innerHTML = "";
+  dist.forEach((v,i) => {
+    const c = CLASSES[i];
+    const isTrue = i === TRUE;
+    const dark = opts.dark && !isTrue && v >= 0.02;
+    const row = document.createElement("div");
+    row.className = "barrow";
+    const ghost = (opts.ghost != null)
+      ? `<div class="ghost" style="left:calc(${(opts.ghost[i]*100).toFixed(1)}% - 1px)"></div>` : "";
+    row.innerHTML =
+      `<div class="barlabel">${c.emoji} ${c.name}</div>` +
+      `<div class="bartrack"><div class="barfill" style="width:${(v*100).toFixed(1)}%;background:${COL[i]}"></div>${ghost}</div>` +
+      `<div class="barpct">${(v*100).toFixed(1)}%${dark?'<span class="dk">dark</span>':''}</div>`;
+    el.appendChild(row);
+  });
+}
+function fmt(x){ return x.toFixed(3); }
+function render(){
+  const m = metrics();
+  document.getElementById("vT").textContent = S.T.toFixed(1);
+  document.getElementById("vA").textContent = S.alpha.toFixed(2);
+  document.getElementById("logitStr").textContent = "[" + zT.join(", ") + "]";
+  document.getElementById("entT").textContent = entropy(m.p).toFixed(3);
+  document.getElementById("nsteps").textContent = S.steps;
+  bars("teachBars", m.p, { dark:true });
+  bars("studBars",  m.q, { ghost:m.p });
+  document.getElementById("ce").textContent   = fmt(m.ce);
+  document.getElementById("kl").textContent   = fmt(m.kl);
+  document.getElementById("soft").textContent = fmt(m.soft);
+  document.getElementById("tot").textContent  = fmt(m.tot);
+  document.getElementById("wA").textContent = S.alpha.toFixed(2);
+  document.getElementById("wB").textContent = (1 - S.alpha).toFixed(2);
+
+  const note = document.getElementById("note");
+  let msg;
+  if(S.T <= 1.2) msg = "<strong>T &asymp; 1 &mdash; the teacher is almost one-hot.</strong> The cat bar dominates and the runner-ups are crushed to near zero. The student barely learns more than it would from the plain label &mdash; there is little dark knowledge to copy. Raise T to melt the distribution.";
+  else if(S.T >= 8) msg = "<strong>T is very high &mdash; the distribution is nearly uniform.</strong> Entropy is close to its max (1.609). Now the teacher barely distinguishes classes at all; the useful similarity structure is drowning. Somewhere in the middle (T&asymp;3&ndash;5) exposes the dark knowledge without washing it out.";
+  else msg = "<strong>Dark knowledge is visible.</strong> The teacher says cat, but also &mdash; softly &mdash; that this cat resembles a <em>dog</em> and a <em>tiger</em> far more than a car or plane. That similarity map is the extra signal a one-hot label can never provide. Press <em>Train student</em>: the bars slide onto the black teacher ticks.";
+  note.innerHTML = msg;
+}
+
+// ---------- controls ----------
+document.getElementById("sT").addEventListener("input", e => { S.T = +e.target.value; render(); });
+document.getElementById("sA").addEventListener("input", e => { S.alpha = +e.target.value; render(); });
+document.getElementById("reset").onclick = () => { zS = zS0.slice(); S.steps = 0; render(); };
+
+let anim = null;
+const trainBtn = document.getElementById("train");
+trainBtn.onclick = () => {
+  if(anim){ clearInterval(anim); anim = null; trainBtn.innerHTML = "&#9654; Train student"; return; }
+  trainBtn.innerHTML = "&#9208; Training…";
+  anim = setInterval(() => {
+    for(let k=0;k<3;k++){ trainStep(0.5); S.steps++; }
+    render();
+    if(S.steps >= 300){ clearInterval(anim); anim = null; trainBtn.innerHTML = "&#9654; Train student"; }
+  }, 60);
+};
+render();
+</script>
+
+<script>
+const STEPS = [
+ { title:"1. Why compress: the best model is often too big to ship", why:"State-of-the-art accuracy usually comes from models that are large, slow, and expensive: they need GPUs, cost a lot per query, and add latency that kills real-time or on-device use. But you rarely need a model to be big at INFERENCE time -- you need it to be big while LEARNING. Distillation splits those two roles: train (or take) a large, accurate TEACHER once, then transfer what it learned into a small, cheap STUDENT that you actually deploy. The student can be an order of magnitude smaller and faster while keeping most of the accuracy, because most of a big model's capacity is spent finding good features, not representing the final decision boundary.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">TEACHER: big, accurate, slow, $$$&nbsp;&nbsp;(train once)<br>&darr; distill<br>STUDENT: small, ~as accurate, fast, cheap&nbsp;&nbsp;(deploy)<br>capacity needed to LEARN &gt; capacity needed to SERVE</div>`, code:"# the problem distillation solves\n# teacher: 340M params, 100ms/query, needs a GPU\n# student:  66M params,  25ms/query, runs on CPU / phone\n# goal: student keeps ~97% of teacher accuracy" },
+ { title:"2. The setup: a frozen teacher, a trainable student", why:"The teacher is a model you already trust -- pretrained and fixed. During distillation it runs in eval mode with no gradients: for each input it just produces outputs (logits) that become training targets. The student is a smaller network whose weights DO update. For every batch you run both models on the same input, take the teacher's output as a target, and train the student to reproduce it. Because the teacher never changes, distillation is cheap to add: it is a normal training loop for the student, with the teacher acting as an extra, richer source of labels alongside (or instead of) the ground truth.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">x &rarr; [ TEACHER (frozen, no_grad) ] &rarr; soft targets<br>x &rarr; [ STUDENT (trainable) ] &rarr; predictions<br>train student to match teacher (+ true label)<br>only the student's weights get gradients</div>`, code:"with torch.no_grad():\n    t_logits = teacher(x)      # frozen: targets only\ns_logits = student(x)          # trainable\nloss = distill(s_logits, t_logits, y)\nloss.backward()                # updates STUDENT only" },
+ { title:"3. The key insight: soft probabilities carry dark knowledge", why:"A one-hot label says 'this is a cat' and, implicitly, 'it is equally not-a-dog, not-a-tiger, not-a-car.' That is false and wasteful. A trained teacher, shown a cat, outputs something like cat 0.86, dog 0.09, tiger 0.04, car 0.003, plane 0.001. The RELATIVE sizes of the wrong answers encode real structure: this cat looks much more like a dog than a car. Hinton called this DARK KNOWLEDGE -- the inter-class similarity that a hard label throws away. Learning to reproduce the whole distribution teaches the student the geometry of the problem (what resembles what), not just the single correct answer, which is a far richer training signal per example.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">one-hot:&nbsp; cat=1&nbsp; dog=0&nbsp; tiger=0&nbsp; car=0<br>teacher:&nbsp; cat=.86 dog=.09 tiger=.04 car=.003<br>&uarr; the wrong-class ratios ARE the knowledge<br>"a cat is dog-like, not car-like"</div>`, code:"# what a hard label discards, the teacher keeps:\n# P(dog|cat-image) >> P(car|cat-image)\n# that ratio says cats and dogs share features.\n# matching the full vector transfers that structure." },
+ { title:"4. Temperature: softening the distribution to expose it", why:"There is a catch: a confident teacher's softmax is so peaky that the dark knowledge sits at 0.001 -- too small to drive learning. The fix is TEMPERATURE. Divide the logits by T > 1 before softmax: softmax(z / T). This flattens the distribution, raising the small probabilities and lowering the peak, making the relative structure visible and large enough to produce useful gradients. T=1 is normal (peaky); as T grows the distribution softens toward uniform; T -> infinity is perfectly uniform (all information gone). You use the SAME T on teacher and student for the soft term. Typical values are 2-6 -- enough to reveal structure without washing it out.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">softmax(z / T)<br>T=1:&nbsp; [.86, .09, .04, .003, .001]&nbsp; peaky<br>T=4:&nbsp; [.42, .24, .19, .09, .06]&nbsp;&nbsp;&nbsp; soft<br>T&rarr;&infin;: [.20, .20, .20, .20, .20]&nbsp; uniform<br>higher T &rarr; higher entropy &rarr; more dark knowledge shown</div>`, code:"import torch.nn.functional as F\nsoft = F.softmax(logits / T, dim=-1)   # T>1 softens\n# T=1  -> ordinary (peaky) softmax\n# T high-> flatter, small probs lifted into view\n# same T applied to teacher AND student" },
+ { title:"5. The distillation loss: match the soft targets", why:"The soft-target loss measures how far the student's softened distribution q is from the teacher's softened distribution p. That distance is the KL divergence KL(p || q) = sum p_i log(p_i / q_i), which is zero exactly when q = p and grows as they diverge. Minimizing it pulls the student's whole distribution onto the teacher's -- cat AND dog AND tiger mass, not just the argmax. In frameworks this is F.kl_div on log-softmax of the student against softmax of the teacher, both at temperature T. This single term, on its own (alpha=0), is enough to transfer most of the teacher's behavior; the hard label is added mainly as a correction.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">p = softmax(z_teacher / T)&nbsp;&nbsp;(target)<br>q = softmax(z_student / T)&nbsp;&nbsp;(match this)<br>KL(p &#8214; q) = &Sigma; p&#7522; log(p&#7522; / q&#7522;)<br>= 0 when q = p &rarr; student mimics teacher</div>`, code:"p = F.softmax(teacher_logits / T, dim=-1)\nlogq = F.log_softmax(student_logits / T, dim=-1)\nsoft = F.kl_div(logq, p, reduction='batchmean')\n# minimized when student's soft dist == teacher's" },
+ { title:"6. Two teachers, weighted: soft KL x T-squared + hard CE", why:"The full loss blends two signals. The SOFT term is the KL above, scaled by T-squared. Why T-squared? The gradients of the soft loss are proportional to 1 / T-squared (the 1/T inside each softmax appears twice through the chain rule), so as you raise T they vanish; multiplying by T-squared restores them to the same magnitude as the hard-label gradients, so a single learning rate works for both. The HARD term is ordinary cross-entropy against the true one-hot label at T=1 -- it keeps the student anchored to ground truth in case the teacher is wrong. Blend them with alpha: L = alpha * CE_hard + (1 - alpha) * T-squared * KL_soft, with alpha usually small (0.1-0.5) so soft targets lead.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">L = &alpha; &middot; CE(student, true label)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(hard, T=1)<br>&nbsp;&nbsp;&nbsp;+ (1&minus;&alpha;) &middot; T&sup2; &middot; KL(p &#8214; q)&nbsp;&nbsp;(soft, T)<br>T&sup2; undoes the 1/T&sup2; gradient shrink<br>&alpha; small &rarr; mostly learn from the teacher</div>`, code:"hard = F.cross_entropy(student_logits, target)   # T=1\nsoft = (T*T) * F.kl_div(logq, p, reduction='batchmean')\nloss = alpha * hard + (1 - alpha) * soft\n# T^2 keeps soft grads comparable to hard grads" },
+ { title:"7. Why the student can generalize BETTER than hard training", why:"Surprisingly, a student trained with distillation often beats an identical network trained on the raw labels. Soft targets act as a powerful regularizer: instead of pushing every wrong class to exactly zero (which encourages overconfidence and sharp, brittle decision boundaries), they give the student a smooth, informative target for every class on every example. Each training image now carries far more bits of supervision -- a whole distribution rather than one integer -- so the student learns more per example and needs less data to reach a given accuracy. The teacher also smooths over label noise and ambiguous cases, handing the student a cleaner signal than the ground truth alone.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">hard labels: 1 bit/example, overconfident, sharp<br>soft targets: full distribution/example, smooth<br>&rarr; acts like label smoothing + extra structure<br>student often &gt; same net trained on labels alone</div>`, code:"# soft targets ~ informed label smoothing:\n# every class gets a sensible non-zero target,\n# so the student is less overconfident and\n# often generalizes better with less data." },
+ { title:"8. Variants: self-distillation, online, and feature matching", why:"Distillation is a family. SELF-DISTILLATION: the student has the SAME architecture as the teacher (or is the model itself, across generations -- 'born-again networks') and still improves, purely from the regularizing soft targets. ONLINE / mutual (DML): a cohort of students train together and teach each other, with no separate pretrained teacher. FEATURE / hint distillation (FitNets): match the teacher's intermediate activations or attention maps, not just the final logits, giving the student richer guidance. Self-supervised methods like DINO use a distillation setup between two views. The core idea -- learn from another network's soft, structured outputs -- generalizes far beyond the original classification setting.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">self / born-again: student == teacher arch, still helps<br>online (DML): peers teach each other, no fixed teacher<br>feature (FitNets): match hidden layers, not just logits<br>one idea, many wirings</div>`, code:"# born-again: distill into the same architecture\nfor gen in range(k):\n    student = same_arch()\n    train(student, teacher, alpha=0.0)  # pure soft\n    teacher = student.eval()            # teaches next gen" },
+ { title:"9. vs quantization/pruning, and real-world uses", why:"Distillation is one of three complementary ways to shrink a model, and they stack. PRUNING removes unimportant weights/neurons; QUANTIZATION stores weights in fewer bits (fp32 -> int8/int4); DISTILLATION trains a smaller architecture from scratch under a teacher's guidance. They attack different axes -- structure, precision, and learned knowledge -- so production pipelines often distill THEN quantize THEN prune. Real uses are everywhere: DistilBERT keeps ~97% of BERT at 40% the size and 60% faster; on-device vision and speech models are routinely distilled; and modern LLMs are distilled by having a large model generate reasoning traces that a small model is trained to reproduce -- shipping most of the capability at a fraction of the serving cost.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">prune:&nbsp;&nbsp;&nbsp;&nbsp;drop weights&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(structure)<br>quantize: fewer bits&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(precision)<br>distill:&nbsp;&nbsp;smaller net + teacher (knowledge)<br>complementary &rarr; stack all three<br>DistilBERT, on-device, LLM reasoning-distillation</div>`, code:"# they compose:\n# 1. distill  large -> small architecture\n# 2. quantize small model fp32 -> int8\n# 3. prune    the remaining redundant weights\n# each targets a different kind of redundancy" }
+];
+</script>
+
+<script>
+const stepsEl=document.getElementById("steps");
+const prevB=document.getElementById("prev"), nextB=document.getElementById("next-btn"), autoB=document.getElementById("auto");
+let curS=0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },4600); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>
