@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 34 — Softmax + Cross-Entropy</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  .barrow { display:flex; align-items:center; gap:8px; margin-bottom:7px; }
+  .barlabel { width:74px; font-size:12px; font-weight:600; color:#334155; text-align:right; flex:none; }
+  .bartrack { position:relative; flex:1; height:22px; background:#f1f5f9; border-radius:6px; overflow:hidden; }
+  .barfill { position:absolute; left:0; top:0; bottom:0; border-radius:6px; transition:width .18s ease; }
+  .barpct { width:56px; font-size:12px; font-variant-numeric:tabular-nums; color:#475569; flex:none; }
+  .truetag { display:inline-block; margin-left:5px; font-size:9px; font-weight:700; color:#166534; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:4px; padding:0 4px; vertical-align:middle; }
+  /* signed gradient bar */
+  .grow { display:flex; align-items:center; gap:8px; margin-bottom:7px; }
+  .gtrack { position:relative; flex:1; height:22px; background:#f1f5f9; border-radius:6px; overflow:hidden; }
+  .gzero { position:absolute; left:50%; top:0; bottom:0; width:1px; background:#94a3b8; z-index:2; }
+  .gfill { position:absolute; top:2px; bottom:2px; border-radius:4px; transition:all .18s ease; }
+  .gval { width:70px; font-size:12px; font-variant-numeric:tabular-nums; flex:none; text-align:right; }
+  table.res { width:100%; border-collapse:collapse; font-size:13px; }
+  table.res th, table.res td { padding:6px 8px; text-align:left; border-bottom:1px solid #e2e8f0; }
+  table.res th { color:#64748b; font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:.04em; }
+  table.res td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.truerow { background:#f0fdf4; }
+  .vec { font-family:ui-monospace,Menlo,monospace; font-size:12px; color:#0f172a; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 34</div>
+      <h1 class="text-xl font-bold">&#129518; Softmax + Cross-Entropy &mdash; a network's raw scores (<em>logits</em>) are squashed into a probability distribution by <em>softmax</em>, scored against the true class by <em>cross-entropy</em>, and &mdash; because the two were built to fit together &mdash; the whole gradient collapses to one beautiful expression: <em>predicted &minus; true</em></h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Four raw scores go in. A probability distribution, a loss, and a gradient come out &mdash; live.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto">A classifier's last layer emits <strong>logits</strong> <code>z</code> &mdash; unbounded real numbers, one per class, that mean nothing on their own. <strong class="text-rose-600">Softmax</strong> turns them into probabilities: exponentiate, then normalize so they sum to 1. To measure how wrong we are, <strong class="text-rose-600">cross-entropy</strong> compares that distribution to the true label &mdash; and for a one-hot label it is simply <code>&minus;log(p<sub>true</sub>)</code>, the surprise of the correct answer. Drag the four logits, pick which class is actually correct, and watch three things update at once: the softmax probabilities (computed with the <strong>max-subtraction stability trick</strong>), the cross-entropy loss, and the gradient <code>&part;L/&part;z = p &minus; y</code> that would push each logit up or down.</p>
+
+      <div class="bg-white rounded-xl border border-rose-200 p-4 mb-4 inline-block text-left">
+        <div class="flex flex-wrap gap-x-8 gap-y-3 items-center justify-center">
+          <div id="sliders" class="flex flex-wrap gap-x-6 gap-y-3"></div>
+          <div class="flex items-center gap-2 text-sm border-l border-slate-200 pl-6">
+            <span class="text-slate-600 font-semibold">true class:</span>
+            <div id="truePick" class="flex gap-1"></div>
+          </div>
+          <button id="reset" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&#8635; Reset</button>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-4 items-start text-left">
+        <div class="bg-white rounded-xl border border-rose-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">From logits to probabilities &mdash; softmax(z)</div>
+          <p class="text-xs text-slate-400 mb-3">Subtract the max <span id="maxLine" class="sk stat"></span> from every logit first (the <strong>stability trick</strong>), then <code>exp</code>, then divide by the sum <span id="sumLine" class="sk stat"></span>. The shift changes nothing &mdash; softmax is shift-invariant &mdash; but it keeps the biggest exponent at <code>exp(0)=1</code> so nothing overflows.</p>
+          <table class="res mb-3">
+            <thead><tr><th>class</th><th class="num">z<sub>i</sub></th><th class="num">z<sub>i</sub>&minus;m</th><th class="num">e<sup>z<sub>i</sub>&minus;m</sup></th><th class="num">p<sub>i</sub></th></tr></thead>
+            <tbody id="pipeBody"></tbody>
+          </table>
+          <div id="probBars"></div>
+          <div id="stab" class="mt-3 text-xs rounded-lg bg-amber-50 border border-amber-200 text-amber-900 p-3"></div>
+        </div>
+
+        <div class="space-y-4">
+          <div class="bg-white rounded-xl border border-rose-200 p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">Cross-entropy loss &mdash; &minus;log(p<sub>true</sub>)</div>
+            <p class="text-xs text-slate-400 mb-3">The general form is <code>L = &minus;&Sigma;<sub>i</sub> y<sub>i</sub> log(p<sub>i</sub>)</code>. With a one-hot label only the true class survives, so the loss is just the negative log-probability the model assigned to the correct answer <span id="trueName" class="sk"></span>.</p>
+            <div class="flex items-end gap-4">
+              <div>
+                <div class="text-4xl font-bold sk stat" id="loss">0</div>
+                <div class="text-xs text-slate-400 mt-1">nats &mdash; lower is better; 0 = perfectly confident &amp; correct</div>
+              </div>
+              <div class="text-sm text-slate-500 leading-tight">= &minus;log(<span id="lossPt" class="stat">0</span>)<br><span class="text-xs text-slate-400">p assigned to <span id="lossClass" class="font-semibold"></span></span></div>
+            </div>
+            <div class="mt-3 h-2 rounded-full bg-slate-100 overflow-hidden"><div id="lossBar" class="h-full rounded-full" style="background:linear-gradient(90deg,#f43f5e,#fb7185);transition:width .18s ease"></div></div>
+          </div>
+
+          <div class="bg-white rounded-xl border border-slate-200 p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">The gradient &mdash; &part;L/&part;z<sub>i</sub> = p<sub>i</sub> &minus; y<sub>i</sub></div>
+            <p class="text-xs text-slate-400 mb-3">One line. For every wrong class the gradient is <code>+p<sub>i</sub></code> (push the logit <span class="text-rose-600 font-semibold">down</span>); for the true class it is <code>p<sub>true</sub>&minus;1</code> (a negative pull &mdash; push it <span class="text-emerald-600 font-semibold">up</span>). No softmax term ever appears in the final answer &mdash; that is the magic of the pairing.</p>
+            <div id="gradBars"></div>
+          </div>
+
+          <div id="note" class="rounded-xl border border-rose-200 bg-rose-50 text-rose-900 p-4 text-sm"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Logits &rarr; probabilities &rarr; loss &rarr; a gradient that cancels</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">We build the whole pipeline from scratch in NumPy so nothing is hidden: a numerically stable softmax, cross-entropy against a one-hot label, and the combined gradient <code>softmax &minus; onehot</code> &mdash; then a one-step gradient check, then the idiomatic framework version (where you pass raw logits straight to <code>F.cross_entropy</code> and never call softmax yourself), and finally where this exact loss powers every classifier and every token an LLM predicts.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Stable softmax &mdash; subtract the max first</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Exponentiate the logits and normalize. The only subtlety is numerical: <code>exp</code> of a large logit overflows to <code>inf</code>. Subtracting the max before exponentiating is mathematically identical (softmax is shift-invariant) but keeps the largest exponent at <code>exp(0)=1</code>.</p>
+        <div class="relative"><pre>import numpy as np
+
+def softmax(z):
+    z = z - np.max(z, axis=-1, keepdims=True)   # shift for stability
+    e = np.exp(z)                                # largest term is now exp(0)=1
+    return e / e.sum(axis=-1, keepdims=True)     # sums to 1
+
+z = np.array([2.0, 1.0, 0.1, -1.5])
+print(softmax(z))          # -> [0.646, 0.238, 0.097, 0.020]
+print(softmax(z).sum())    # -> 1.0
+print(softmax(z + 1000))   # identical: adding a constant cancels</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Cross-entropy against a one-hot label</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Cross-entropy is <code>&minus;&Sigma; y&#7522; log(p&#7522;)</code>. When <code>y</code> is one-hot, every term is zero except the true class, so the loss collapses to <code>&minus;log(p_true)</code> &mdash; the negative log-likelihood of the correct answer. Add a tiny <code>eps</code> so <code>log(0)</code> never blows up.</p>
+        <div class="relative"><pre>def cross_entropy(p, y_true):          # y_true = the correct class index
+    eps = 1e-12
+    return -np.log(p[y_true] + eps)    # only the true class contributes
+
+p = softmax(np.array([2.0, 1.0, 0.1, -1.5]))
+print(cross_entropy(p, y_true=0))   # confident & correct -> ~0.44 (low)
+print(cross_entropy(p, y_true=3))   # confident & WRONG   -> ~3.94 (high)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">The combined gradient &mdash; <code>p &minus; y</code></h3></div>
+        <p class="text-sm text-slate-600 mb-3">Here is why the pair is inseparable. Cross-entropy of softmax has the gradient <code>&part;L/&part;z&#7522; = p&#7522; &minus; y&#7522;</code> &mdash; no exponentials, no division, no chain of ugly terms. You never differentiate softmax and cross-entropy separately; you fuse them and get one subtraction: predicted distribution minus the one-hot target.</p>
+        <div class="relative"><pre>def softmax_ce_grad(z, y_true):
+    p = softmax(z)
+    onehot = np.zeros_like(p)
+    onehot[y_true] = 1.0
+    return p - onehot          # <-- the entire gradient, dL/dz
+
+z = np.array([2.0, 1.0, 0.1, -1.5])
+print(softmax_ce_grad(z, y_true=0))
+# [-0.354, 0.238, 0.097, 0.020]
+#   ^ true class: negative (push logit UP); others positive (push DOWN)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Prove it: one gradient-descent step lowers the loss</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The gradient is only useful if stepping against it reduces the loss. Take one step <code>z &larr; z &minus; lr&middot;(p&minus;y)</code> and watch cross-entropy drop and <code>p_true</code> rise &mdash; a numerical sanity check that the clean formula is correct.</p>
+        <div class="relative"><pre>z = np.array([2.0, 1.0, 0.1, -1.5]); y = 0; lr = 1.0
+for step in range(4):
+    p = softmax(z)
+    loss = cross_entropy(p, y)
+    print(f"step {step}: loss={loss:.3f}  p_true={p[y]:.3f}")
+    z = z - lr * softmax_ce_grad(z, y)   # descend
+# loss falls each step; p_true climbs toward 1.0</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">The framework version &mdash; feed it raw logits</h3></div>
+        <p class="text-sm text-slate-600 mb-3">In PyTorch you almost never call <code>softmax</code> before the loss. <code>nn.CrossEntropyLoss</code> / <code>F.cross_entropy</code> take the <strong>raw logits</strong> and the integer target: internally they fuse <code>log_softmax</code> + <code>nll_loss</code> using the log-sum-exp trick, which is both numerically stable and gives the exact <code>p&minus;y</code> gradient for free. Applying softmax yourself first is the classic bug &mdash; it double-softmaxes and quietly hurts training.</p>
+        <div class="relative"><pre>import torch, torch.nn.functional as F
+
+logits = torch.tensor([[2.0, 1.0, 0.1, -1.5]], requires_grad=True)
+target = torch.tensor([0])                 # the true class INDEX (not one-hot)
+
+loss = F.cross_entropy(logits, target)     # pass RAW logits, never softmax(...)
+loss.backward()
+print(loss.item())        # ~0.44
+print(logits.grad)        # tensor([[-0.354, 0.238, 0.097, 0.020]])  == p - onehot
+
+# DON'T:  F.cross_entropy(F.softmax(logits, -1), target)   # double softmax bug</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Where it shows up &mdash; every classifier, every LLM token</h3></div>
+        <p class="text-sm text-slate-600 mb-3">This is the default loss for classification everywhere. An image classifier's final <code>logits &rarr; softmax &rarr; cross-entropy</code>. And every word a language model predicts is a softmax over the whole vocabulary scored by cross-entropy against the actual next token &mdash; the <code>p&minus;y</code> gradient is what trains GPT-scale models one token at a time. The temperature <code>T</code> you met on Day 33 is just <code>softmax(z/T)</code>: the same function, dialled softer.</p>
+        <div class="relative"><pre># next-token prediction (the entire LLM training objective, distilled):
+logits = model(context)                 # shape [vocab_size], e.g. 50k
+loss   = F.cross_entropy(logits, next_token_id)
+# grad on the logits = softmax(logits) - onehot(next_token_id)
+# every class gets a nudge; the true token's logit is pulled up.
+
+probs = F.softmax(logits / T, dim=-1)   # inference: T tunes creativity
+</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 34 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2"><strong>Softmax</strong> converts a vector of raw <strong>logits</strong> into a probability distribution &mdash; exponentiate, then normalize &mdash; and the <strong>max-subtraction trick</strong> makes it numerically safe without changing the answer, because softmax is invariant to adding a constant to every logit. <strong>Cross-entropy</strong> scores that distribution against the truth; for a one-hot label it is simply <code>&minus;log(p<sub>true</sub>)</code>, the negative log-likelihood of the correct class. The reason the two are always used together is the <strong>gradient</strong>: differentiate cross-entropy of a softmax and everything cancels into a single expression &mdash; <code>&part;L/&part;z = p &minus; y</code>, the predicted distribution minus the one-hot target. No exponentials survive, one learning rate works, and it is exactly what a framework's <code>cross_entropy</code> computes when you hand it raw logits (never pre-softmaxed). This one loss trains virtually every classifier and every next-token an LLM produces. <strong>&#128073; Tomorrow, Day 35:</strong> label smoothing &mdash; softening those hard one-hot targets to curb overconfidence.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+</script>
+
+<script>
+// ============================================================
+// REAL softmax + cross-entropy on a 4-class toy classifier.
+//   classes : cat, dog, bird, car
+//   logits  : z (user-editable), true class : y (user-picked)
+//   softmax : p_i = exp(z_i - m) / sum_j exp(z_j - m),  m = max(z)
+//             (subtracting m = the numerical-stability trick;
+//              softmax is shift-invariant so p is unchanged)
+//   loss    : L = -sum_i y_i log(p_i) = -log(p_true)  (one-hot y)
+//   gradient: dL/dz_i = p_i - y_i     (the clean combined gradient)
+// ============================================================
+const CLASSES = [
+  { name:"cat",  emoji:"🐱" },
+  { name:"dog",  emoji:"🐶" },
+  { name:"bird", emoji:"🐦" },
+  { name:"car",  emoji:"🚗" }
+];
+const Z0 = [2.0, 1.0, 0.1, -1.5];     // initial logits
+const TRUE0 = 0;                       // initial true class = cat
+let z = Z0.slice();
+let trueIdx = TRUE0;
+
+function softmaxStable(zz){
+  const m = Math.max(...zz);
+  const shifted = zz.map(v => v - m);
+  const ex = shifted.map(v => Math.exp(v));
+  const s = ex.reduce((a,b)=>a+b, 0);
+  const p = ex.map(e => e / s);
+  return { m, shifted, ex, s, p };
+}
+function ceLoss(p, t){ return -Math.log(Math.max(1e-12, p[t])); }
+function grad(p, t){ return p.map((pi,i) => pi - (i === t ? 1 : 0)); }
+
+// ---------- rendering ----------
+const COL = ["#f43f5e","#fb7185","#fda4af","#fecdd3"];
+function fmt(x, d){ return x.toFixed(d===undefined?3:d); }
+
+function buildControls(){
+  const sl = document.getElementById("sliders");
+  sl.innerHTML = "";
+  CLASSES.forEach((c,i) => {
+    const wrap = document.createElement("label");
+    wrap.className = "flex flex-col items-center gap-1 text-sm";
+    wrap.innerHTML =
+      `<span class="text-slate-600">${c.emoji} <code>z<sub>${i}</sub></code> = <span id="vz${i}" class="sk stat"></span></span>` +
+      `<input id="sz${i}" type="range" min="-5" max="8" step="0.1" value="${z[i]}" class="w-32">`;
+    sl.appendChild(wrap);
+  });
+  CLASSES.forEach((c,i) => {
+    document.getElementById("sz"+i).addEventListener("input", e => { z[i] = +e.target.value; render(); });
+  });
+
+  const tp = document.getElementById("truePick");
+  tp.innerHTML = "";
+  CLASSES.forEach((c,i) => {
+    const b = document.createElement("button");
+    b.dataset.i = i;
+    b.className = "true-btn px-2 py-1 rounded-lg text-sm font-semibold border";
+    b.innerHTML = `${c.emoji}`;
+    b.title = c.name;
+    b.onclick = () => { trueIdx = i; render(); };
+    tp.appendChild(b);
+  });
+}
+
+function bars(container, dist, tIdx){
+  const el = document.getElementById(container);
+  el.innerHTML = "";
+  dist.forEach((v,i) => {
+    const c = CLASSES[i];
+    const isTrue = i === tIdx;
+    const row = document.createElement("div");
+    row.className = "barrow";
+    row.innerHTML =
+      `<div class="barlabel">${c.emoji} ${c.name}</div>` +
+      `<div class="bartrack"><div class="barfill" style="width:${(v*100).toFixed(1)}%;background:${COL[i]}"></div></div>` +
+      `<div class="barpct">${(v*100).toFixed(1)}%${isTrue?'<span class="truetag">true</span>':''}</div>`;
+    el.appendChild(row);
+  });
+}
+
+function gradBars(g, tIdx){
+  const el = document.getElementById("gradBars");
+  el.innerHTML = "";
+  g.forEach((gi,i) => {
+    const c = CLASSES[i];
+    const half = Math.min(1, Math.abs(gi)) * 50;   // gradient magnitude <= 1
+    const pos = gi >= 0;
+    const fill = pos
+      ? `<div class="gfill" style="left:50%;width:${half}%;background:#f43f5e"></div>`
+      : `<div class="gfill" style="right:50%;width:${half}%;background:#10b981"></div>`;
+    const row = document.createElement("div");
+    row.className = "grow";
+    row.innerHTML =
+      `<div class="barlabel">${c.emoji} ${c.name}</div>` +
+      `<div class="gtrack"><div class="gzero"></div>${fill}</div>` +
+      `<div class="gval" style="color:${pos?'#be123c':'#047857'}">${gi>=0?'+':''}${fmt(gi)}</div>`;
+    el.appendChild(row);
+  });
+}
+
+function render(){
+  const sm = softmaxStable(z);
+  const p = sm.p;
+  const loss = ceLoss(p, trueIdx);
+  const g = grad(p, trueIdx);
+
+  // slider values + true-class highlight
+  CLASSES.forEach((c,i) => { document.getElementById("vz"+i).textContent = fmt(z[i],1); });
+  document.querySelectorAll(".true-btn").forEach(b => {
+    const on = (+b.dataset.i === trueIdx);
+    b.className = "true-btn px-2 py-1 rounded-lg text-sm font-semibold border " +
+      (on ? "bg-emerald-500 text-white border-emerald-500" : "bg-white text-slate-500 border-slate-300 hover:border-emerald-400");
+  });
+
+  // pipeline table
+  const body = document.getElementById("pipeBody");
+  body.innerHTML = "";
+  CLASSES.forEach((c,i) => {
+    const tr = document.createElement("tr");
+    if(i === trueIdx) tr.className = "truerow";
+    tr.innerHTML =
+      `<td>${c.emoji} ${c.name}${i===trueIdx?'<span class="truetag">true</span>':''}</td>` +
+      `<td class="num">${fmt(z[i],2)}</td>` +
+      `<td class="num">${fmt(sm.shifted[i],2)}</td>` +
+      `<td class="num">${fmt(sm.ex[i],3)}</td>` +
+      `<td class="num font-bold">${(p[i]*100).toFixed(1)}%</td>`;
+    body.appendChild(tr);
+  });
+  document.getElementById("maxLine").textContent = "m = " + fmt(sm.m,2);
+  document.getElementById("sumLine").textContent = "Σ = " + fmt(sm.s,3);
+
+  bars("probBars", p, trueIdx);
+
+  // stability strip
+  const naiveMax = Math.exp(sm.m);
+  const overflow = sm.m > 700;
+  document.getElementById("stab").innerHTML =
+    `<strong>Stability check.</strong> Largest logit is <code>${fmt(sm.m,2)}</code>. Naive <code>exp(${fmt(sm.m,2)}) = ${overflow ? '&infin; (overflow!)' : naiveMax.toExponential(2)}</code>, ` +
+    `but after subtracting the max the biggest term is exactly <code>exp(0) = 1</code>. ` +
+    `Same probabilities, no overflow &mdash; that is why real code always subtracts the max.`;
+
+  // loss
+  document.getElementById("loss").textContent = fmt(loss);
+  document.getElementById("lossPt").textContent = fmt(p[trueIdx]);
+  document.getElementById("lossClass").textContent = CLASSES[trueIdx].emoji + " " + CLASSES[trueIdx].name;
+  document.getElementById("trueName").textContent = CLASSES[trueIdx].emoji + " " + CLASSES[trueIdx].name;
+  // map loss ~[0, ~4] to a bar; log2(4)=2 -> use inverse of p_true for intuition
+  document.getElementById("lossBar").style.width = (p[trueIdx]*100).toFixed(1) + "%";
+
+  gradBars(g, trueIdx);
+
+  // note
+  const note = document.getElementById("note");
+  const pt = p[trueIdx];
+  const argmax = p.indexOf(Math.max(...p));
+  let msg;
+  if(pt > 0.9) msg = `<strong>Confident and correct.</strong> The model puts ${(pt*100).toFixed(1)}% on ${CLASSES[trueIdx].emoji} ${CLASSES[trueIdx].name}, so the loss is tiny and the true-class gradient <code>p&minus;1 = ${fmt(pt-1)}</code> is nearly zero &mdash; almost nothing left to learn. Every wrong class has a small positive gradient nudging it down.`;
+  else if(argmax !== trueIdx) msg = `<strong>Confidently wrong &mdash; the expensive case.</strong> The model's top pick is ${CLASSES[argmax].emoji} ${CLASSES[argmax].name}, but the truth is ${CLASSES[trueIdx].emoji} ${CLASSES[trueIdx].name}. Cross-entropy is high (${fmt(loss)}) and the true-class gradient <code>${fmt(p[trueIdx]-1)}</code> is strongly negative &mdash; a big shove to raise that logit next step.`;
+  else msg = `<strong>Right, but unsure.</strong> ${CLASSES[trueIdx].emoji} ${CLASSES[trueIdx].name} is on top at ${(pt*100).toFixed(1)}%, yet the mass is spread out, so there is still real loss (${fmt(loss)}) and a meaningful <code>p&minus;y</code> gradient sharpening the distribution. Drag its logit up and watch the loss fall.`;
+  note.innerHTML = msg;
+}
+
+document.getElementById("reset").onclick = () => { z = Z0.slice(); trueIdx = TRUE0; buildControls(); render(); };
+
+buildControls();
+render();
+</script>
+
+<script>
+const STEPS = [
+ { title:"1. The problem: raw scores are not probabilities", why:"A neural classifier's last linear layer outputs one number per class -- the LOGITS. They are unbounded real values (can be negative, can be huge) and they do not sum to anything meaningful. To make a decision, report a confidence, or compute a probabilistic loss, we need to turn that vector into a proper probability distribution: every entry in [0,1], and the whole thing summing to 1. Softmax is the standard, differentiable way to do exactly that -- and crucially it PRESERVES the ranking of the logits (bigger logit -> bigger probability), so it never changes which class wins, only how the confidence is expressed.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">logits z = [2.0, 1.0, 0.1, -1.5]&nbsp;&nbsp;(unbounded, meaningless scale)<br>&darr; softmax<br>p = [0.646, 0.238, 0.097, 0.020]&nbsp;&nbsp;(in [0,1], sums to 1)<br>ranking preserved: biggest logit &rarr; biggest probability</div>`, code:"# a classifier ends in a linear layer -> logits\nlogits = model(x)          # e.g. [2.0, 1.0, 0.1, -1.5]\n# we need: values in [0,1] that sum to 1\n# and stay in the same order. that's softmax." },
+ { title:"2. Softmax: exponentiate, then normalize", why:"Softmax has two moves. First EXPONENTIATE every logit: exp() is always positive, so negatives become small positives and the ordering is kept. Second NORMALIZE: divide each exponential by the sum of all of them, forcing the result to sum to 1. The formula is p_i = exp(z_i) / sum_j exp(z_j). Because exp grows fast, softmax exaggerates gaps: a logit that is a couple of units larger ends up with most of the probability mass. It is a smooth, differentiable stand-in for 'argmax' -- hence the name soft-max.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">p&#7522; = exp(z&#7522;) / &Sigma;&#11388; exp(z&#11388;)<br><br>exp: makes everything positive, keeps order<br>&Sigma; then divide: forces the sum to 1<br>a smooth, differentiable argmax</div>`, code:"import numpy as np\ndef softmax(z):\n    e = np.exp(z)\n    return e / e.sum()\n# exp -> positive & order-preserving\n# divide by the sum -> a valid distribution" },
+ { title:"3. Why exp() and not just normalize the logits?", why:"Why not simply divide each logit by the sum of logits? Because logits can be negative or sum to zero, which breaks that idea, and it would not keep probabilities positive. Exponentiating fixes both: results are always positive and finite. There is a deeper reason too -- softmax comes straight out of treating logits as unnormalized LOG-probabilities. If z_i = log(unnormalized p_i), then recovering p means exp then normalize. That log connection is exactly why softmax pairs so cleanly with cross-entropy, which is built on log(p): the log and the exp are made for each other.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">logits are LOG-probabilities (unnormalized)<br>z&#7522; = log(unnormalized p&#7522;)<br>&rArr; p&#7522; = exp(z&#7522;) / &Sigma; exp(z&#11388;)<br>the exp here is the inverse of the log in cross-entropy</div>`, code:"# naive 'p = z / z.sum()' fails:\n#   negatives, can divide by ~0, not positive.\n# exp() guarantees positivity AND encodes the\n# interpretation of logits as log-probabilities,\n# which is what makes the CE gradient cancel." },
+ { title:"4. Numerical stability: subtract the max", why:"exp() overflows fast: exp(1000) is infinity in float, and inf/inf is NaN -- your loss becomes NaN and training dies. Real logits routinely reach the hundreds, so this is not hypothetical. The fix uses a free property: softmax is SHIFT-INVARIANT. Subtract any constant c from every logit and softmax is unchanged, because exp(z_i - c)/sum exp(z_j - c) = [exp(z_i)/exp(c)] / [sum exp(z_j)/exp(c)] -- the exp(c) cancels top and bottom. Choose c = max(z). Now the largest shifted logit is 0, its exp is exactly 1, nothing overflows, and the probabilities are bit-for-bit the intended values. Every production softmax does this.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">softmax(z) = softmax(z - c)&nbsp;&nbsp;for ANY constant c<br>pick c = max(z):<br>largest term becomes exp(0) = 1&nbsp;&nbsp;(no overflow)<br>exp(1000) &rarr; &infin; &nbsp; but &nbsp; exp(1000 - 1000) = 1 &#10003;</div>`, code:"def softmax(z):\n    z = z - np.max(z)     # shift-invariant: result unchanged\n    e = np.exp(z)         # biggest term is now exp(0) = 1\n    return e / e.sum()\n# without the shift, big logits -> inf/inf -> NaN loss" },
+ { title:"5. Cross-entropy: scoring the distribution", why:"Now we have p; how wrong is it? Cross-entropy measures the distance from the predicted distribution p to the true distribution y: H(y,p) = -sum_i y_i log(p_i). It is minimized when p matches y. The true label is one-hot -- y = [0,1,0,0] for 'the answer is class 1' -- so every term with y_i = 0 vanishes and only the true class survives: L = -log(p_true). It is literally the negative log-probability the model assigned to the right answer, also called the negative log-likelihood. Assign 100% to the truth -> -log(1) = 0 loss. Assign almost 0 -> -log(~0) -> huge loss. It punishes confident mistakes brutally.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">L = &minus;&Sigma;&#7522; y&#7522; log(p&#7522;)<br>one-hot y &rArr; only true class survives<br>L = &minus;log(p_true)<br>p_true = 1 &rarr; loss 0&nbsp;&nbsp;|&nbsp;&nbsp;p_true &rarr; 0 &rarr; loss &rarr; &infin;</div>`, code:"def cross_entropy(p, y_true):\n    return -np.log(p[y_true] + 1e-12)\n# = negative log-likelihood of the correct class\n# confident + correct -> ~0\n# confident + wrong   -> very large" },
+ { title:"6. The punchline: the gradient is just p - y", why:"Here is why softmax and cross-entropy are ALWAYS taught and used together. To train, we need dL/dz -- the gradient of the loss with respect to the raw logits. Softmax alone has a messy Jacobian (a full matrix of p_i(delta_ij - p_j) terms), and cross-entropy has a 1/p. You might expect a horror show. Instead, write L = -log(softmax(z)_t) = -z_t + log(sum_j exp(z_j)). Differentiate: the first term gives -1 only for the true class; the second gives exp(z_i)/sum = p_i for every class. Combine and everything collapses to dL/dz_i = p_i - y_i. The softmax denominator, the exponentials, the 1/p -- all gone. Predicted distribution minus the one-hot target. One subtraction.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">L = &minus;z_t + log &Sigma;&#11388; exp(z&#11388;)<br>&part;L/&part;z&#7522; = &minus;[i = t] + exp(z&#7522;)/&Sigma; exp(z&#11388;)<br>= &minus;y&#7522; + p&#7522;<br><b>&part;L/&part;z = p &minus; y</b>&nbsp;&nbsp;(no exp, no 1/p left)</div>`, code:"# fuse them; differentiate once:\n#   L = -z_t + logsumexp(z)\n#   dL/dz_i = p_i - 1(i == t)\ndef softmax_ce_grad(z, t):\n    p = softmax(z)\n    p[t] -= 1.0        # subtract the one-hot\n    return p            # == p - y" },
+ { title:"7. Reading the gradient: who gets pushed where", why:"The clean form makes the update intuitive. For the TRUE class the gradient is p_true - 1, which is negative (since p_true < 1), so gradient descent RAISES that logit -- push the right answer up. For every WRONG class the gradient is +p_i, positive, so descent LOWERS those logits -- push the wrong answers down, and proportionally to how much probability they currently steal. The gradients over all classes sum to zero, so it is a pure redistribution of probability mass toward the truth. The bigger the mistake (the smaller p_true), the larger the corrective step -- self-scaling, and one global learning rate works because no stray T or exp factors remain.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">true class:&nbsp; g = p_true &minus; 1 &lt; 0 &rarr; raise its logit &uarr;<br>wrong class: g = p&#7522; &gt; 0&nbsp;&nbsp;&nbsp;&nbsp;&rarr; lower its logit &darr;<br>&Sigma; g&#7522; = 0 &rarr; mass just shifts toward the truth<br>smaller p_true &rarr; bigger correction (self-scaling)</div>`, code:"g = softmax(z); g[t] -= 1        # p - y\n# g[t]  < 0  -> descent pushes true logit UP\n# g[i!=t] > 0 -> descent pushes wrong logits DOWN\n# sum(g) == 0 : probability is redistributed" },
+ { title:"8. Why NOT softmax + MSE (or softmax then log separately)", why:"Two tempting mistakes. (a) Squared error on softmax outputs: the gradient then carries the softmax Jacobian, which SATURATES -- when the model is confidently wrong, p is near 0 or 1, the Jacobian is tiny, and the gradient nearly vanishes exactly when you most need a big correction. Cross-entropy's -log blows up in that regime, giving a strong signal. (b) Computing softmax and THEN log() as two steps: log(exp(z)/sum) can underflow to log(0) = -inf. Frameworks fuse them into log_softmax via the log-sum-exp trick: log_softmax(z) = z - logsumexp(z), stable by construction. That is why you pass RAW logits to cross_entropy and never softmax first -- doing so double-softmaxes and destabilizes training.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">softmax + MSE: gradient saturates when very wrong &#10007;<br>softmax + CE:&nbsp; &minus;log blows up when wrong &rarr; strong grad &#10003;<br>log(softmax()) as 2 steps &rarr; log(0) = &minus;&infin; &#10007;<br>log_softmax(z) = z &minus; logsumexp(z) &rarr; stable &#10003;</div>`, code:"# WRONG: double softmax, unstable\nloss = F.cross_entropy(F.softmax(logits, -1), y)\n\n# RIGHT: hand it the raw logits\nloss = F.cross_entropy(logits, y)   # fuses log_softmax + nll\n# internally: z - logsumexp(z), never log(0)" },
+ { title:"9. Where it lives: classifiers and every LLM token", why:"Softmax + cross-entropy is THE workhorse loss of deep learning. Any multi-class classifier -- images, audio, tabular -- ends in logits -> softmax -> cross-entropy. And a language model is just a giant classifier over the vocabulary: at each position it emits logits over ~50,000 tokens, softmax turns them into next-token probabilities, and cross-entropy against the actual next token is the entire pretraining objective. The p - y gradient is literally what trains GPT-scale models, one token at a time, across trillions of tokens. At inference you reuse the same softmax with a temperature (softmax(z/T), the Day-33 knob) to make sampling more or less adventurous. Learn this one loss and its gradient and you understand how nearly every modern model is trained.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">image classifier: logits &rarr; softmax &rarr; CE vs label<br>LLM: logits over 50k tokens &rarr; softmax &rarr; CE vs next token<br>training grad = softmax(logits) &minus; onehot(next)<br>inference: softmax(z / T) &nbsp; T tunes creativity</div>`, code:"# an LLM = a softmax classifier over the vocabulary\nlogits = model(context)              # [vocab]\nloss = F.cross_entropy(logits, next_token)\n# grad = softmax(logits) - onehot(next_token)\n# this single loss trains the whole model." }
+];
+</script>
+
+<script>
+const stepsEl=document.getElementById("steps");
+const prevB=document.getElementById("prev"), nextB=document.getElementById("next-btn"), autoB=document.getElementById("auto");
+let curS=0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },4600); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>
