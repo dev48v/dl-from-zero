@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 35 — Data Augmentation</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  canvas { image-rendering:auto; border-radius:12px; display:block; }
+  .cv-wrap { background:#e2e8f0; border-radius:12px; padding:0; display:inline-block; box-shadow:0 1px 2px rgba(0,0,0,.06); }
+  .ctrl { display:flex; flex-direction:column; gap:3px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .toggle { display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:#334155; cursor:pointer; user-select:none; }
+  .toggle input { width:16px; height:16px; accent-color:#f43f5e; }
+  .gcell { background:#e2e8f0; border-radius:8px; padding:0; overflow:hidden; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .tag { display:inline-block; font-size:10px; font-weight:700; border-radius:5px; padding:1px 6px; margin:2px 3px 0 0; }
+  .tag-on { color:#166534; background:#f0fdf4; border:1px solid #bbf7d0; }
+  .tag-off { color:#94a3b8; background:#f8fafc; border:1px solid #e2e8f0; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 35</div>
+      <h1 class="text-xl font-bold">&#128256; Data Augmentation &mdash; one labelled image becomes <em>many</em>: apply <em>label-preserving</em> transforms &mdash; flips, rotations, crops, brightness/contrast jitter, noise, cutout &mdash; so the model sees endless variations of the same class and learns the <em>object</em> instead of memorising the <em>pixels</em></h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">One image on the left. A whole training set on the right &mdash; live.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto">Deep nets are greedy for data, and a small dataset invites <strong>overfitting</strong> &mdash; the model memorises exact pixels instead of learning the class. <strong class="text-rose-600">Data augmentation</strong> manufactures new training examples on the fly by applying random transforms that <strong>change the pixels but not the label</strong>: a cat that is flipped, rotated, cropped, dimmed, or partly hidden is <em>still a cat</em>. Toggle the transforms below and drag the sliders to see one image morph; then hit <strong>Resample</strong> to watch a single picture explode into a batch of variants &mdash; exactly what the network sees, a fresh version every epoch.</p>
+
+      <div class="bg-white rounded-xl border border-rose-200 p-4 mb-4 text-left">
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-3">
+          <div class="flex flex-wrap gap-x-6 gap-y-2 items-center">
+            <label class="toggle"><input type="checkbox" id="c_hflip"> ↔ Horizontal flip</label>
+            <label class="toggle"><input type="checkbox" id="c_vflip"> ↕ Vertical flip</label>
+          </div>
+          <div class="flex items-center justify-start md:justify-end gap-2">
+            <button id="rand" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">🎲 Randomize</button>
+            <button id="reset" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&#8635; Reset</button>
+          </div>
+          <div class="ctrl"><label>↻ Rotation <span id="v_rot" class="sk stat">0&deg;</span></label><input type="range" id="s_rot" min="-45" max="45" step="1" value="0"></div>
+          <div class="ctrl"><label>🔍 Random crop / zoom <span id="v_crop" class="sk stat">1.0&times;</span></label><input type="range" id="s_crop" min="1" max="2.5" step="0.05" value="1"></div>
+          <div class="ctrl"><label>☀ Brightness <span id="v_bri" class="sk stat">1.00</span></label><input type="range" id="s_bri" min="0.4" max="1.6" step="0.02" value="1"></div>
+          <div class="ctrl"><label>◐ Contrast <span id="v_con" class="sk stat">1.00</span></label><input type="range" id="s_con" min="0.4" max="1.6" step="0.02" value="1"></div>
+          <div class="ctrl"><label>· Gaussian noise <span id="v_noise" class="sk stat">0</span></label><input type="range" id="s_noise" min="0" max="55" step="1" value="0"></div>
+          <div class="ctrl"><label>▧ Cutout <span id="v_cut" class="sk stat">off</span></label><input type="range" id="s_cut" min="0" max="0.45" step="0.01" value="0"></div>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-4 items-start text-left mb-4">
+        <div class="bg-white rounded-xl border border-slate-200 p-4 text-center">
+          <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Original &mdash; the one labelled example</div>
+          <div class="cv-wrap"><canvas id="srcCanvas" width="180" height="180"></canvas></div>
+          <div class="mt-2"><span class="pill bg-emerald-100 text-emerald-800">label = 🐱 cat</span></div>
+        </div>
+        <div class="bg-white rounded-xl border border-rose-200 p-4 text-center">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">Augmented &mdash; live from the controls</div>
+          <div class="cv-wrap"><canvas id="outCanvas" width="180" height="180"></canvas></div>
+          <div class="mt-2"><span class="pill bg-emerald-100 text-emerald-800">label = 🐱 cat <span class="text-emerald-600">(preserved)</span></span></div>
+        </div>
+      </div>
+
+      <div id="activeStrip" class="text-left text-xs text-slate-500 mb-4"></div>
+
+      <div class="bg-white rounded-xl border border-rose-200 p-4 text-left">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider">One image &rarr; many &mdash; a typical augmentation policy, sampled 12&times;</div>
+            <p class="text-xs text-slate-400 mt-1">Every tile is the <em>same</em> cat with a different random draw of flips, rotation, crop, jitter, noise and cutout. This is what a model trains on &mdash; a new variant each epoch, so it never sees the identical image twice.</p>
+          </div>
+          <button id="resample" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm flex-none">🎲 Resample</button>
+        </div>
+        <div id="gallery" class="grid grid-cols-4 sm:grid-cols-6 gap-2"></div>
+      </div>
+
+      <div id="note" class="mt-4 rounded-xl border border-rose-200 bg-rose-50 text-rose-900 p-4 text-sm text-left"></div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">More data for free &mdash; if the transform keeps the label</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">The live demo above is a from-scratch augmentation pipeline in the browser &mdash; no library, just the HTML5 canvas. We build it one transform at a time: geometric moves (flip, rotate, random crop) with the canvas transform matrix, photometric jitter (brightness, contrast) with <code>ctx.filter</code>, additive Gaussian noise straight on the pixel buffer, and cutout as a filled rectangle &mdash; then we fuse them into a random <em>policy</em> that turns one image into an endless stream, and finally map every line to what <code>torchvision.transforms</code> does in a real training loop.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Two canvases: the source, and where variants land</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Draw the labelled image once onto an offscreen source canvas. Every augmentation reads from that pristine source and paints a fresh result onto the output canvas &mdash; the original is never mutated, so we can resample forever.</p>
+        <div class="relative"><pre>// src = the one labelled example (drawn once, never touched again)
+const src = document.createElement("canvas");
+src.width = src.height = 180;
+drawCat(src.getContext("2d"), 180, 180);   // our toy "image"
+
+const out = document.getElementById("out");   // where the variant lands
+const ctx = out.getContext("2d");
+const W = out.width, H = out.height;</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Geometric transforms &mdash; flip, rotate, all at the center</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Flips and rotations are one matrix. Translate the origin to the image center first, then <code>rotate</code>, then <code>scale</code> &mdash; a negative scale factor mirrors the axis, so <code>scale(-1,1)</code> is a horizontal flip and <code>scale(1,-1)</code> a vertical one. Doing it around the center keeps the cat in frame instead of spinning off a corner.</p>
+        <div class="relative"><pre>function geometric(ctx, p) {
+  ctx.fillStyle = "#e2e8f0";
+  ctx.fillRect(0, 0, W, H);              // padding shows where the image isn't
+  ctx.save();
+  ctx.translate(W / 2, H / 2);           // work about the center
+  ctx.rotate(p.rot * Math.PI / 180);     // degrees -> radians
+  ctx.scale(p.hflip ? -1 : 1,            // negative x = mirror horizontally
+            p.vflip ? -1 : 1);           // negative y = mirror vertically
+  // (crop happens in the drawImage below, step 3)
+  ctx.restore();
+}</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Random crop &mdash; a sub-rectangle stretched to fill</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The 9-argument <code>drawImage</code> takes a source rectangle <code>(sx,sy,sw,sh)</code> and stretches it over the whole destination. Shrink the source rectangle (zoom in) and slide it to a random offset &mdash; that is a random-resized-crop, the single most effective augmentation for natural images. The model learns to recognise the cat from just an ear or a paw.</p>
+        <div class="relative"><pre>function drawCropped(ctx, p) {
+  const sw = src.width  / p.zoom;        // zoom>1 -> smaller source window
+  const sh = src.height / p.zoom;
+  const sx = (src.width  - sw) * p.offX; // offX,offY in [0,1] -> random position
+  const sy = (src.height - sh) * p.offY;
+  // source sub-rect (sx,sy,sw,sh)  ->  full destination (-W/2..W/2)
+  ctx.drawImage(src, sx, sy, sw, sh, -W / 2, -H / 2, W, H);
+}</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Photometric jitter &mdash; brightness &amp; contrast for free</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Colour changes teach the model to ignore lighting. The canvas ships CSS-style filters: set <code>ctx.filter</code> <em>before</em> drawing and it is baked into the pixels. Brightness scales every channel; contrast pushes values away from (or toward) mid-grey. Combined with hue/saturation this is the classic <code>ColorJitter</code>.</p>
+        <div class="relative"><pre>// set the filter BEFORE the drawImage so it bakes into the output
+ctx.filter = `brightness(${p.brightness}) contrast(${p.contrast})`;
+drawCropped(ctx, p);                 // pixels come out jittered
+ctx.filter = "none";                 // reset so later steps aren't filtered
+
+// 1.0 = unchanged; 0.5 = half as bright; 1.5 = brighter / more contrast</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Gaussian noise &mdash; edit the raw pixel buffer</h3></div>
+        <p class="text-sm text-slate-600 mb-3">For per-pixel effects, pull the raw bytes with <code>getImageData</code>, add a Gaussian sample (Box&ndash;Muller turns two uniforms into a normal) to each RGB channel, and write them back. Sensor-like noise makes the model robust to grainy, low-light inputs and blurs the exact pixel values it might otherwise memorise.</p>
+        <div class="relative"><pre>function addNoise(ctx, sigma) {
+  const img = ctx.getImageData(0, 0, W, H);
+  const d = img.data;                       // [r,g,b,a, r,g,b,a, ...]
+  for (let i = 0; i < d.length; i += 4) {
+    const n = gauss() * sigma;              // one sample, applied to r,g,b
+    d[i]   += n; d[i+1] += n; d[i+2] += n;  // alpha (d[i+3]) untouched
+  }
+  ctx.putImageData(img, 0, 0);
+}
+function gauss() {                          // Box-Muller: uniforms -> normal
+  const u = Math.random(), v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Cutout &mdash; mask a random square, keep the label</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Cutout (a.k.a. random erasing) drops a random square to a constant fill. It forces the network to spread its attention over the whole object instead of leaning on one giveaway feature &mdash; if the ears are covered, learn the whiskers. The label is unchanged: a partly hidden cat is still a cat.</p>
+        <div class="relative"><pre>function cutout(ctx, frac) {              // frac = side length / image size
+  if (frac <= 0) return;
+  const s = frac * W;
+  const x = Math.random() * (W - s);      // random top-left, fully inside
+  const y = Math.random() * (H - s);
+  ctx.fillStyle = "#6b7280";              // constant gray fill
+  ctx.fillRect(x, y, s, s);
+}</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">The policy &mdash; sample random params, one image &rarr; many</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Augmentation is a <em>distribution</em>, not a fixed edit. Each time we need a training example, sample fresh random parameters and run the whole pipeline. Same source, endless outputs &mdash; the model effectively trains on a dataset far larger than the one you collected, and never memorises a single frame.</p>
+        <div class="relative"><pre>function samplePolicy() {                  // one random draw = one variant
+  return {
+    hflip: Math.random() < 0.5,           // coin flip
+    vflip: false,                         // OFF: an upside-down cat is rare
+    rot:   rand(-25, 25),                 // mild rotation
+    zoom:  rand(1.0, 1.8),  offX: Math.random(), offY: Math.random(),
+    brightness: rand(0.75, 1.25),
+    contrast:   rand(0.8, 1.2),
+    sigma:  rand(0, 22),
+    cut:    Math.random() < 0.5 ? rand(0.15, 0.35) : 0,
+  };
+}
+function augment(ctx, p) {                 // fuse all six transforms
+  ctx.fillStyle = "#e2e8f0"; ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.filter = `brightness(${p.brightness}) contrast(${p.contrast})`;
+  ctx.translate(W/2, H/2);
+  ctx.rotate(p.rot * Math.PI/180);
+  ctx.scale(p.hflip?-1:1, p.vflip?-1:1);
+  drawCropped(ctx, p);
+  ctx.restore(); ctx.filter = "none";
+  addNoise(ctx, p.sigma);                  // pixel-level, after drawing
+  cutout(ctx, p.cut);
+}
+// 12 tiles = augment(tileCtx, samplePolicy()) x 12 -> the gallery above</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">8</div><h3 class="font-bold text-lg">The real thing &mdash; and the one rule that matters</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Every canvas call maps one-to-one to a line of <code>torchvision.transforms</code>. The framework composes them into the training <code>Dataset</code> so a fresh random variant is produced on every <code>__getitem__</code>. The golden rule: <strong>augment the training set only</strong>. The validation/test set must stay clean &mdash; augmenting it would measure the wrong thing. (Test-time augmentation is a separate, deliberate ensembling trick.)</p>
+        <div class="relative"><pre>import torchvision.transforms as T
+
+train_tf = T.Compose([                       # a fresh random draw per image, per epoch
+    T.RandomResizedCrop(180, scale=(0.4, 1.0)),   # step 3
+    T.RandomHorizontalFlip(p=0.5),                # step 2
+    T.RandomRotation(25),                         # step 2
+    T.ColorJitter(brightness=0.25, contrast=0.2), # step 4
+    T.ToTensor(),
+    T.RandomErasing(p=0.5, scale=(0.02, 0.15)),   # step 6 (cutout)
+])
+
+# TEST/VAL: no randomness -- resize + center-crop + ToTensor ONLY
+test_tf = T.Compose([T.Resize(200), T.CenterCrop(180), T.ToTensor()])
+
+train_ds = ImageFolder("data/train", transform=train_tf)  # augmented
+val_ds   = ImageFolder("data/val",   transform=test_tf)    # clean!</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 35 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2"><strong>Data augmentation</strong> fights overfitting by synthesising new training examples from the ones you have, using transforms that <strong>change the pixels but preserve the label</strong>. Geometric moves &mdash; <strong>horizontal flip, rotation, random-resized-crop</strong> &mdash; teach invariance to pose and framing; photometric jitter &mdash; <strong>brightness, contrast, colour, noise</strong> &mdash; teaches invariance to lighting and sensors; occlusion &mdash; <strong>cutout / random erasing</strong> &mdash; forces the model to use the whole object, not one shortcut feature. The catch is that <strong>label-preserving is domain-specific</strong>: a horizontal flip is fine for a cat but turns a <code>6</code> into something else and mirrors text; heavy rotation is fine for aerial photos but wrong for upright digits &mdash; choose transforms that respect what the label actually means. Because augmentation is a random <em>policy</em> resampled every epoch, the network effectively trains on a far larger dataset and never sees the same frame twice &mdash; which is why it generalises. And it applies to the <strong>training set only</strong>; the test set stays pristine so you measure real performance. Learned policies like AutoAugment/RandAugment, and label-mixing variants like Mixup/CutMix, take the same idea further. <strong>&#128073; Tomorrow, Day 36:</strong> label smoothing &mdash; softening those hard one-hot targets to curb overconfidence.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+</script>
+
+<script>
+// ============================================================
+// REAL from-scratch data augmentation on the HTML5 canvas.
+//   source image : a toy "cat" drawn once (label = cat)
+//   transforms   : hflip, vflip, rotation, random-resized-crop,
+//                  brightness, contrast, gaussian noise, cutout
+//   every transform changes pixels but NOT the label -> more data
+// ============================================================
+
+// ---------- draw the one labelled example (a cat) ----------
+function drawCat(ctx, W, H){
+  // sky gradient
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,"#bae6fd"); g.addColorStop(1,"#e0f2fe");
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+  // ground
+  ctx.fillStyle = "#86efac"; ctx.fillRect(0,H*0.74,W,H*0.26);
+  // sun, top-LEFT (an asymmetry cue so flips are obvious)
+  ctx.fillStyle = "#fde047";
+  ctx.beginPath(); ctx.arc(W*0.16,H*0.15,W*0.085,0,Math.PI*2); ctx.fill();
+
+  const cx=W*0.52, cy=H*0.52, r=W*0.24;
+  // ears
+  ctx.fillStyle = "#fb923c";
+  ctx.beginPath(); ctx.moveTo(cx-r*0.85,cy-r*0.65); ctx.lineTo(cx-r*0.4,cy-r*1.45); ctx.lineTo(cx-r*0.02,cy-r*0.7); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(cx+r*0.85,cy-r*0.65); ctx.lineTo(cx+r*0.4,cy-r*1.45); ctx.lineTo(cx+r*0.02,cy-r*0.7); ctx.closePath(); ctx.fill();
+  // inner ears
+  ctx.fillStyle = "#fda4af";
+  ctx.beginPath(); ctx.moveTo(cx-r*0.62,cy-r*0.72); ctx.lineTo(cx-r*0.4,cy-r*1.15); ctx.lineTo(cx-r*0.2,cy-r*0.72); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(cx+r*0.62,cy-r*0.72); ctx.lineTo(cx+r*0.4,cy-r*1.15); ctx.lineTo(cx+r*0.2,cy-r*0.72); ctx.closePath(); ctx.fill();
+  // head
+  ctx.fillStyle = "#fb923c"; ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+  // dark patch around the RIGHT eye (asymmetry cue)
+  ctx.fillStyle = "#7c2d12"; ctx.beginPath(); ctx.arc(cx+r*0.4,cy-r*0.08,r*0.42,0,Math.PI*2); ctx.fill();
+  // eyes (white)
+  ctx.fillStyle = "#fff";
+  ctx.beginPath(); ctx.arc(cx-r*0.38,cy-r*0.08,r*0.2,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx+r*0.4 ,cy-r*0.08,r*0.2,0,Math.PI*2); ctx.fill();
+  // pupils
+  ctx.fillStyle = "#0f172a";
+  ctx.beginPath(); ctx.arc(cx-r*0.38,cy-r*0.08,r*0.1,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx+r*0.4 ,cy-r*0.08,r*0.1,0,Math.PI*2); ctx.fill();
+  // nose
+  ctx.fillStyle = "#ef4444";
+  ctx.beginPath(); ctx.moveTo(cx,cy+r*0.16); ctx.lineTo(cx-r*0.13,cy+r*0.04); ctx.lineTo(cx+r*0.13,cy+r*0.04); ctx.closePath(); ctx.fill();
+  // mouth + whiskers
+  ctx.strokeStyle = "#7c2d12"; ctx.lineWidth = Math.max(1.2,W*0.012); ctx.lineCap="round";
+  ctx.beginPath();
+  ctx.moveTo(cx,cy+r*0.16); ctx.quadraticCurveTo(cx-r*0.22,cy+r*0.4,cx-r*0.34,cy+r*0.22);
+  ctx.moveTo(cx,cy+r*0.16); ctx.quadraticCurveTo(cx+r*0.22,cy+r*0.4,cx+r*0.34,cy+r*0.22);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx-r*0.22,cy+r*0.06); ctx.lineTo(cx-r*0.95,cy-r*0.06);
+  ctx.moveTo(cx-r*0.22,cy+r*0.16); ctx.lineTo(cx-r*0.95,cy+r*0.22);
+  ctx.moveTo(cx+r*0.22,cy+r*0.06); ctx.lineTo(cx+r*0.95,cy-r*0.06);
+  ctx.moveTo(cx+r*0.22,cy+r*0.16); ctx.lineTo(cx+r*0.95,cy+r*0.22);
+  ctx.stroke();
+}
+
+// ---------- source canvas (drawn once) ----------
+const SRC = document.createElement("canvas");
+SRC.width = 180; SRC.height = 180;
+drawCat(SRC.getContext("2d"), 180, 180);
+
+// mirror it into the visible "original" canvas
+const srcCanvas = document.getElementById("srcCanvas");
+srcCanvas.getContext("2d").drawImage(SRC, 0, 0);
+
+// ---------- the augmentation engine ----------
+function gauss(){                                  // Box-Muller normal sample
+  const u = Math.max(1e-9, Math.random()), v = Math.random();
+  return Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v);
+}
+
+function augment(ctx, W, H, p){
+  // 1) background padding (visible where the rotated/cropped image doesn't reach)
+  ctx.filter = "none";
+  ctx.fillStyle = "#e2e8f0";
+  ctx.fillRect(0,0,W,H);
+  // 2) geometric + photometric, baked together
+  ctx.save();
+  ctx.filter = `brightness(${p.brightness}) contrast(${p.contrast})`;
+  ctx.translate(W/2, H/2);
+  ctx.rotate(p.rot * Math.PI/180);
+  ctx.scale(p.hflip ? -1 : 1, p.vflip ? -1 : 1);
+  // random-resized-crop: shrink source window, slide to a random offset
+  const sw = SRC.width  / p.zoom, sh = SRC.height / p.zoom;
+  const sx = (SRC.width  - sw) * p.offX, sy = (SRC.height - sh) * p.offY;
+  ctx.drawImage(SRC, sx, sy, sw, sh, -W/2, -H/2, W, H);
+  ctx.restore();
+  ctx.filter = "none";
+  // 3) additive gaussian noise (pixel-level)
+  if(p.sigma > 0){
+    const img = ctx.getImageData(0,0,W,H), d = img.data;
+    for(let i=0;i<d.length;i+=4){
+      const n = gauss()*p.sigma;
+      d[i]+=n; d[i+1]+=n; d[i+2]+=n;
+    }
+    ctx.putImageData(img,0,0);
+  }
+  // 4) cutout: mask a random square with a constant fill
+  if(p.cut > 0){
+    const s = p.cut*W;
+    const x = (p.cutX!==undefined?p.cutX:Math.random())*(W-s);
+    const y = (p.cutY!==undefined?p.cutY:Math.random())*(H-s);
+    ctx.fillStyle = "#6b7280";
+    ctx.fillRect(x,y,s,s);
+  }
+}
+
+// ---------- live controls -> main output canvas ----------
+const outCanvas = document.getElementById("outCanvas");
+const outCtx = outCanvas.getContext("2d");
+const OW = outCanvas.width, OH = outCanvas.height;
+
+const els = {
+  hflip:document.getElementById("c_hflip"), vflip:document.getElementById("c_vflip"),
+  rot:document.getElementById("s_rot"), crop:document.getElementById("s_crop"),
+  bri:document.getElementById("s_bri"), con:document.getElementById("s_con"),
+  noise:document.getElementById("s_noise"), cut:document.getElementById("s_cut")
+};
+// fixed crop/cut positions for the live view so a slider drag is smooth & readable
+let liveOffX = 0.5, liveOffY = 0.35, liveCutX = 0.55, liveCutY = 0.2;
+
+function readParams(){
+  return {
+    hflip: els.hflip.checked, vflip: els.vflip.checked,
+    rot: +els.rot.value,
+    zoom: +els.crop.value,  offX: liveOffX, offY: liveOffY,
+    brightness: +els.bri.value, contrast: +els.con.value,
+    sigma: +els.noise.value,
+    cut: +els.cut.value, cutX: liveCutX, cutY: liveCutY
+  };
+}
+
+function renderLive(){
+  const p = readParams();
+  augment(outCtx, OW, OH, p);
+  // labels
+  document.getElementById("v_rot").textContent = (p.rot>0?"+":"") + p.rot + "°";
+  document.getElementById("v_crop").textContent = p.zoom.toFixed(2) + "×";
+  document.getElementById("v_bri").textContent = p.brightness.toFixed(2);
+  document.getElementById("v_con").textContent = p.contrast.toFixed(2);
+  document.getElementById("v_noise").textContent = p.sigma;
+  document.getElementById("v_cut").textContent = p.cut>0 ? (p.cut*100).toFixed(0)+"%" : "off";
+
+  // active-transform tags
+  const on = [];
+  if(p.hflip) on.push("horizontal flip");
+  if(p.vflip) on.push("vertical flip");
+  if(p.rot!==0) on.push("rotate "+(p.rot>0?"+":"")+p.rot+"°");
+  if(p.zoom>1.001) on.push("crop "+p.zoom.toFixed(2)+"×");
+  if(Math.abs(p.brightness-1)>0.001) on.push("brightness "+p.brightness.toFixed(2));
+  if(Math.abs(p.contrast-1)>0.001) on.push("contrast "+p.contrast.toFixed(2));
+  if(p.sigma>0) on.push("noise σ="+p.sigma);
+  if(p.cut>0) on.push("cutout "+(p.cut*100).toFixed(0)+"%");
+  const all = ["horizontal flip","vertical flip","rotate","crop","brightness","contrast","noise","cutout"];
+  let html = '<span class="font-semibold text-slate-600">Active transforms:</span> ';
+  if(on.length===0){
+    html += '<span class="tag tag-off">none — output identical to the original</span>';
+  } else {
+    on.forEach(t => html += `<span class="tag tag-on">${t}</span>`);
+  }
+  document.getElementById("activeStrip").innerHTML = html;
+
+  // note
+  const note = document.getElementById("note");
+  if(on.length===0){
+    note.innerHTML = "<strong>No transform applied.</strong> The output equals the original — zero extra training signal. Toggle a flip or drag a slider and the pixels change while the label stays <span class='sk'>🐱 cat</span>. That is the whole trick: new pixels, same answer.";
+  } else if(p.vflip){
+    note.innerHTML = "<strong>Careful — vertical flip.</strong> It is still recognisably a cat here, but upside-down cats are rare in real photos, so most image pipelines leave vertical flip OFF. This is the core lesson: a transform is only valid if it produces images the model will actually meet at test time <em>and</em> keeps the label true.";
+  } else {
+    note.innerHTML = `<strong>Still a cat.</strong> ${on.length} transform${on.length>1?"s":""} applied — the picture looks different to a computer (different pixel values, so a different training example) yet a human still reads <span class='sk'>🐱 cat</span>. Stack enough of these and one photo becomes an effectively unlimited, overfitting-resistant dataset.`;
+  }
+}
+
+// wire controls
+Object.values(els).forEach(e => e.addEventListener("input", renderLive));
+
+document.getElementById("reset").onclick = () => {
+  els.hflip.checked = false; els.vflip.checked = false;
+  els.rot.value = 0; els.crop.value = 1; els.bri.value = 1;
+  els.con.value = 1; els.noise.value = 0; els.cut.value = 0;
+  liveOffX=0.5; liveOffY=0.35; liveCutX=0.55; liveCutY=0.2;
+  renderLive();
+};
+
+document.getElementById("rand").onclick = () => {
+  els.hflip.checked = Math.random()<0.5;
+  els.vflip.checked = false;
+  els.rot.value = Math.round(rand(-40,40));
+  els.crop.value = rand(1,2.1).toFixed(2);
+  els.bri.value = rand(0.6,1.4).toFixed(2);
+  els.con.value = rand(0.6,1.4).toFixed(2);
+  els.noise.value = Math.round(rand(0,45));
+  els.cut.value = (Math.random()<0.6 ? rand(0.15,0.4) : 0).toFixed(2);
+  liveOffX=Math.random(); liveOffY=Math.random();
+  liveCutX=Math.random(); liveCutY=Math.random();
+  renderLive();
+};
+
+function rand(a,b){ return a + Math.random()*(b-a); }
+
+// ---------- gallery: one image -> many ----------
+function samplePolicy(){
+  return {
+    hflip: Math.random()<0.5,
+    vflip: false,
+    rot: rand(-25,25),
+    zoom: rand(1.0,1.8), offX: Math.random(), offY: Math.random(),
+    brightness: rand(0.75,1.25),
+    contrast: rand(0.8,1.2),
+    sigma: rand(0,22),
+    cut: Math.random()<0.5 ? rand(0.15,0.35) : 0,
+    cutX: Math.random(), cutY: Math.random()
+  };
+}
+const GALLERY = document.getElementById("gallery");
+const GN = 12, GS = 92;
+function renderGallery(){
+  GALLERY.innerHTML = "";
+  for(let i=0;i<GN;i++){
+    const cell = document.createElement("div");
+    cell.className = "gcell";
+    const cv = document.createElement("canvas");
+    cv.width = GS; cv.height = GS; cv.style.width="100%"; cv.style.height="auto";
+    cell.appendChild(cv);
+    GALLERY.appendChild(cell);
+    augment(cv.getContext("2d"), GS, GS, samplePolicy());
+  }
+}
+document.getElementById("resample").onclick = renderGallery;
+
+// initial paint
+renderLive();
+renderGallery();
+</script>
+
+<script>
+const STEPS = [
+ { title:"1. The problem: too little data, too much memorising", why:"Deep networks have millions of parameters and will happily memorise a small training set -- driving training accuracy to 100% while test accuracy stalls. That gap is OVERFITTING. The cleanest cure is more data, but labelling is slow and expensive. Data augmentation is the cheat: manufacture new, plausible training examples from the ones you already have by applying transforms that leave the LABEL unchanged. A photo of a cat, flipped or dimmed or slightly rotated, is still a photo of a cat -- so it is a brand-new, free, correctly-labelled example. The model sees far more variety and is pushed to learn the concept 'cat' rather than the exact pixels of one image.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">small dataset &rarr; net memorises pixels &rarr; overfits<br>train acc 100% &nbsp;|&nbsp; test acc 72% &nbsp;&larr; the gap<br><br>augmentation: 1 labelled image &rarr; &infin; variants<br>same label, new pixels &rarr; the gap shrinks</div>`, code:"# overfitting looks like this:\n#   train_acc = 1.00   test_acc = 0.72   <- big gap\n# more data helps, but labels are expensive.\n# augmentation makes 'more data' for free\n# by transforming what you already have." },
+ { title:"2. The one rule: the transform must preserve the label", why:"Augmentation is only valid if the transform keeps the answer true. Flip a cat horizontally: still a cat -- valid. Flip the digit 6 horizontally or vertically: it becomes something that is not a 6 -- INVALID, you just mislabelled your data. Mirror a page of text: unreadable and wrong. This is the whole discipline of augmentation: pick transforms that respect what the label MEANS. Two useful lenses: (a) invariance -- if the true class does not change under the transform, it is a good augmentation and it teaches the model that invariance; (b) realism -- the augmented image should resemble something the model could actually meet at test time. Get this wrong and augmentation hurts instead of helps.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">cat &nbsp;--h-flip--&gt; &nbsp;cat &nbsp;&#10003; label preserved<br>6 &nbsp;&nbsp;&nbsp;--h-flip--&gt; &nbsp;not a 6 &nbsp;&#10007; label broken<br>text --mirror--&gt; gibberish &nbsp;&#10007;<br><br>valid aug = pixels change, label doesn't</div>`, code:"# GOOD (label-preserving):\n#   cat.jpg  --horizontal flip-->  still 'cat'\n# BAD (label-breaking):\n#   6.png    --horizontal flip-->  NOT '6'\n#   'STOP'   --mirror-->           'POTS'\n# choose transforms that respect the label." },
+ { title:"3. Geometric transforms: flip, rotate, crop, translate", why:"The first family moves pixels around in space and teaches SPATIAL invariance -- the object is the same wherever and however it sits in the frame. Horizontal flip is the workhorse for natural images (left-right has no meaning for a cat). Small rotations and translations simulate a wobbly camera. The single most powerful one is random-resized-crop: take a random sub-rectangle and stretch it to full size, so the model learns to recognise the class from a zoomed-in ear or a corner, not just the perfectly centred whole. On a canvas these are all one transform matrix: translate to the center, rotate, scale (a negative scale mirrors), and a cropped drawImage.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">flip &nbsp;&#8596;&nbsp; rotate &nbsp;&#8635;&nbsp; crop &nbsp;&#128269;&nbsp; translate &nbsp;&#8646;<br>teach: object is the same wherever/however framed<br>random-resized-crop = the strongest single aug<br>all one matrix: translate &rarr; rotate &rarr; scale</div>`, code:"ctx.translate(W/2, H/2);         // work at center\nctx.rotate(deg * Math.PI/180);   // rotation\nctx.scale(hflip?-1:1, 1);        // -1 = mirror\n// random-resized-crop via source sub-rect:\nctx.drawImage(src, sx,sy,sw,sh,  // a random window...\n                   -W/2,-H/2,W,H); // ...stretched to fill" },
+ { title:"4. Photometric transforms: brightness, contrast, colour, noise", why:"The second family changes appearance without moving anything, teaching invariance to LIGHTING and sensors. Brightness and contrast jitter mimic sun vs shade; hue/saturation shifts mimic different cameras and white balance; adding Gaussian noise mimics grainy, high-ISO, low-light shots. These stop the model latching onto a specific colour balance or exposure. On the canvas, brightness and contrast come free from ctx.filter (it bakes CSS-style filters into the pixels); noise needs a pass over the raw pixel buffer, adding a Gaussian sample to each channel. Keep the magnitudes moderate -- crush the brightness to zero and the cat disappears, which breaks realism.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">brightness &#9728; &nbsp; contrast &#9680; &nbsp; hue/sat &#127912; &nbsp; noise &middot;&middot;&middot;<br>teach: same object under any light / any camera<br>ctx.filter = 'brightness(1.2) contrast(0.9)'<br>noise: pixel[i] += gaussian()*sigma</div>`, code:"// brightness + contrast: free via canvas filter\nctx.filter = 'brightness(1.2) contrast(0.9)';\nctx.drawImage(src, 0, 0);\nctx.filter = 'none';\n// noise: add a gaussian sample per channel\nfor (let i=0;i<d.length;i+=4){\n  const n = gauss()*sigma; d[i]+=n; d[i+1]+=n; d[i+2]+=n;\n}" },
+ { title:"5. Occlusion: cutout / random erasing", why:"Cutout drops a random square of the image to a constant value; random erasing is the same idea with a random-sized rectangle. Why help the model by hiding part of the input? Because it stops the network from relying on one giveaway feature. If a classifier decides 'cat' purely from the pointy ears, covering the ears at random forces it to also learn the whiskers, the eyes, the shape -- it spreads attention across the whole object and becomes far more robust to real-world occlusion (a cat behind a chair leg). The label is untouched: a partly hidden cat is still a cat. It is one of the cheapest, most effective regularisers and combines well with everything else.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">mask a random square &rarr; model can't over-rely<br>on one region &rarr; must use the WHOLE object<br>robust to real occlusion (cat behind a chair)<br>label unchanged: hidden cat = still a cat</div>`, code:"function cutout(ctx, frac){\n  const s = frac * W;\n  const x = Math.random()*(W-s);   // random position\n  const y = Math.random()*(H-s);\n  ctx.fillStyle = '#6b7280';       // constant fill\n  ctx.fillRect(x, y, s, s);        // erase a square\n}" },
+ { title:"6. Which augmentations suit which data (this is the craft)", why:"There is no universal augmentation set -- it depends entirely on the domain and the label's meaning. NATURAL PHOTOS (cats, dogs, scenes): horizontal flip, crop, colour jitter -- all great; vertical flip usually off (upside-down scenes are rare). DIGITS / TEXT / CHARACTERS: NO flips (6 vs 9, mirrored letters), only tiny rotations and shifts -- orientation IS the label. MEDICAL / SATELLITE / MICROSCOPY: often rotation-invariant and flip-invariant in ALL directions (a tumour has no 'up'), so you can use the full set. FACES: mild everything, but big rotations look unnatural. AUDIO spectrograms: time/frequency masking, not spatial flips. The rule of thumb: apply a transform only if a domain expert would still give the augmented image the same label, and only if it could plausibly occur at test time.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">photos:&nbsp; h-flip &#10003; &nbsp;v-flip usually &#10007; &nbsp;crop/jitter &#10003;<br>digits/text: NO flips &#10007; &nbsp;tiny rotate only<br>medical/satellite: any flip + any rotation &#10003;<br>rule: keep the transform iff the label survives</div>`, code:"# domain decides the policy:\nphotos  = [HFlip(), RandomResizedCrop(), ColorJitter()]\ndigits  = [RandomRotation(10), RandomAffine(shift=0.1)]  # no flips!\nmedical = [HFlip(), VFlip(), RandomRotation(180)]        # no 'up'\n# pick transforms a domain expert would still label the same." },
+ { title:"7. Mixup & CutMix: blending labels, not just preserving them", why:"A newer family goes beyond label-preserving into label-MIXING. Mixup takes two images and their labels and linearly blends both: x = lam*x_a + (1-lam)*x_b, y = lam*y_a + (1-lam)*y_b -- a 60/40 pixel blend of a cat and a dog is labelled 60% cat, 40% dog. CutMix instead pastes a patch of image B into image A and mixes the labels by the patch AREA. These force smoother, less overconfident decision boundaries and are strong regularisers on top of the classic transforms. They are the bridge to tomorrow's topic: both deliberately SOFTEN the hard one-hot target, which is exactly the idea behind label smoothing.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">Mixup:&nbsp; x = &lambda;&middot;cat + (1-&lambda;)&middot;dog<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; y = [0.6 cat, 0.4 dog]&nbsp;&nbsp;(soft label!)<br>CutMix: paste a dog patch into the cat,<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; mix labels by patch area</div>`, code:"# Mixup: blend two examples AND their labels\nlam = np.random.beta(0.4, 0.4)\nx = lam*x_a + (1-lam)*x_b\ny = lam*y_a + (1-lam)*y_b     # soft, mixed target\n# CutMix: paste a rectangle of B into A,\n# mix labels in proportion to the pasted area." },
+ { title:"8. When it runs: on-the-fly, train only, resampled every epoch", why:"Augmentation is applied ONLINE inside the data loader: each time an image is fetched for a batch, fresh random parameters are drawn and the transform pipeline runs, so the network almost never sees the exact same tensor twice -- that constantly-shifting input is what regularises. Crucially it is applied to the TRAINING set only. The validation and test sets must stay clean (just resize + center-crop) -- augmenting them would measure performance on distorted images, not real ones, and corrupt your metric. The one deliberate exception is Test-Time Augmentation (TTA): at inference, run several augmented copies of a test image through the model and average the predictions for a small accuracy bump -- but that is an explicit ensembling choice, not part of normal evaluation.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">TRAIN: random transform per image, per epoch &#10003;<br>VAL/TEST: resize + center-crop ONLY (clean) &#10003;<br>augment the test set by accident &rarr; wrong metric &#10007;<br>TTA = deliberate: average N augmented test views</div>`, code:"train_tf = Compose([RandomResizedCrop(), HFlip(),\n                    ColorJitter(), ToTensor(),\n                    RandomErasing()])   # augmented\ntest_tf  = Compose([Resize(200), CenterCrop(180),\n                    ToTensor()])        # CLEAN, no randomness\n# never augment val/test (except explicit TTA)." },
+ { title:"9. Why it works, and learned policies (AutoAugment/RandAugment)", why:"Formally, augmentation injects a PRIOR: it tells the model which transformations should not change the prediction, expanding each training point into a whole manifold of equivalent inputs and smoothing the decision boundary between classes. That is a powerful regulariser, and for vision it is often worth more than any architectural tweak -- strong augmentation is a big part of why modern CNNs and vision transformers train well on limited data, and it is central to self-supervised methods (SimCLR, etc.) where two augmented views of the same image must match. Because hand-picking the policy is fiddly, learned schemes automate it: AutoAugment searches for the best transform policy, and RandAugment simplifies that to two knobs -- how many transforms to chain and how strong. Same principle, tuned by a machine.", concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">augmentation = a prior: 'these changes &rArr; same label'<br>&rarr; expands each point into a manifold &rarr; smoother boundary<br>&rarr; strong regulariser, backbone of self-supervised learning<br>AutoAugment/RandAugment = learn the policy for you</div>`, code:"# RandAugment: two knobs instead of hand-tuning\nfrom torchvision.transforms import RandAugment\ntf = Compose([RandAugment(num_ops=2, magnitude=9),\n              ToTensor()])\n# num_ops = how many transforms to chain\n# magnitude = how strong. searched, not guessed." }
+];
+</script>
+
+<script>
+const stepsEl=document.getElementById("steps");
+const prevB=document.getElementById("prev"), nextB=document.getElementById("next-btn"), autoB=document.getElementById("auto");
+let curS=0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },5200); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>

@@ -41,6 +41,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 32 — Learning-Rate Schedules](https://dev48v.infy.uk/dl/day32-lr-schedules.html) — `day32-lr-schedules.html`
 - [DeepLearningFromZero · Day 33 — Knowledge Distillation](https://dev48v.infy.uk/dl/day33-knowledge-distillation.html) — `day33-knowledge-distillation.html`
 - [DeepLearningFromZero · Day 34 — Softmax + Cross-Entropy](https://dev48v.infy.uk/dl/day34-softmax-cross-entropy.html) — `day34-softmax-cross-entropy.html`
+- [DeepLearningFromZero · Day 35 — Data Augmentation](https://dev48v.infy.uk/dl/day35-data-augmentation.html) — `day35-data-augmentation.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk
