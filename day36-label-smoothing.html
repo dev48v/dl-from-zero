@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 36 — Label Smoothing</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  /* vertical bar charts */
+  .barrow{ display:flex; align-items:flex-end; gap:6px; }
+  .barcol{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; }
+  .barval{ font-size:11px; font-weight:700; color:#475569; margin-bottom:3px; font-variant-numeric:tabular-nums; }
+  .bartrack{ display:flex; align-items:flex-end; height:110px; }
+  .bar{ width:26px; border-radius:6px 6px 0 0; transition:height .25s ease, background .25s; }
+  .barlab{ font-size:12px; margin-top:5px; color:#64748b; white-space:nowrap; }
+  .barlab-true{ color:#be123c; font-weight:700; }
+  /* diverging gradient chart */
+  .gradrow{ display:flex; gap:6px; align-items:flex-start; }
+  .gradwrap{ flex:1; display:flex; flex-direction:column; align-items:center; }
+  .gcol{ position:relative; width:100%; height:92px; }
+  .gcol::after{ content:""; position:absolute; left:0; right:0; top:50%; border-top:1px dashed #cbd5e1; }
+  .gbar{ position:absolute; left:50%; transform:translateX(-50%); width:24px; border-radius:4px; transition:height .25s; }
+  .gpos{ bottom:50%; background:#f43f5e; }
+  .gneg{ top:50%; background:#10b981; }
+  .glabel{ font-size:15px; margin-top:6px; }
+  /* horizontal calibration bars */
+  .hbar-track{ background:#f1f5f9; border-radius:6px; height:24px; overflow:hidden; flex:1; }
+  .hbar{ height:100%; border-radius:6px; transition:width .25s; display:flex; align-items:center; justify-content:flex-end; padding-right:7px; color:#fff; font-size:11px; font-weight:700; }
+  .cmp td, .cmp th { padding:7px 10px; border-bottom:1px solid #e2e8f0; text-align:center; font-variant-numeric:tabular-nums; }
+  .cmp th { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#64748b; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 36</div>
+      <h1 class="text-xl font-bold">&#129767; Label Smoothing &mdash; stop training on <em>absolute</em> 0/1 targets: replace the hard one-hot label with a <em>soft</em> one &mdash; (1&minus;&epsilon;) on the true class, &epsilon; spread over the rest &mdash; so the network is pushed to be <em>confident but not certain</em>, which curbs overconfidence, calibrates its probabilities, and often generalises better</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">One example, one slider. Watch the target melt &mdash; and the confidence follow.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto">A classifier ends in a <strong>softmax</strong> and is trained by <strong>cross-entropy</strong> against a <strong>one-hot</strong> target: <span class="mono">1</span> on the right class, <span class="mono">0</span> everywhere else. To make softmax output exactly <span class="mono">1.0</span>, the winning logit must run off to <strong>+&infin;</strong> &mdash; so gradient descent never stops inflating confidence. The model gets the class right but the <em>probability</em> wildly wrong (&ldquo;99.9% cat&rdquo; even when unsure). <strong class="text-rose-600">Label smoothing</strong> gives the true class a <em>reachable</em> goal, <span class="mono">1&minus;&epsilon;+&epsilon;/K</span>, and a small floor <span class="mono">&epsilon;/K</span> under every other class. Drag <span class="sk">&epsilon;</span> below and watch the target soften, the loss and gradient change, and the confidence the model can converge to drop toward its real accuracy.</p>
+
+      <div class="bg-white rounded-xl border border-rose-200 p-4 mb-4 text-left">
+        <div class="flex items-center gap-4 flex-wrap">
+          <div class="ctrl flex-1" style="min-width:280px;">
+            <label>&epsilon; &mdash; label-smoothing strength <span id="v_eps" class="sk stat">0.00</span></label>
+            <input type="range" id="s_eps" min="0" max="0.3" step="0.01" value="0">
+          </div>
+          <div class="flex gap-2">
+            <button data-eps="0"    class="epreset bg-slate-200 px-3 py-2 rounded-lg font-semibold text-xs">&epsilon; = 0 (hard)</button>
+            <button data-eps="0.1"  class="epreset bg-rose-600 text-white px-3 py-2 rounded-lg font-semibold text-xs">&epsilon; = 0.1 (typical)</button>
+            <button data-eps="0.18" class="epreset bg-slate-200 px-3 py-2 rounded-lg font-semibold text-xs">&epsilon; = 0.18</button>
+            <button data-eps="0.3"  class="epreset bg-slate-200 px-3 py-2 rounded-lg font-semibold text-xs">&epsilon; = 0.3</button>
+          </div>
+        </div>
+        <div id="formula" class="mt-3 text-sm text-slate-600"></div>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-4 mb-4 text-left">
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-1">Model&rsquo;s current prediction &mdash; softmax(logits)</div>
+          <p class="text-xs text-slate-400 mb-3">A fixed, over-trained example. Peaky: nearly all mass on <span class="sk">cat</span>. This is the disease.</p>
+          <div id="predBars" class="barrow"></div>
+          <div class="mt-3 text-center"><span class="pill bg-slate-800 text-white">confidence = <span id="predConf">—</span></span></div>
+        </div>
+        <div class="bg-white rounded-xl border border-rose-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">Training target &mdash; hard &rarr; smoothed</div>
+          <p class="text-xs text-slate-400 mb-3">At <span class="mono">&epsilon;=0</span> it&rsquo;s a spike (one-hot). Drag &epsilon; and it melts into a plateau.</p>
+          <div id="tgtBars" class="barrow"></div>
+          <div class="mt-3 text-center"><span class="pill bg-rose-100 text-rose-800" id="tgtLbl">—</span></div>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-4 mb-4 text-left">
+        <div class="bg-white rounded-xl border border-rose-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-1">What the model converges to</div>
+          <p class="text-xs text-slate-400 mb-3">Cross-entropy is minimised when the prediction <em>equals</em> the target &mdash; so this soft target caps the peak. The distribution flattens (&ldquo;less peaky&rdquo;) as &epsilon; grows.</p>
+          <div id="convBars" class="barrow"></div>
+          <div class="mt-3 text-center"><span class="pill bg-rose-100 text-rose-800" id="ceil">—</span></div>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-1">Loss &amp; gradient on this example</div>
+          <div id="lossBox" class="text-sm mb-3"></div>
+          <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-1">Gradient &part;L/&part;z = p &minus; t &nbsp;<span class="font-normal normal-case text-slate-400">(per logit)</span></div>
+          <div id="gradBars" class="gradrow"></div>
+          <div class="text-[11px] text-slate-400 mt-2 text-center"><span class="text-rose-500 font-bold">&#9650; red</span> = logit pushed <b>down</b> (reduce) &nbsp;·&nbsp; <span class="text-emerald-600 font-bold">&#9660; green</span> = pushed <b>up</b> (raise)</div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-rose-200 p-4 mb-4 text-left">
+        <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">Calibration sketch &mdash; confidence vs. reality</div>
+        <p class="text-xs text-slate-400 mb-3">A model is <em>calibrated</em> when its confidence matches how often it&rsquo;s right. Label smoothing drags the confidence ceiling (<span class="mono">1&minus;&epsilon;+&epsilon;/K</span>) down toward the true held-out accuracy. Too little &epsilon; &rarr; overconfident; too much &rarr; underconfident. (Accuracy fixed at an illustrative 85%.)</p>
+        <div id="calBox"></div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4 text-left overflow-x-auto">
+        <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Hard (&epsilon;=0) vs. your &epsilon; &mdash; on the same fixed prediction</div>
+        <table class="cmp w-full text-sm"><thead><tr>
+          <th>&epsilon;</th><th>true-class target</th><th>conf. ceiling</th><th>cross-entropy</th><th>gradient on true logit</th>
+        </tr></thead><tbody id="cmpBody"></tbody></table>
+      </div>
+
+      <div id="note" class="rounded-xl border border-rose-200 bg-rose-50 text-rose-900 p-4 text-sm text-left"></div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Why a hard 0/1 target is an overconfident lie</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">The live demo runs entirely from scratch &mdash; no library, just a numeric softmax, a target vector, and cross-entropy. We build it one line at a time: a stable softmax, the hard one-hot target, the smoothed target from its two-line formula, the cross-entropy loss both ways, and the <code>p &minus; t</code> gradient that shows why smoothing caps confidence &mdash; then we map it to the one line you actually write in PyTorch.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">One example: K classes, its logits, its true label</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Everything downstream is just arithmetic on these three things. The logits are a model&rsquo;s raw scores for one input; the true class is an index. Our toy example is a nicely over-confident one &mdash; the cat logit dwarfs the rest.</p>
+        <div class="relative"><pre>const K       = 6;                    // number of classes
+const TRUE    = 0;                    // index of the correct class (cat)
+const logits  = [4.5, 0.8, 1.0, 0.3, 0.5, 0.2];  // raw model scores
+//               cat  dog bird car  plane ship</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Stable softmax &mdash; logits &rarr; probabilities</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Softmax exponentiates and normalises. Subtract the max first: it cancels out of the ratio but stops <code>exp()</code> from overflowing. The result sums to 1 &mdash; the model&rsquo;s predicted distribution <code>p</code>.</p>
+        <div class="relative"><pre>function softmax(z) {
+  const m  = Math.max(...z);                 // shift for numerical stability
+  const ex = z.map(v =&gt; Math.exp(v - m));
+  const s  = ex.reduce((a, b) =&gt; a + b, 0);
+  return ex.map(v =&gt; v / s);                  // sums to 1
+}
+const p = softmax(logits);   // ~[0.91, 0.02, 0.03, 0.01, 0.02, 0.01]</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">The hard target &mdash; a spike the softmax can never reach</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The classic one-hot label: 1 on the truth, 0 elsewhere. The catch: softmax only outputs a clean <code>1.0</code> when the true logit is infinitely bigger than the rest, so training never stops inflating confidence.</p>
+        <div class="relative"><pre>function oneHot(K, i) {
+  return Array.from({ length: K }, (_, j) =&gt; (j === i ? 1 : 0));
+}
+const hard = oneHot(K, TRUE);   // [1, 0, 0, 0, 0, 0]
+// goal p_true = 1.0  =&gt;  logit_true - others -&gt; +Infinity  (unreachable)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">The smoothed target &mdash; the whole trick, in two lines</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Blend the one-hot with a uniform distribution: <code>y = (1&minus;&epsilon;)&middot;onehot + &epsilon;/K</code>. The true class becomes <code>1&minus;&epsilon;+&epsilon;/K</code> (reachable!) and every wrong class gets a floor of <code>&epsilon;/K</code> the model may not crush to zero. <code>&epsilon;=0</code> recovers the hard target.</p>
+        <div class="relative"><pre>function smoothTarget(K, i, eps) {
+  return Array.from({ length: K },
+    (_, j) =&gt; (j === i ? 1 - eps : 0) + eps / K);
+}
+const soft = smoothTarget(K, TRUE, 0.1);
+// [0.9167, 0.0167, 0.0167, 0.0167, 0.0167, 0.0167]  (sums to 1)
+//   ^ true = 1 - 0.1 + 0.1/6         ^ others = 0.1/6</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Cross-entropy &mdash; hard vs. smoothed</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Cross-entropy is <code>&minus;&Sigma; t&middot;log p</code>. With the hard target it collapses to <code>&minus;log(p_true)</code>. With the smoothed target every class contributes, so it also rewards spreading some mass around &mdash; a built-in &ldquo;don&rsquo;t be too peaky&rdquo; penalty.</p>
+        <div class="relative"><pre>function crossEntropy(target, p) {
+  let L = 0;
+  for (let j = 0; j &lt; p.length; j++)
+    if (target[j] &gt; 0) L -= target[j] * Math.log(Math.max(p[j], 1e-12));
+  return L;
+}
+crossEntropy(hard, p);   // = -log(p_true)          ~0.097
+crossEntropy(soft, p);   // (1-e)*(-log p_true) - (e/K)*sum(log p_k)
+// identity: CE(soft,p) = (1-e)*CE(onehot,p) + e*CE(uniform,p) + const</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">The gradient <code>p &minus; t</code> &mdash; and the sign flip</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The gradient of softmax+cross-entropy w.r.t. the logits is just <code>p &minus; t</code>. With the hard target the true-class gradient is <code>p_true &minus; 1</code> &mdash; negative forever, always pushing the logit up. With smoothing the target is only <code>1&minus;&epsilon;+&epsilon;/K</code>, so once confidence passes that ceiling the gradient goes <strong>positive</strong> and pulls the over-confident logit back down. There is now a finite fixed point.</p>
+        <div class="relative"><pre>const grad = p.map((pj, j) =&gt; pj - target[j]);   // dL/dz = p - t
+
+// TRUE class, hard target:   p_true - 1        = 0.908 - 1     = -0.092  (push UP, forever)
+// TRUE class, eps = 0.18:    p_true - ceiling  = 0.908 - 0.85  = +0.058  (push DOWN!)
+// each WRONG class: target = eps/K &gt; 0, so its logit can't be driven to -Infinity</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">One training step &mdash; &epsilon;=0 vs. &epsilon;=0.1, side by side</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Same loss, same optimiser &mdash; only the target changes. Descend the gradient and the smoothed run stops short of extreme confidence, landing on calibrated probabilities instead of a 100% spike.</p>
+        <div class="relative"><pre>function step(logits, target, lr) {
+  const p    = softmax(logits);
+  const grad = p.map((pj, j) =&gt; pj - target[j]);   // p - t
+  return logits.map((z, j) =&gt; z - lr * grad[j]);   // gradient descent
+}
+const eps = 0.1;
+const tgt = eps === 0 ? oneHot(K, TRUE) : smoothTarget(K, TRUE, eps);
+
+let z = logits.slice();
+for (let it = 0; it &lt; 200; it++) z = step(z, tgt, 0.5);
+// eps=0   -> softmax(z) collapses toward [1, 0, 0, 0, 0, 0]  (overconfident)
+// eps=0.1 -> softmax(z) settles near the soft target ~0.917  (calibrated)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">8</div><h3 class="font-bold text-lg">The real thing &mdash; one argument in PyTorch</h3></div>
+        <p class="text-sm text-slate-600 mb-3">You never hand-roll this in production. Frameworks fold it into the loss: pass integer targets and raw logits, set <code>label_smoothing</code>, done. One hyper-parameter, no architecture change, no extra compute &mdash; one of the cheapest wins in the training toolbox. Default around <code>0.1</code>; tune while watching <em>both</em> accuracy and a calibration metric (ECE / a reliability diagram).</p>
+        <div class="relative"><pre>import torch, torch.nn as nn
+
+criterion = nn.CrossEntropyLoss(label_smoothing=0.1)   # <-- the whole feature
+
+logits  = model(x)                 # raw scores, shape [batch, K]
+targets = y                        # integer class indices, shape [batch]
+loss    = criterion(logits, targets)   # softmax + smoothed cross-entropy, fused
+loss.backward()
+
+# family of "soft target" tricks: distillation's temperature-softened teacher,
+# and Mixup / CutMix, which blend two images AND their labels into soft targets.
+# eps = 0   -> plain hard cross-entropy (overconfident)
+# eps ~ 0.1 -> calibrated, usually a small accuracy bump too</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 36 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2"><strong>Label smoothing</strong> replaces the hard one-hot target with a soft one &mdash; <strong>1&minus;&epsilon;+&epsilon;/K</strong> on the true class and a floor of <strong>&epsilon;/K</strong> on every other &mdash; because a 0/1 target is an overconfident lie: reaching softmax <code>1.0</code> demands an infinite logit, so hard cross-entropy keeps inflating confidence without end. The soft target gives a <strong>reachable, finite goal</strong>, so the gradient <code>p&minus;t</code> gains a fixed point and even <em>reverses</em> to pull an over-confident logit back down once it passes the <strong>ceiling</strong>. The payoff is <strong>calibration</strong> &mdash; predicted probabilities that actually match how often the model is right &mdash; plus a frequent small accuracy gain, all for one hyper-parameter and zero extra compute. Mind the <strong>trade-off</strong> (too much &epsilon; makes the model under-confident) and the <strong>caveats</strong>: a smoothed teacher hurts <em>knowledge distillation</em> (it erases the &ldquo;dark knowledge&rdquo; of class similarity) and it can wash out <em>embedding geometry</em> needed for retrieval / metric learning. In practice it&rsquo;s one argument &mdash; <code>nn.CrossEntropyLoss(label_smoothing=0.1)</code>. <strong>&#128073; Tomorrow, Day 37:</strong> Mixup &amp; CutMix &mdash; blending two images <em>and</em> their labels into soft targets, taking the same &ldquo;don&rsquo;t be so sure&rdquo; idea one step further.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+</script>
+
+<script>
+// ============================================================
+// REAL from-scratch label smoothing, computed live in JS.
+//   one fixed example: K classes, over-confident logits
+//   epsilon slider softens the one-hot target
+//   we recompute softmax, smoothed target, cross-entropy,
+//   the p - t gradient, and a calibration sketch on every drag
+// ============================================================
+const K      = 6;
+const TRUE   = 0;
+const CLASSES = ["🐱 cat", "🐶 dog", "🐦 bird", "🚗 car", "✈️ plane", "🚢 ship"];
+const LOGITS = [4.5, 0.8, 1.0, 0.3, 0.5, 0.2];
+const ACC    = 0.85;     // illustrative held-out accuracy for the calibration sketch
+
+// ---------- math ----------
+function softmax(z){
+  const m = Math.max(...z);
+  const ex = z.map(v => Math.exp(v - m));
+  const s = ex.reduce((a, b) => a + b, 0);
+  return ex.map(v => v / s);
+}
+function oneHot(k, i){ return Array.from({length:k}, (_, j) => (j === i ? 1 : 0)); }
+function smoothTarget(k, i, eps){ return Array.from({length:k}, (_, j) => (j === i ? 1 - eps : 0) + eps / k); }
+function crossEntropy(target, p){
+  let L = 0;
+  for(let j = 0; j < p.length; j++) if(target[j] > 0) L -= target[j] * Math.log(Math.max(p[j], 1e-12));
+  return L;
+}
+
+const P        = softmax(LOGITS);      // fixed current prediction
+const predConf = P[TRUE];              // ~0.9077
+
+// ---------- renderers ----------
+function fmtPct(v){ return (v * 100).toFixed(1) + "%"; }
+
+function bars(id, values, colorFn){
+  const max = 1;
+  let html = "";
+  values.forEach((v, j) => {
+    const h = Math.max(2, (v / max) * 108);
+    const isTrue = j === TRUE;
+    const col = colorFn(j, isTrue);
+    html += `<div class="barcol">
+      <div class="barval">${fmtPct(v)}</div>
+      <div class="bartrack"><div class="bar" style="height:${h}px;background:${col}"></div></div>
+      <div class="barlab ${isTrue ? "barlab-true" : ""}">${CLASSES[j]}</div>
+    </div>`;
+  });
+  document.getElementById(id).innerHTML = html;
+}
+
+function gradBars(id, grad){
+  const max = Math.max(0.05, ...grad.map(Math.abs));
+  let html = "";
+  grad.forEach((g, j) => {
+    const h = Math.abs(g) / max * 44;
+    const pos = g >= 0;                                   // p > t  => push logit DOWN
+    const bar = `<div class="gbar ${pos ? "gpos" : "gneg"}" style="height:${h}px"></div>`;
+    html += `<div class="gradwrap">
+      <div class="gcol">${bar}</div>
+      <div class="glabel ${j === TRUE ? "barlab-true" : ""}">${CLASSES[j].split(" ")[0]}</div>
+    </div>`;
+  });
+  document.getElementById(id).innerHTML = html;
+}
+
+function render(){
+  const eps  = +document.getElementById("s_eps").value;
+  document.getElementById("v_eps").textContent = eps.toFixed(2);
+
+  const hard = oneHot(K, TRUE);
+  const tgt  = smoothTarget(K, TRUE, eps);
+  const ceil = tgt[TRUE];                                 // 1 - eps + eps/K
+
+  // formula readout
+  document.getElementById("formula").innerHTML =
+    `<span class="mono">y&#7514;&#738; = (1&minus;&epsilon;)&middot;y_onehot + &epsilon;/K</span> &nbsp;&rarr;&nbsp; ` +
+    `true class = <b class="sk">${(1 - eps).toFixed(2)} + ${(eps / K).toFixed(3)} = ${ceil.toFixed(3)}</b>, ` +
+    `every other class = <b>&epsilon;/K = ${(eps / K).toFixed(3)}</b> &nbsp;(K = ${K})`;
+
+  // bar charts
+  bars("predBars", P,   (j, t) => t ? "#334155" : "#94a3b8");
+  bars("tgtBars",  tgt, (j, t) => t ? "#e11d48" : "#fda4af");
+  bars("convBars", tgt, (j, t) => t ? "#e11d48" : "#fda4af");
+
+  document.getElementById("predConf").textContent = fmtPct(predConf);
+  document.getElementById("tgtLbl").innerHTML = eps === 0
+    ? "spike &mdash; hard one-hot"
+    : `true target = <b>${ceil.toFixed(3)}</b>, floor = <b>${(eps / K).toFixed(3)}</b>`;
+  document.getElementById("ceil").innerHTML = `confidence ceiling = <b class="sk">${fmtPct(ceil)}</b>`;
+
+  // loss + gradient against the fixed prediction P
+  const Lhard   = crossEntropy(hard, P);
+  const Lsmooth = crossEntropy(tgt, P);
+  const grad    = P.map((p, j) => p - tgt[j]);
+  const gTrue   = grad[TRUE];
+  gradBars("gradBars", grad);
+
+  document.getElementById("lossBox").innerHTML =
+    `<div class="flex justify-between py-1 border-b border-slate-100"><span>CE vs. <b>hard</b> target &nbsp;<span class="text-slate-400">(&minus;log&nbsp;p_true)</span></span><b class="stat">${Lhard.toFixed(3)}</b></div>` +
+    `<div class="flex justify-between py-1 border-b border-slate-100"><span>CE vs. <b class="sk">smoothed</b> target</span><b class="stat sk">${Lsmooth.toFixed(3)}</b></div>` +
+    `<div class="flex justify-between py-1"><span>gradient on <b>true</b> logit &nbsp;<span class="text-slate-400">(p_true &minus; t_true)</span></span>` +
+    `<b class="stat ${gTrue >= 0 ? "text-rose-600" : "text-emerald-600"}">${gTrue >= 0 ? "+" : ""}${gTrue.toFixed(3)} ${gTrue >= 0 ? "&#9650; down" : "&#9660; up"}</b></div>`;
+
+  // calibration sketch
+  const gap = ceil - ACC;
+  let verdict, vcol;
+  if(gap > 0.03){ verdict = "OVER-confident &mdash; confidence sits well above real accuracy (large calibration error)."; vcol = "text-rose-700 bg-rose-50 border-rose-200"; }
+  else if(gap < -0.03){ verdict = "UNDER-confident &mdash; smoothing overshot; the model now throws away genuine certainty."; vcol = "text-amber-700 bg-amber-50 border-amber-200"; }
+  else { verdict = "WELL-calibrated &mdash; confidence &asymp; accuracy. A &ldquo;p% cat&rdquo; is right about p% of the time."; vcol = "text-emerald-700 bg-emerald-50 border-emerald-200"; }
+  document.getElementById("calBox").innerHTML =
+    `<div class="flex items-center gap-3 mb-2"><span class="text-xs font-bold text-slate-500 w-28">confidence ceiling</span><div class="hbar-track"><div class="hbar" style="width:${(ceil*100).toFixed(1)}%;background:#e11d48">${fmtPct(ceil)}</div></div></div>` +
+    `<div class="flex items-center gap-3 mb-3"><span class="text-xs font-bold text-slate-500 w-28">held-out accuracy</span><div class="hbar-track"><div class="hbar" style="width:${(ACC*100).toFixed(1)}%;background:#64748b">${fmtPct(ACC)}</div></div></div>` +
+    `<div class="text-sm rounded-lg border p-3 ${vcol}"><b>gap = ${(gap*100 >= 0 ? "+" : "")}${(gap*100).toFixed(1)} pts</b> &mdash; ${verdict}</div>`;
+
+  // comparison table: eps=0 vs current eps
+  const ceil0 = 1, L0 = Lhard, g0 = predConf - 1;
+  function gradCell(g){ return `<span class="${g >= 0 ? "text-rose-600" : "text-emerald-600"} font-bold">${g >= 0 ? "+" : ""}${g.toFixed(3)} ${g >= 0 ? "&#9650;" : "&#9660;"}</span>`; }
+  document.getElementById("cmpBody").innerHTML =
+    `<tr><td><b>0</b> (hard)</td><td>1.000</td><td>100.0%</td><td>${L0.toFixed(3)}</td><td>${gradCell(g0)}</td></tr>` +
+    `<tr class="bg-rose-50"><td><b class="sk">${eps.toFixed(2)}</b></td><td>${ceil.toFixed(3)}</td><td>${fmtPct(ceil)}</td><td>${Lsmooth.toFixed(3)}</td><td>${gradCell(gTrue)}</td></tr>`;
+
+  // narrative note
+  const note = document.getElementById("note");
+  if(eps === 0){
+    note.innerHTML = "<strong>Hard targets.</strong> The target is a spike: 100% on <span class='sk'>cat</span>, 0% everywhere else. To output that, the cat-logit must run to <span class='mono'>+&infin;</span>, so the gradient on the true logit stays negative (<span class='mono'>p&minus;1</span>) and confidence is inflated without end &mdash; the root of over-confidence and poor calibration.";
+  } else if(eps <= 0.12){
+    note.innerHTML = `<strong>Gentle smoothing (&epsilon;&asymp;0.1 is the standard default).</strong> The true-class target drops to <b>${ceil.toFixed(3)}</b> and the freed &epsilon; becomes a tiny floor under every wrong class. The model is now pushed to a <em>finite</em> confidence &mdash; better-calibrated probabilities at little or no accuracy cost.`;
+  } else if(eps <= 0.22){
+    note.innerHTML = `<strong>The gradient just flipped.</strong> The confidence ceiling (<b>${fmtPct(ceil)}</b>) has met the model&rsquo;s real accuracy. The gradient on the true logit is now <b class='text-rose-600'>positive</b>: the model is told to pull its over-confident ${fmtPct(predConf)} <em>down</em> toward the ceiling. This is the sweet spot &mdash; probabilities you can trust.`;
+  } else {
+    note.innerHTML = `<strong>Heavy smoothing &mdash; the trade-off bites.</strong> The ceiling (<b>${fmtPct(ceil)}</b>) has fallen <em>below</em> the model&rsquo;s accuracy (${fmtPct(ACC)}), so it&rsquo;s now <em>under</em>-confident, discarding genuine certainty. Too little &epsilon; = overconfident, too much = underconfident; &asymp;0.1 is usually the right dial.`;
+  }
+}
+
+// wire controls
+document.getElementById("s_eps").addEventListener("input", render);
+document.querySelectorAll(".epreset").forEach(b => b.onclick = () => {
+  document.getElementById("s_eps").value = b.dataset.eps;
+  render();
+});
+
+// initial paint
+render();
+</script>
+
+<script>
+const STEPS = [
+ { title:"1. The disease: hard targets breed over-confidence",
+   why:"A classifier ends in a softmax that turns K logits into K probabilities, trained by cross-entropy against a one-hot target — 1 on the correct class, 0 on all others. To make the softmax output exactly 1.0 for the true class, its logit must be infinitely larger than the rest. So gradient descent never stops: it keeps inflating the winning logit and suppressing the others, driving the model to extreme, unjustified confidence. The result is a network that is right about the class but wildly over-confident about the probability — '99.9% cat' on images it should be unsure about, and still 99% sure when it's wrong. That miscalibration matters whenever a downstream system trusts the number: medical triage, ensembling, selective prediction, risk scoring.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">one-hot target: [ 1, 0, 0, 0, 0, 0 ]<br>to hit p_true = 1.0 &nbsp;&rArr;&nbsp; z_true &minus; z_rest &rarr; +&infin;<br>loss never reaches 0 &rarr; confidence inflates forever<br><br>&ldquo;99.9% cat&rdquo; &mdash; even when it is wrong</div>`,
+   code:"# hard target asks for the impossible:\n#   softmax(z)_true = 1.0  only when  z_true -> +infinity\n# so training keeps pushing confidence up with no fixed point\n#   train: p_true = 0.90 -> 0.99 -> 0.999 -> ...\n# right class, but the PROBABILITY is a lie -> miscalibrated." },
+ { title:"2. Softmax can never reach 1 (except at infinity)",
+   why:"Why exactly does the one-hot target misbehave? Because softmax(z)_c = 1 requires e^{z_c} to dominate the whole sum, i.e. z_c minus the next-largest logit goes to infinity. The loss −log(p_c) only reaches 0 in that limit, so its gradient p_c − 1 is non-zero for ANY finite logits — there is always more 'reward' for being more confident. Weight decay resists this a little, and early stopping hides it, but the target itself is asking for something unreachable. Label smoothing fixes the target instead of fighting the optimiser: hand the true class a goal below 1 that finite logits can actually hit.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">p_true = &sigma;(z)_true<br>0.5 &rarr; 0.9 &rarr; 0.99 &rarr; 0.999 &rarr; ... &rarr; 1.0<br>reached only as z_true &rarr; +&infin;<br><br>gradient p_true &minus; 1 &lt; 0 for every finite z &rarr; keeps pushing</div>`,
+   code:"# -log(p_true) -> 0 only as p_true -> 1 (z_true -> inf)\n# gradient wrt true logit = p_true - 1, always negative\n#   => optimiser never 'finishes', confidence runs away\n# fix the TARGET, not the optimiser: give a reachable goal < 1." },
+ { title:"3. The formula: melt the spike into a plateau",
+   why:"Label smoothing replaces the hard target y with a blend of the one-hot vector and the uniform distribution: y_LS = (1−ε)·y + ε·(1/K). Concretely the correct class gets 1−ε+ε/K and every other class gets ε/K. With ε=0 you recover the hard target; with ε=1 you get pure uniform (no signal at all). The typical value is ε=0.1. The point: the true-class target is now a finite number the softmax can actually attain with finite logits, and every wrong class carries a small positive target the model is no longer allowed to crush to zero.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">y_LS = (1&minus;&epsilon;)&middot;onehot + &epsilon;&middot;(1/K)<br><br>K=6, &epsilon;=0.1:&nbsp; true = 1&minus;0.1+0.1/6 = <b>0.9167</b><br>each other = 0.1/6 = <b>0.0167</b><br>[ 0.917, 0.017, 0.017, 0.017, 0.017, 0.017 ] &nbsp;(sums to 1)</div>`,
+   code:"def smooth_target(K, i, eps):\n    t = [eps / K] * K          # uniform floor on every class\n    t[i] += 1 - eps            # extra mass on the true class\n    return t                   # true = 1 - eps + eps/K\n# eps = 0  -> one-hot (hard);  eps = 1 -> uniform (no signal)." },
+ { title:"4. What it does to the loss",
+   why:"Cross-entropy against the smoothed target splits into two terms: −(1−ε)·log(p_true) − (ε/K)·Σ_k log(p_k). The first is the usual 'be right' pull, scaled down slightly. The second is new: it is minimised when every log(p_k) is large, i.e. when the model spreads some probability to ALL classes — exactly a penalty for being too peaky. Equivalently CE(y_LS, p) = (1−ε)·CE(onehot, p) + ε·CE(uniform, p) + const: the standard loss plus a 'stay close to uniform' regulariser weighted by ε. Its minimum is reached when p equals the smoothed target — a plateau, not a spike.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">CE(y_LS, p) = &minus;(1&minus;&epsilon;)&middot;log p_true &minus; (&epsilon;/K)&middot;&Sigma; log p_k<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; = (1&minus;&epsilon;)&middot;CE(onehot,p) + &epsilon;&middot;CE(uniform,p) + c<br><br>&uarr; be right &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; &uarr; don't be peaky<br>minimum at &nbsp; p = smoothed target</div>`,
+   code:"# smoothed cross-entropy = weighted mix of two losses:\n#   (1-eps) * (-log p_true)        # standard 'be correct'\n# + eps    * mean(-log p_k)        # 'stay near uniform' (anti-peaky)\n# minimised when p == smoothed target, not when p is a spike." },
+ { title:"5. What it does to the gradient (the sign can flip!)",
+   why:"The gradient of softmax+cross-entropy w.r.t. the logits is beautifully simple: ∂L/∂z = p − t. With a hard target the true-class gradient is p_true − 1, negative until p_true = 1 — so the logit is pushed up forever. With smoothing the true-class target is only 1−ε+ε/K, so the gradient becomes p_true − (1−ε+ε/K). The moment the model's confidence exceeds that ceiling the gradient goes POSITIVE and actively pulls the over-confident logit back DOWN. Meanwhile each wrong class has target ε/K instead of 0, so the model is prevented from driving those logits to −∞. The optimisation finally has a finite fixed point.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">&part;L/&part;z = p &minus; t<br><br>hard: &nbsp; grad_true = p_true &minus; 1 &nbsp;&lt; 0 &nbsp; (push UP, forever)<br>smooth: grad_true = p_true &minus; (1&minus;&epsilon;+&epsilon;/K)<br>&nbsp;&nbsp;&nbsp; p_true &gt; ceiling &rArr; grad &gt; 0 &rArr; push DOWN<br>wrong classes: target &epsilon;/K &gt; 0 &rArr; logits can't hit &minus;&infin;</div>`,
+   code:"grad = [p[j] - t[j] for j in range(K)]   # dL/dz = p - t\n\n# TRUE logit, hard   : p_true - 1              < 0  (always UP)\n# TRUE logit, eps>0  : p_true - (1-eps+eps/K)       (flips +)\n#   once confidence passes the ceiling -> gradient pulls it DOWN\n# finite fixed point instead of a runaway to infinity." },
+ { title:"6. The geometry: equal, finite logit gaps",
+   why:"At the optimum of smoothed cross-entropy the logits settle so that the correct class sits a fixed, finite margin above the rest, and the incorrect logits are all roughly equal to one another. Muller, Kornblith & Hinton (2019) visualised this: label smoothing makes the penultimate-layer feature clusters tighter and more equidistant, erasing the fine differences between wrong classes. That is great for calibration and clean, well-separated clusters — but it also destroys information about how classes relate (which wrong answer was 'closer'), which is exactly why smoothing can hurt when those relationships carry signal.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">hard: &nbsp; clusters spread, unequal gaps, sharp corners<br>smooth: tight, equidistant clusters; equal wrong-class logits<br><br>&#43; cleaner separation, better calibration<br>&minus; erases 'which wrong class was closer' (class similarity)</div>`,
+   code:"# at the optimum with smoothing:\n#   z_true - z_wrong  = constant, finite margin\n#   z_wrong_i ~= z_wrong_j    (wrong logits collapse together)\n# tighter equidistant feature clusters (Muller et al. 2019)\n# nice for calibration, but similarity structure is flattened." },
+ { title:"7. Calibration — and the trade-off",
+   why:"A model is calibrated if, among the predictions it makes with confidence c, a fraction c are actually correct. Hard-target models are systematically over-confident: confidence far above accuracy, a large Expected Calibration Error (ECE). Label smoothing pulls the confidence ceiling down to 1−ε+ε/K; pick ε so the ceiling roughly matches the accuracy and the model becomes well-calibrated with little or no accuracy loss. But there is a real trade-off: too much ε pushes the ceiling BELOW the true accuracy and the model turns UNDER-confident, wasting genuine certainty. ε is a dial from over-confident (0) to under-confident (large); ~0.1 is a solid default. Always confirm on a reliability diagram, not by feel.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">calibrated: confidence c &rArr; correct a fraction c of the time<br><br>&epsilon; too small &rarr; confidence &gt;&gt; accuracy &nbsp; (OVER, big ECE)<br>&epsilon; just right &rarr; confidence &asymp; accuracy &nbsp; (calibrated)<br>&epsilon; too big &rarr; confidence &lt;&lt; accuracy &nbsp; (UNDER)</div>`,
+   code:"# Expected Calibration Error: |confidence - accuracy|, binned\n# hard targets     -> confidence 0.99, accuracy 0.85  (ECE high)\n# label smoothing  -> ceiling 1 - eps + eps/K\n#   tune eps so ceiling ~= accuracy   (well-calibrated)\n#   too large -> underconfident. verify on a reliability diagram." },
+ { title:"8. When it helps, when it hurts",
+   why:"Label smoothing reliably improves top-1 accuracy AND calibration on large classification tasks — ImageNet, the Transformer for machine translation, speech recognition. It hurts in two notable places. (1) Knowledge distillation: a smoothed teacher's logits are squashed to equal gaps, erasing the 'dark knowledge' about class similarity that a student learns from — a distilled student often does BETTER from a non-smoothed teacher. (2) Tasks that depend on embedding geometry — retrieval, face verification, metric learning — where collapsing the inter-class structure removes useful signal. Rule of thumb: great for a final classifier you'll read probabilities off; think twice when something downstream consumes the logits or the features.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">&#10003; helps: ImageNet, NMT Transformer, ASR<br>&nbsp;&nbsp;&nbsp; better top-1 + much better calibration<br><br>&#10007; hurts: distillation (kills teacher 'dark knowledge')<br>&#10007; hurts: retrieval / face / metric learning (geometry)</div>`,
+   code:"# GOOD: final softmax classifier where you trust probabilities\n#   ImageNet / translation / speech -> accuracy + calibration up\n# BE CAREFUL:\n#   teacher for distillation -> use eps = 0 (keep dark knowledge)\n#   retrieval / metric learning -> smoothing flattens embeddings." },
+ { title:"9. In practice",
+   why:"You almost never implement it by hand — modern frameworks bake it into the loss. In PyTorch, nn.CrossEntropyLoss(label_smoothing=0.1) does the whole thing from raw logits and integer targets. It is one of the cheapest wins in the training toolbox: one hyper-parameter, no architecture change, no extra compute. It also belongs to a family of 'soft target' tricks: the temperature-softened teacher targets of distillation, and Mixup / CutMix, which blend two images and their labels into soft targets — all pushing the same idea that a hard 0/1 target is an over-confident lie. Start at ε=0.1, then tune while watching BOTH accuracy and a calibration metric (ECE or a reliability diagram).",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">nn.CrossEntropyLoss(label_smoothing=0.1)<br>raw logits + integer targets &rarr; done<br><br>family of soft targets: distillation temperature,<br>Mixup / CutMix (blend images AND labels)</div>`,
+   code:"import torch.nn as nn\ncriterion = nn.CrossEntropyLoss(label_smoothing=0.1)\nloss = criterion(model(x), y)   # y = integer class indices\nloss.backward()\n# start at 0.1; tune with accuracy AND calibration (ECE) in view." }
+];
+</script>
+
+<script>
+const stepsEl=document.getElementById("steps");
+const prevB=document.getElementById("prev"), nextB=document.getElementById("next-btn"), autoB=document.getElementById("auto");
+let curS=0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },5200); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>
