@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 37 — Mixup &amp; CutMix</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  /* image canvases */
+  .imgwrap{ display:flex; flex-direction:column; align-items:center; gap:8px; }
+  canvas.sprite{ border-radius:14px; border:1px solid #e2e8f0; width:100%; max-width:200px; height:auto; background:#fff; box-shadow:0 3px 10px rgba(15,23,42,.06); }
+  canvas.out{ box-shadow:0 6px 18px rgba(244,63,94,.20); border-color:#fecdd3; }
+  .imgcap{ font-size:13px; font-weight:800; letter-spacing:.01em; }
+  .imgsub{ font-size:11px; color:#94a3b8; }
+  .op{ font-size:34px; font-weight:800; color:#cbd5e1; align-self:center; padding-top:34px; }
+  /* soft-label bars */
+  .hbar-track{ background:#f1f5f9; border-radius:6px; height:26px; overflow:hidden; flex:1; }
+  .hbar{ height:100%; border-radius:6px; transition:width .18s; display:flex; align-items:center; justify-content:flex-end; padding-right:8px; color:#fff; font-size:12px; font-weight:800; min-width:2px; }
+  .cmp td, .cmp th { padding:8px 10px; border-bottom:1px solid #e2e8f0; text-align:left; vertical-align:top; }
+  .cmp th { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#64748b; }
+  .cmp td:first-child{ font-weight:800; white-space:nowrap; }
+  .modebtn.on{ background:#0f172a; color:#fff; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 37</div>
+      <h1 class="text-xl font-bold">&#129516; Mixup &amp; CutMix &mdash; stop training on one image at a time: blend <em>two</em> training images <em>and</em> their labels into a soft target. <strong>Mixup</strong> ghosts them pixel-wise (<span class="mono">&lambda;&middot;A + (1&minus;&lambda;)&middot;B</span>); <strong>CutMix</strong> cuts a patch of B into A and mixes the label <em>by area</em> &mdash; so the network learns to behave <em>linearly between classes</em>, which smooths decision boundaries, curbs memorisation, and improves calibration &amp; robustness</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Two images, one slider. Watch them blend &mdash; and the label blend with them.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto">Ordinary augmentation (Day 35) transforms <em>one</em> image and keeps its label. <strong class="text-rose-600">Mixup</strong> and <strong class="text-rose-600">CutMix</strong> go further: they take <em>two</em> images and combine them into a new training example whose label is <em>soft</em> &mdash; part cat, part dog &mdash; because that's honestly how much of each is now in the picture. Flip the mode and drag <span class="sk">&lambda;</span> (how much <span style="color:#ea580c;font-weight:700">🐱 cat</span> to keep): <strong>Mixup</strong> makes every output pixel a <span class="mono">&lambda;&middot;cat + (1&minus;&lambda;)&middot;dog</span> ghost; <strong>CutMix</strong> pastes a rectangular patch of dog whose <em>area</em> sets the label. In both, the target underneath melts from a hard one-hot into a calibrated soft label &mdash; and that is the whole regulariser.</p>
+
+      <div class="bg-white rounded-xl border border-rose-200 p-4 mb-4 text-left">
+        <div class="flex items-center gap-4 flex-wrap">
+          <div class="flex gap-2">
+            <button id="m_mixup"  data-mode="mixup"  class="modebtn on px-4 py-2 rounded-lg font-semibold text-sm border border-slate-300">Mixup</button>
+            <button id="m_cutmix" data-mode="cutmix" class="modebtn px-4 py-2 rounded-lg font-semibold text-sm border border-slate-300">CutMix</button>
+          </div>
+          <div class="ctrl flex-1" style="min-width:260px;">
+            <label>&lambda; &mdash; weight kept on <span style="color:#ea580c">🐱 cat</span> (image A) <span id="v_lam" class="sk stat">0.50</span></label>
+            <input type="range" id="s_lam" min="0" max="1" step="0.01" value="0.5">
+          </div>
+          <div class="flex gap-2">
+            <button data-lam="0.3" class="lpreset bg-slate-200 px-3 py-2 rounded-lg font-semibold text-xs">&lambda; = 0.3</button>
+            <button data-lam="0.5" class="lpreset bg-rose-600 text-white px-3 py-2 rounded-lg font-semibold text-xs">&lambda; = 0.5</button>
+            <button data-lam="0.7" class="lpreset bg-slate-200 px-3 py-2 rounded-lg font-semibold text-xs">&lambda; = 0.7</button>
+            <button id="movePatch" class="bg-blue-600 text-white px-3 py-2 rounded-lg font-semibold text-xs">&#127922; move patch</button>
+          </div>
+        </div>
+        <div id="formula" class="mt-3 text-sm text-slate-600"></div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-5 mb-4">
+        <div class="grid grid-cols-[1fr_auto_1fr_auto_1.2fr] gap-3 items-start">
+          <div class="imgwrap">
+            <canvas id="cA" class="sprite" width="200" height="200"></canvas>
+            <div class="imgcap" style="color:#ea580c">🐱 Image A &mdash; cat</div>
+            <div class="imgsub">label = [ cat 1.0, dog 0.0 ]</div>
+          </div>
+          <div class="op" id="op">+</div>
+          <div class="imgwrap">
+            <canvas id="cB" class="sprite" width="200" height="200"></canvas>
+            <div class="imgcap" style="color:#2563eb">🐶 Image B &mdash; dog</div>
+            <div class="imgsub">label = [ cat 0.0, dog 1.0 ]</div>
+          </div>
+          <div class="op">=</div>
+          <div class="imgwrap">
+            <canvas id="cOut" class="sprite out" width="200" height="200"></canvas>
+            <div class="imgcap sk" id="outCap">mixed example</div>
+            <div class="imgsub" id="outSub">the new training image</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-4 mb-4 text-left">
+        <div class="bg-white rounded-xl border border-rose-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">The soft label &mdash; what the model is trained to predict</div>
+          <p class="text-xs text-slate-400 mb-3">Not a hard &ldquo;cat&rdquo;. A <em>distribution</em> over both classes that matches how much of each image is present. Drag &lambda; and it moves live.</p>
+          <div class="flex items-center gap-3 mb-2"><span class="text-xs font-bold text-slate-500 w-20">🐱 cat</span><div class="hbar-track"><div id="barCat" class="hbar" style="background:#ea580c"></div></div></div>
+          <div class="flex items-center gap-3 mb-3"><span class="text-xs font-bold text-slate-500 w-20">🐶 dog</span><div class="hbar-track"><div id="barDog" class="hbar" style="background:#2563eb"></div></div></div>
+          <div id="labReadout" class="text-sm rounded-lg border border-rose-200 bg-rose-50 p-3 text-rose-900"></div>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">The loss it drives</div>
+          <p class="text-xs text-slate-400 mb-3">A blended image gets a blended cross-entropy: the standard loss against <em>each</em> class, weighted by how much of that class is in the picture. Same &ldquo;soft target&rdquo; idea as Day-36 label smoothing &mdash; but the softness comes from real pixels of a second class.</p>
+          <div id="lossBox" class="text-sm"></div>
+          <div class="text-[11px] text-slate-400 mt-3">Minimising this pushes the model to output the soft label &mdash; i.e. to interpolate its confidence between the two classes instead of snapping to 100%.</div>
+        </div>
+      </div>
+
+      <div id="note" class="rounded-xl border border-rose-200 bg-rose-50 text-rose-900 p-4 text-sm text-left mb-4"></div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-left overflow-x-auto">
+        <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Plain augmentation vs. Mixup vs. CutMix</div>
+        <table class="cmp w-full text-sm"><thead><tr>
+          <th>Method</th><th>How many images</th><th>What you blend</th><th>The label</th><th>Look of the pixels</th>
+        </tr></thead><tbody>
+          <tr><td>Plain aug<br><span class="text-xs font-normal text-slate-400">(Day 35)</span></td><td>one</td><td>geometry / colour of a single image</td><td><b>unchanged</b> &mdash; still one-hot</td><td>real, sharp, natural</td></tr>
+          <tr class="bg-rose-50"><td class="sk">Mixup</td><td>two</td><td>every <em>pixel</em>: <span class="mono">&lambda;A+(1&minus;&lambda;)B</span></td><td><b>soft:</b> <span class="mono">&lambda;&middot;y_A+(1&minus;&lambda;)&middot;y_B</span></td><td>ghosted / translucent overlay</td></tr>
+          <tr class="bg-rose-50"><td class="sk">CutMix</td><td>two</td><td>a <em>patch</em>: a box of B pasted into A</td><td><b>soft, by area:</b> patch-area fraction</td><td>real sharp pixels, both objects survive</td></tr>
+        </tbody></table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Why train on images that don&rsquo;t exist</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">The live demo runs entirely from scratch &mdash; two hand-drawn canvases and a few lines of blending, no library. We build it one line at a time: two source images with one-hot labels, a mixing weight <code>&lambda;</code> from a Beta distribution, the Mixup pixel blend, the matching label blend, the CutMix patch-and-paste, the area-derived label, and the soft-label cross-entropy that ties it all together &mdash; then we map it to the few lines you actually write with <code>timm</code>.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Two examples &mdash; images and their one-hot labels</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Everything operates on a <em>pair</em>. Grab two samples from the batch: image A with label cat, image B with label dog. Labels start as clean one-hot vectors &mdash; the softness is created by mixing, not assumed.</p>
+        <div class="relative"><pre>const K = 2;                          // classes: [cat, dog]
+const A = { img: canvasA, y: [1, 0] };   // a cat  -> one-hot cat
+const B = { img: canvasB, y: [0, 1] };   // a dog  -> one-hot dog
+// in a real loop B is just A shuffled: xb = xa[torch.randperm(n)]</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Sample the mixing weight &lambda; from Beta(&alpha;,&alpha;)</h3></div>
+        <p class="text-sm text-slate-600 mb-3">&lambda; is not fixed &mdash; each batch draws its own from a symmetric Beta. Small <code>&alpha;</code> (≈0.2) piles mass near 0 and 1, so most mixes are gentle with occasional strong ones; <code>&alpha;=1</code> is uniform; large <code>&alpha;</code> centres on 0.5 (aggressive). It&rsquo;s the one knob you tune.</p>
+        <div class="relative"><pre>// Beta(a,a) via two Gamma draws:  g1 / (g1 + g2)
+function sampleBeta(a) {
+  const g = k =&gt; { let s = 0; for (let i = 0; i &lt; k; i++) s -= Math.log(Math.random()); return s; };
+  const g1 = g(Math.max(1, Math.round(a))), g2 = g(Math.max(1, Math.round(a)));
+  return g1 / (g1 + g2);
+}
+const lam = sampleBeta(0.2);     // e.g. 0.83  (mostly image A)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Mixup &mdash; the pixel-wise convex blend</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Every output pixel is <code>&lambda;&middot;A + (1&minus;&lambda;)&middot;B</code>. On a canvas that&rsquo;s two draws with <code>globalAlpha</code>: paint A fully, then paint B at opacity <code>1&minus;&lambda;</code> on top &mdash; the compositor gives exactly the convex combination.</p>
+        <div class="relative"><pre>function mixup(out, A, B, lam) {
+  const ctx = out.getContext("2d");
+  ctx.globalAlpha = 1;        ctx.drawImage(A, 0, 0);   // full cat
+  ctx.globalAlpha = 1 - lam;  ctx.drawImage(B, 0, 0);   // dog ghosted on top
+  ctx.globalAlpha = 1;
+  // result pixel = lam*A + (1-lam)*B   (a translucent overlay of both)
+}</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Blend the label the SAME way &mdash; the whole trick</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Mixing pixels but keeping a hard label would teach a lie (&ldquo;this 30%-dog image is 100% cat&rdquo;). So blend the label with the <em>same</em> &lambda;: the target becomes <code>&lambda;&middot;y_A + (1&minus;&lambda;)&middot;y_B</code> &mdash; an honest soft target, exactly the Day-36 family.</p>
+        <div class="relative"><pre>function mixLabels(yA, yB, lam) {
+  return yA.map((v, k) =&gt; lam * v + (1 - lam) * yB[k]);
+}
+const y = mixLabels(A.y, B.y, lam);   // lam=0.7 -> [0.7, 0.3]
+//        ^ 70% cat, 30% dog  (matches the pixels you just made)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">CutMix &mdash; cut a patch of B, paste it into A</h3></div>
+        <p class="text-sm text-slate-600 mb-3">No ghosting: draw A, then stamp a rectangular patch of B on top. The box side is <code>&radic;(1&minus;&lambda;)&middot;W</code> at a random location, so its <em>area</em> is <code>(1&minus;&lambda;)</code> of the image. Every pixel stays a real, sharp pixel of one image.</p>
+        <div class="relative"><pre>function cutmix(out, A, B, lam) {
+  const W = out.width, H = out.height, ctx = out.getContext("2d");
+  ctx.drawImage(A, 0, 0);                          // base image A
+  const s = Math.sqrt(1 - lam) * W;                // patch side, area = 1-lam
+  const cx = Math.random() * W, cy = Math.random() * H;
+  let x = clamp(cx - s / 2, 0, W), y = clamp(cy - s / 2, 0, H);
+  let x2 = clamp(x + s, 0, W),   y2 = clamp(y + s, 0, H);
+  let bw = x2 - x, bh = y2 - y;                     // clipped box (may shrink at edges)
+  ctx.drawImage(B, x, y, bw, bh, x, y, bw, bh);    // same-location patch of B
+  return { x, y, bw, bh };
+}</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Re-derive &lambda; from the ACTUAL pasted area</h3></div>
+        <p class="text-sm text-slate-600 mb-3">If the box ran off the edge it got clipped, so the real patch is smaller than intended. Recompute <code>&lambda;</code> from the true pasted area so the label always matches the pixels on screen &mdash; then blend labels exactly like Mixup.</p>
+        <div class="relative"><pre>const area = (bw * bh) / (W * H);      // true fraction that is dog
+const lamAdj = 1 - area;               // fraction that is still cat
+const y = mixLabels(A.y, B.y, lamAdj); // e.g. patch=30% -> [0.7, 0.3]
+// label ratio == patch-area fraction, honest even when the box is clipped</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">The soft-label loss &mdash; one line, both methods</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Because the target is a mix of two one-hots, the cross-entropy factorises into the ordinary loss against <em>each</em> class, weighted by &lambda;. You never need a special loss &mdash; just feed the soft target (or the two hard targets with weights).</p>
+        <div class="relative"><pre>// CE against the soft target  ==  weighted CE against each class
+function mixLoss(logits, yA, yB, lam) {
+  return lam * crossEntropy(logits, yA)
+       + (1 - lam) * crossEntropy(logits, yB);
+}
+// identical to  crossEntropy(logits, mixLabels(yA, yB, lam))
+// the model is pushed to output lam on cat, (1-lam) on dog</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">8</div><h3 class="font-bold text-lg">The real thing &mdash; a few lines with timm</h3></div>
+        <p class="text-sm text-slate-600 mb-3">In production you configure it once and it runs per batch &mdash; timm&rsquo;s <code>Mixup</code> even flips between Mixup and CutMix randomly and folds in label smoothing. Near-zero extra compute, no architecture change. Tune <code>alpha</code> and train a little longer; keep your ordinary augmentation too.</p>
+        <div class="relative"><pre>from timm.data import Mixup
+
+mixup_fn = Mixup(
+    mixup_alpha=0.2, cutmix_alpha=1.0,   # Beta params for each
+    prob=1.0, switch_prob=0.5,           # 50/50 pick Mixup vs CutMix per batch
+    label_smoothing=0.1, num_classes=1000,
+)
+
+for x, y in loader:
+    x, y = mixup_fn(x, y)                 # blends images AND makes soft targets
+    loss = SoftTargetCrossEntropy()(model(x), y)   # soft-label CE
+    loss.backward()
+# family of "soft target" tricks: label smoothing, distillation, Mixup/CutMix.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 37 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2"><strong>Mixup &amp; CutMix</strong> train the network on images <em>between</em> the real ones: <strong>Mixup</strong> takes a pixel-wise convex blend <strong>&lambda;&middot;A + (1&minus;&lambda;)&middot;B</strong>, <strong>CutMix</strong> pastes a rectangular patch of one image into the other &mdash; and in <em>both</em> the label is blended the same way, soft by &lambda; (Mixup) or by <strong>patch area</strong> (CutMix). A hard 0/1 target on a mixed image would be a lie; the soft target is the honest description of what&rsquo;s actually on screen, so the model is forced to <strong>interpolate linearly between classes</strong> instead of snapping to 100%. The payoff is <strong>smoother, wider decision boundaries</strong>, far less memorisation of corrupt labels, better <strong>calibration</strong> (straight from Day-36&rsquo;s label smoothing), and more robustness &mdash; CutMix adds a <strong>localisation</strong> bonus because real object parts survive intact. Mind the <strong>caveats</strong>: convergence is a touch slower (train longer), and pixel-exact tasks (segmentation/detection) need box-aware variants. In practice it&rsquo;s a config &mdash; <code>timm.data.Mixup(...)</code> plus <code>SoftTargetCrossEntropy</code>. <strong>&#128073; Tomorrow, Day 38:</strong> Stochastic Depth &mdash; randomly dropping <em>entire</em> residual blocks during training, the same &ldquo;drop things to generalise&rdquo; idea taken to whole layers.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+</script>
+
+<script>
+// ============================================================
+// REAL from-scratch Mixup / CutMix, computed live on canvas.
+//   two hand-drawn sprites (cat A, dog B) blended per the mode
+//   Mixup  : out pixel = lam*A + (1-lam)*B  via globalAlpha
+//   CutMix : paste a sqrt(1-lam)*W square patch of B into A,
+//            label re-derived from the ACTUAL (clipped) area
+//   the soft label + soft-label loss update on every drag
+// ============================================================
+const W = 200, H = 200;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+// ---------- draw the two source sprites once (offscreen) ----------
+function newCanvas(){ const c = document.createElement("canvas"); c.width = W; c.height = H; return c; }
+const catCanvas = newCanvas(), dogCanvas = newCanvas();
+
+function drawCat(ctx){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = "#ffe4e6"; ctx.fillRect(0,0,W,H);            // soft rose backdrop
+  // ears
+  ctx.fillStyle = "#fb923c";
+  ctx.beginPath(); ctx.moveTo(55,72); ctx.lineTo(70,26); ctx.lineTo(102,60); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(145,72); ctx.lineTo(130,26); ctx.lineTo(98,60); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#fbcfe8";
+  ctx.beginPath(); ctx.moveTo(66,65); ctx.lineTo(74,40); ctx.lineTo(92,60); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(134,65); ctx.lineTo(126,40); ctx.lineTo(108,60); ctx.closePath(); ctx.fill();
+  // head
+  ctx.fillStyle = "#fb923c"; ctx.beginPath(); ctx.arc(100,112,56,0,Math.PI*2); ctx.fill();
+  // eyes
+  ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.ellipse(80,102,12,16,0,0,Math.PI*2); ctx.ellipse(120,102,12,16,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = "#166534"; ctx.beginPath(); ctx.ellipse(80,104,5,10,0,0,Math.PI*2); ctx.ellipse(120,104,5,10,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(80,104,2.6,0,Math.PI*2); ctx.arc(120,104,2.6,0,Math.PI*2); ctx.fill();
+  // nose + mouth
+  ctx.fillStyle = "#db2777"; ctx.beginPath(); ctx.moveTo(92,124); ctx.lineTo(108,124); ctx.lineTo(100,134); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = "#7c2d12"; ctx.lineWidth = 2; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(100,134); ctx.lineTo(100,140); ctx.stroke();
+  ctx.beginPath(); ctx.arc(92,140,8,0,Math.PI); ctx.stroke();
+  ctx.beginPath(); ctx.arc(108,140,8,0,Math.PI); ctx.stroke();
+  // whiskers
+  ctx.strokeStyle = "#9a3412"; ctx.lineWidth = 1.4; ctx.beginPath();
+  ctx.moveTo(58,120); ctx.lineTo(28,112); ctx.moveTo(58,128); ctx.lineTo(26,128); ctx.moveTo(58,136); ctx.lineTo(28,146);
+  ctx.moveTo(142,120); ctx.lineTo(172,112); ctx.moveTo(142,128); ctx.lineTo(174,128); ctx.moveTo(142,136); ctx.lineTo(172,146);
+  ctx.stroke();
+}
+
+function drawDog(ctx){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = "#dbeafe"; ctx.fillRect(0,0,W,H);            // soft blue backdrop
+  // floppy ears (behind head)
+  ctx.fillStyle = "#78350f";
+  ctx.beginPath(); ctx.ellipse(56,118,22,44,0.35,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(144,118,22,44,-0.35,0,Math.PI*2); ctx.fill();
+  // head
+  ctx.fillStyle = "#a16207"; ctx.beginPath(); ctx.arc(100,104,55,0,Math.PI*2); ctx.fill();
+  // snout
+  ctx.fillStyle = "#d8b26a"; ctx.beginPath(); ctx.ellipse(100,134,33,27,0,0,Math.PI*2); ctx.fill();
+  // eyes
+  ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(80,94,13,0,Math.PI*2); ctx.arc(120,94,13,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = "#1c1917"; ctx.beginPath(); ctx.arc(82,96,6,0,Math.PI*2); ctx.arc(118,96,6,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(84,94,2,0,Math.PI*2); ctx.arc(120,94,2,0,Math.PI*2); ctx.fill();
+  // nose
+  ctx.fillStyle = "#1c1917"; ctx.beginPath(); ctx.ellipse(100,124,13,9,0,0,Math.PI*2); ctx.fill();
+  // mouth
+  ctx.strokeStyle = "#5b210a"; ctx.lineWidth = 2.4; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(100,133); ctx.lineTo(100,146); ctx.stroke();
+  ctx.beginPath(); ctx.arc(88,146,12,0,Math.PI); ctx.stroke();
+  ctx.beginPath(); ctx.arc(112,146,12,0,Math.PI); ctx.stroke();
+  // tongue
+  ctx.fillStyle = "#f472b6"; ctx.beginPath(); ctx.ellipse(100,158,7,11,0,0,Math.PI*2); ctx.fill();
+}
+drawCat(catCanvas.getContext("2d"));
+drawDog(dogCanvas.getContext("2d"));
+
+// paint the two static source panels
+document.getElementById("cA").getContext("2d").drawImage(catCanvas,0,0);
+document.getElementById("cB").getContext("2d").drawImage(dogCanvas,0,0);
+
+// ---------- live state ----------
+const outCtx = document.getElementById("cOut").getContext("2d");
+let MODE = "mixup";
+let boxCX = 0.5, boxCY = 0.5;   // patch centre (fraction) for CutMix
+
+// ---------- renderers ----------
+const pct = v => (v*100).toFixed(0) + "%";
+function crossEntropyContribution(lam){ // illustrative loss vs a plausible model prediction
+  // pretend the model currently predicts pCat -> shows loss shrinking as it matches the soft label
+  return lam;
+}
+
+function render(){
+  const lam = +document.getElementById("s_lam").value;
+  document.getElementById("v_lam").textContent = lam.toFixed(2);
+
+  outCtx.save();
+  outCtx.clearRect(0,0,W,H);
+  outCtx.globalAlpha = 1;
+  let labCat, labDog, boxTxt = "";
+
+  if(MODE === "mixup"){
+    outCtx.drawImage(catCanvas,0,0);
+    outCtx.globalAlpha = 1 - lam;
+    outCtx.drawImage(dogCanvas,0,0);
+    outCtx.globalAlpha = 1;
+    labCat = lam; labDog = 1 - lam;
+  } else {
+    outCtx.drawImage(catCanvas,0,0);
+    const target = 1 - lam;                       // intended dog area
+    const s = Math.sqrt(target) * W;              // square side, area = 1-lam
+    const x  = clamp(boxCX*W - s/2, 0, W), y  = clamp(boxCY*H - s/2, 0, H);
+    const x2 = clamp(boxCX*W + s/2, 0, W), y2 = clamp(boxCY*H + s/2, 0, H);
+    const bw = x2 - x, bh = y2 - y;
+    if(bw > 0.5 && bh > 0.5) outCtx.drawImage(dogCanvas, x, y, bw, bh, x, y, bw, bh);
+    const actualDog = (bw*bh)/(W*H);
+    labDog = actualDog; labCat = 1 - actualDog;
+    // dashed outline round the patch
+    outCtx.strokeStyle = "#2563eb"; outCtx.lineWidth = 3; outCtx.setLineDash([7,5]);
+    outCtx.strokeRect(x+1.5, y+1.5, Math.max(0,bw-3), Math.max(0,bh-3)); outCtx.setLineDash([]);
+    boxTxt = ` &nbsp;·&nbsp; patch ≈ ${pct(actualDog)} of the area`;
+  }
+  outCtx.restore();
+
+  // caption
+  document.getElementById("outCap").textContent = MODE === "mixup" ? "Mixup blend" : "CutMix paste";
+  document.getElementById("outSub").innerHTML = MODE === "mixup"
+    ? "λ·cat + (1−λ)·dog, every pixel"
+    : "sharp patch of dog on cat";
+
+  // formula readout
+  const F = document.getElementById("formula");
+  if(MODE === "mixup"){
+    F.innerHTML = `<span class="mono">x&#771; = &lambda;&middot;A + (1&minus;&lambda;)&middot;B</span>, &nbsp;` +
+      `<span class="mono">y&#771; = &lambda;&middot;y_A + (1&minus;&lambda;)&middot;y_B</span> &nbsp;&rarr;&nbsp; ` +
+      `label = <b class="sk">${lam.toFixed(2)} cat</b>, <b>${(1-lam).toFixed(2)} dog</b>`;
+  } else {
+    F.innerHTML = `<span class="mono">patch side = &radic;(1&minus;&lambda;)&middot;W</span>, label mixed by <b>area</b>` + boxTxt +
+      ` &nbsp;&rarr;&nbsp; label = <b class="sk">${labCat.toFixed(2)} cat</b>, <b>${labDog.toFixed(2)} dog</b> &nbsp;<span class="text-slate-400 text-xs">(🎲 move patch to clip it)</span>`;
+  }
+
+  // soft-label bars
+  document.getElementById("barCat").style.width = (labCat*100).toFixed(1) + "%";
+  document.getElementById("barDog").style.width = (labDog*100).toFixed(1) + "%";
+  document.getElementById("barCat").textContent = pct(labCat);
+  document.getElementById("barDog").textContent = pct(labDog);
+  document.getElementById("labReadout").innerHTML =
+    `soft target <span class="mono">y&#771; = [ ${labCat.toFixed(2)}, ${labDog.toFixed(2)} ]</span> &mdash; ` +
+    (MODE === "mixup"
+      ? `the mixing weight &lambda; sets it directly.`
+      : `it equals the <b>patch-area fraction</b>, recomputed from the pixels actually pasted.`);
+
+  // loss box (soft-label cross-entropy, decomposed)
+  document.getElementById("lossBox").innerHTML =
+    `<div class="mono text-xs bg-slate-900 text-slate-100 rounded-lg p-3 leading-relaxed">` +
+    `L = <span style="color:#fdba74">${labCat.toFixed(2)}</span>·CE(pred, <span style="color:#fdba74">cat</span>) ` +
+    `+ <span style="color:#93c5fd">${labDog.toFixed(2)}</span>·CE(pred, <span style="color:#93c5fd">dog</span>)</div>` +
+    `<div class="text-xs text-slate-500 mt-2">= the same as one cross-entropy against the soft target <span class="mono">[${labCat.toFixed(2)}, ${labDog.toFixed(2)}]</span>.</div>`;
+
+  // narrative note
+  const note = document.getElementById("note");
+  const strongSide = labCat >= labDog ? "cat" : "dog";
+  const bal = Math.abs(labCat - labDog) < 0.12;
+  if(MODE === "mixup"){
+    note.innerHTML = `<strong>Mixup.</strong> Every output pixel is a translucent <span class="mono">&lambda;&middot;cat + (1&minus;&lambda;)&middot;dog</span> ghost, and the label is blended by the very same &lambda;. ` +
+      (bal ? `Right now it&rsquo;s a near even 50/50 &mdash; the hardest, most regularising case: the model must place real probability on <em>both</em> classes.` :
+             `Right now it leans <b>${strongSide}</b> (${pct(Math.max(labCat,labDog))}), so the target is mostly ${strongSide} but never a hard 100%.`) +
+      ` Because the target is soft, the model is pushed to <em>interpolate</em> its confidence between classes instead of snapping to a spike &mdash; the same anti-overconfidence medicine as label smoothing, now sourced from real pixels of a second class.`;
+  } else {
+    note.innerHTML = `<strong>CutMix.</strong> Instead of ghosting, a rectangular patch of <span style="color:#2563eb">dog</span> is stamped onto <span style="color:#ea580c">cat</span> &mdash; every pixel stays sharp and real, so <em>both</em> objects survive and features aren&rsquo;t muddied. The label is set by the <b>patch area</b> (${pct(labDog)} dog here), and crucially it&rsquo;s recomputed from the <em>actual</em> pasted region: hit <b>🎲 move patch</b> to push the box off an edge and watch the label shrink to match. That honesty is why CutMix also helps the model <b>localise</b> &mdash; it learns to recognise an animal from just a piece of it.`;
+  }
+}
+
+// ---------- wire controls ----------
+document.getElementById("s_lam").addEventListener("input", render);
+document.querySelectorAll(".lpreset").forEach(b => b.onclick = () => {
+  document.getElementById("s_lam").value = b.dataset.lam; render();
+});
+document.querySelectorAll(".modebtn").forEach(b => b.onclick = () => {
+  MODE = b.dataset.mode;
+  document.querySelectorAll(".modebtn").forEach(x => x.classList.remove("on"));
+  b.classList.add("on");
+  document.getElementById("op").textContent = "+";
+  render();
+});
+document.getElementById("movePatch").onclick = () => {
+  boxCX = 0.2 + Math.random()*0.6;
+  boxCY = 0.2 + Math.random()*0.6;
+  if(MODE !== "cutmix"){ MODE = "cutmix"; document.querySelectorAll(".modebtn").forEach(x => x.classList.toggle("on", x.dataset.mode === "cutmix")); }
+  render();
+};
+
+// initial paint
+render();
+</script>
+
+<script>
+const STEPS = [
+ { title:"1. The disease: memorising exact points, guessing wildly between them",
+   why:"A network trained the ordinary way (Empirical Risk Minimisation) only ever sees the exact training images with hard 0/1 labels. Nothing in the loss says anything about the vast space BETWEEN two examples, so the model is free to draw sharp, wiggly decision boundaries pressed right up against the data. That freedom is exactly what lets it memorise even randomly-corrupted labels, become wildly over-confident far from any evidence, and shatter under small input perturbations. Mixup and CutMix attack the gap directly: they literally build and train on points that sit between real examples, forcing the model to fill the space in sensibly.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">ERM: train only on the exact points<br>&#127183; cat &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; &#128054; dog<br>between them &rarr; the model can do ANYTHING<br><br>&rarr; sharp jagged boundary, memorisation, over-confidence</div>`,
+   code:"# ERM: expected loss over the TRAINING points only\n#   min_theta  (1/n) * sum_i  loss(f(x_i), y_i)\n# says nothing about x BETWEEN samples\n#   -> boundary can wiggle right up to the data\n#   -> memorises noise, over-confident off-manifold." },
+ { title:"2. The idea: train in the ‘vicinity’ of pairs of examples",
+   why:"Instead of only the exact points, sample virtual examples in the neighbourhood of PAIRS of real ones (Vicinal Risk Minimisation). Take two examples (x_i,y_i) and (x_j,y_j), pick a mixing weight lambda, and construct a blended input with a matching blended label. Now the model is supervised on a whole continuum of in-between images, each carrying an honest 'how much of each' target. The effect is that the network is asked to interpolate its predictions smoothly across the space between classes rather than jump discontinuously — the boundaries straighten and widen.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">pick two examples i, j &nbsp; and a weight &lambda;<br>x&#771; = blend(x_i, x_j, &lambda;)<br>y&#771; = blend(y_i, y_j, &lambda;)<br><br>train on the WHOLE line between them, not just the ends</div>`,
+   code:"# Vicinal Risk Minimisation: train on neighbours of pairs\nfor (xi, yi), (xj, yj) in pairs(batch):\n    lam = sample_lambda()\n    x_tilde = blend(xi, xj, lam)   # a point BETWEEN them\n    y_tilde = blend(yi, yj, lam)   # its honest soft label\n    train_on(x_tilde, y_tilde)" },
+ { title:"3. Mixup: a convex blend of BOTH the pixels and the label",
+   why:"Mixup (Zhang et al., 2018) is the simplest realisation: the blend is a straight convex combination. The new image is x̃ = lambda·x_i + (1−lambda)·x_j — every pixel averaged with weight lambda — and the new label is ỹ = lambda·y_i + (1−lambda)·y_j with the SAME lambda. With lambda=1 you get image i untouched; lambda=0 gives image j; lambda=0.5 is a perfect 50/50 ghost. That single shared lambda tying pixels and label together is the entire method.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">x&#771; = &lambda;&middot;x_i + (1&minus;&lambda;)&middot;x_j &nbsp; (pixels)<br>y&#771; = &lambda;&middot;y_i + (1&minus;&lambda;)&middot;y_j &nbsp; (label)<br><br>&lambda;=0.7 &rarr; 70% cat ghost + [0.7, 0.3]<br>same &lambda; for image AND label &mdash; the whole trick</div>`,
+   code:"def mixup(x, y, lam):\n    idx = torch.randperm(x.size(0))          # a shuffled partner\n    x_mix = lam * x + (1 - lam) * x[idx]     # pixel-wise blend\n    y_mix = lam * y + (1 - lam) * y[idx]     # SAME lam on labels\n    return x_mix, y_mix\n# lam=1 -> image i; lam=0 -> image j; lam=0.5 -> 50/50" },
+ { title:"4. Why the label MUST move with the pixels",
+   why:"The part beginners skip is blending the label. Suppose you ghost 70% cat + 30% dog pixels but keep a hard 'cat' target. You are now teaching the network that an image that is visibly 30% dog is 100% cat — you're injecting label noise and destroying calibration. Setting the target to [0.7, 0.3] instead tells the model exactly how much of each class is present: an honest soft target, the very same family as Day-36 label smoothing and distillation. It stops the model from ever justifying a 100% spike, because 100% is now literally the wrong answer.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">70% cat + 30% dog pixels<br><br>hard label [1, 0] &rarr; &ldquo;this is 100% cat&rdquo; &nbsp;&#10007; a lie<br>soft label [0.7, 0.3] &rarr; honest &nbsp;&#10003;<br><br>same soft-target family as label smoothing</div>`,
+   code:"# WRONG: blend pixels, keep hard label\n#   x = 0.7*cat + 0.3*dog ,  y = [1, 0]   # teaches a lie\n# RIGHT: blend the label too\n#   y = [0.7, 0.3]                         # honest soft target\n# 100% confidence is now the WRONG answer -> no runaway spike." },
+ { title:"5. CutMix: cut-and-paste instead of ghosting",
+   why:"Mixup's translucent overlay looks unnatural — two see-through animals — and blurs local texture. CutMix (Yun et al., 2019) keeps every pixel real: it cuts a rectangular patch out of image B and pastes it over image A. The picture now contains genuine, sharp regions of both classes side by side. The label is mixed by AREA: if the pasted patch covers 30% of the frame, the target is [0.7, 0.3]. So lambda is realised as the fraction of the image that still belongs to A. You get the regularising 'two classes in one sample' benefit without muddying any pixel.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">draw A, then STAMP a box of B on top<br>&#9645;&#9645;&#9645;&#9645;&#9645;<br>&#9645;&#9646;&#9646;&#9645;&#9645; &nbsp; patch of dog<br>&#9645;&#9646;&#9646;&#9645;&#9645; &nbsp; over cat<br>&#9645;&#9645;&#9645;&#9645;&#9645;<br>label = area: patch 30% &rarr; [0.7, 0.3]</div>`,
+   code:"def cutmix(x, y, lam):\n    idx = torch.randperm(x.size(0))\n    x1,y1,x2,y2 = rand_box(x.shape, lam)     # box, area = 1-lam\n    x[:, :, y1:y2, x1:x2] = x[idx, :, y1:y2, x1:x2]  # paste patch\n    area = (x2-x1)*(y2-y1) / (H*W)\n    y_mix = (1-area)*y + area*y[idx]         # label by AREA\n    return x, y_mix" },
+ { title:"6. Area, and the honest re-clip",
+   why:"The patch is usually a square whose side is sqrt(1−lambda)·W, dropped at a RANDOM location so the model can't rely on a fixed spot. When that box runs off an edge it gets clipped, so the actual pasted area is smaller than the target. Good implementations recompute lambda from the TRUE pasted area, so the soft label always matches what is really on screen — never the intended value. In the LOOK demo, 'move patch' does exactly this: shove the box to a corner and watch the dog-fraction (and the label) shrink to the real overlap.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">side = &radic;(1&minus;&lambda;)&middot;W &nbsp;at a random centre<br>box off the edge &rarr; CLIPPED &rarr; smaller area<br><br>&lambda;_adj = 1 &minus; (real pasted area)/(W&middot;H)<br>label follows the pixels that actually landed</div>`,
+   code:"cx, cy = rand()*W, rand()*H                  # random centre\ns = sqrt(1 - lam) * W                         # target side\nx1,y1 = clamp(cx-s/2,0,W), clamp(cy-s/2,0,H)  # clip to frame\nx2,y2 = clamp(cx+s/2,0,W), clamp(cy+s/2,0,H)\narea  = (x2-x1)*(y2-y1) / (W*H)              # ACTUAL fraction\nlam_adj = 1 - area                           # honest label weight" },
+ { title:"7. Where lambda comes from: the Beta distribution",
+   why:"lambda is not a constant — every batch draws its own from a symmetric Beta(alpha, alpha). The single hyper-parameter alpha shapes the mix. Small alpha (≈0.2, common for CutMix on ImageNet) piles the density near 0 and 1, so most batches are gentle (mostly one image) with occasional strong blends. alpha=1 is uniform over [0,1]. Large alpha concentrates around 0.5 — very aggressive, near-even mixes every time. You tune alpha the way you'd tune any regularisation strength: too small does little, too large can under-fit and slow training.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">&lambda; ~ Beta(&alpha;, &alpha;)<br><br>&alpha; = 0.2 &rarr; U-shape: mostly near 0 or 1 (gentle)<br>&alpha; = 1.0 &rarr; flat: any &lambda; equally likely<br>&alpha; = 5.0 &rarr; peaked at 0.5 (aggressive, near-even)</div>`,
+   code:"import numpy as np\nlam = np.random.beta(alpha, alpha)   # per batch\n# alpha ~ 0.2 : Mixup ImageNet default (mostly mild)\n# alpha = 1.0 : uniform\n# alpha large : concentrates on 0.5 (strong mixing)\n# alpha is the ONE knob you tune." },
+ { title:"8. Why it regularises: smoother boundaries, calibration, robustness",
+   why:"Training on in-between points with in-between labels forces the model to behave roughly LINEARLY between classes. That straightens and widens the decision boundaries (bigger margins), sharply reduces memorisation of corrupted labels, and improves calibration — the confidence stops overshooting accuracy, exactly the Day-36 payoff, now driven by real second-class pixels. It also buys robustness to adversarial and corrupted inputs. CutMix adds a localisation bonus: because genuine object parts survive intact, the model learns to recognise an object from a fragment, which improves weakly-supervised localisation and detection transfer. Empirically both give a solid top-1 gain on ImageNet essentially for free.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">forced to interpolate linearly between classes<br>&rarr; boundaries straighten + margins widen<br>&rarr; less memorisation of noisy labels<br>&rarr; better calibration (conf &asymp; accuracy)<br>&rarr; robustness &#43; (CutMix) localisation</div>`,
+   code:"# empirical wins (ImageNet, ResNet-50):\n#   baseline        ~76.3% top-1\n#   + Mixup         ~77.9%\n#   + CutMix        ~78.6%   (+ better localisation)\n# also: flatter calibration, less memorisation of random labels,\n#       more robust to corruptions / adversarial noise." },
+ { title:"9. In practice",
+   why:"You never hand-roll this in the training loop — libraries apply it per batch. timm's Mixup class does Mixup OR CutMix (randomly switching between them each batch via switch_prob), folds in label smoothing, and hands you soft targets to feed a SoftTargetCrossEntropy. It's near-zero extra compute and needs no architecture change. Caveats worth knowing: convergence is a touch slower, so train a bit longer; pixel-exact tasks like segmentation and detection need box-aware variants rather than naive mixing; and it STACKS with ordinary augmentation and label smoothing — it doesn't replace them. Start with mixup_alpha≈0.2 / cutmix_alpha≈1.0 and switch_prob=0.5.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">timm.data.Mixup(mixup_alpha, cutmix_alpha,<br>&nbsp;&nbsp;&nbsp;&nbsp;switch_prob=0.5, label_smoothing=0.1)<br>&rarr; per-batch: blends images + makes soft targets<br>loss = SoftTargetCrossEntropy()(logits, y)<br><br>stacks WITH plain aug + label smoothing</div>`,
+   code:"from timm.data import Mixup\nmix = Mixup(mixup_alpha=0.2, cutmix_alpha=1.0,\n            prob=1.0, switch_prob=0.5,\n            label_smoothing=0.1, num_classes=1000)\nfor x, y in loader:\n    x, y = mix(x, y)                 # soft targets\n    loss = SoftTargetCrossEntropy()(model(x), y)\n    loss.backward()" }
+];
+</script>
+
+<script>
+const stepsEl=document.getElementById("steps");
+const prevB=document.getElementById("prev"), nextB=document.getElementById("next-btn"), autoB=document.getElementById("auto");
+let curS=0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },5200); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>

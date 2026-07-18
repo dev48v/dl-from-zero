@@ -43,6 +43,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 34 — Softmax + Cross-Entropy](https://dev48v.infy.uk/dl/day34-softmax-cross-entropy.html) — `day34-softmax-cross-entropy.html`
 - [DeepLearningFromZero · Day 35 — Data Augmentation](https://dev48v.infy.uk/dl/day35-data-augmentation.html) — `day35-data-augmentation.html`
 - [DeepLearningFromZero · Day 36 — Label Smoothing](https://dev48v.infy.uk/dl/day36-label-smoothing.html) — `day36-label-smoothing.html`
+- [DeepLearningFromZero · Day 37 — Mixup & CutMix](https://dev48v.infy.uk/dl/day37-mixup-cutmix.html) — `day37-mixup-cutmix.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk
