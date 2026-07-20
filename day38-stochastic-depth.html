@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 38 — Stochastic Depth</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .cmp td, .cmp th { padding:8px 10px; border-bottom:1px solid #e2e8f0; text-align:left; vertical-align:top; }
+  .cmp th { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#64748b; }
+  .cmp td:first-child{ font-weight:800; white-space:nowrap; }
+  .modebtn.on{ background:#0f172a; color:#fff; }
+  /* ---- the residual-block stack ---- */
+  #stack{ display:flex; flex-direction:column; }
+  .blk{ display:grid; grid-template-columns:40px 1fr; align-items:stretch; }
+  .rail{ position:relative; }
+  .rail::before{ content:""; position:absolute; left:50%; top:0; bottom:0; width:4px; transform:translateX(-50%);
+                 background:linear-gradient(#10b981,#059669); border-radius:2px; }   /* the identity highway */
+  .node{ position:absolute; left:50%; top:50%; width:13px; height:13px; border-radius:50%;
+         transform:translate(-50%,-50%); background:#10b981; border:2px solid #fff; box-shadow:0 0 0 2px #a7f3d0; }
+  .bbox{ margin:4px 4px 4px 0; padding:6px 10px; border-radius:9px; border:1.5px solid #e2e8f0; background:#fff;
+         display:flex; align-items:center; gap:10px; position:relative; transition:all .18s; }
+  .bbox::before{ content:""; position:absolute; left:-14px; top:50%; height:2px; width:14px; background:#cbd5e1; }  /* F-branch connector */
+  .bbox .bn{ font-weight:800; font-size:12px; width:34px; color:#475569; }
+  .bbox .bf{ font-size:12px; flex:1; }
+  .bbox .bs{ font-size:11px; font-weight:800; padding:2px 8px; border-radius:999px; white-space:nowrap; }
+  .b-alive{ border-color:#6ee7b7; background:#ecfdf5; }
+  .b-alive .bs{ background:#10b981; color:#fff; }
+  .b-drop{ border-style:dashed; border-color:#cbd5e1; background:#f8fafc; opacity:.62; }
+  .b-drop::before{ background:#e2e8f0; }
+  .b-drop .bs{ background:#e2e8f0; color:#64748b; }
+  .b-test{ border-color:#a5b4fc; background:#eef2ff; }
+  .b-test .bs{ background:#6366f1; color:#fff; }
+  .b-pend .bs{ background:#f1f5f9; color:#64748b; }
+  .survbar{ height:6px; border-radius:4px; background:#e2e8f0; width:60px; overflow:hidden; display:inline-block; vertical-align:middle; }
+  .survbar > i{ display:block; height:100%; background:#10b981; }
+  .endcap{ font-size:11px; font-weight:800; color:#334155; text-align:center; padding:4px 0; letter-spacing:.03em; }
+  .hist{ display:flex; align-items:flex-end; gap:2px; height:64px; }
+  .hist > i{ flex:1; background:#f43f5e; border-radius:2px 2px 0 0; min-height:2px; transition:height .15s; }
+  .toggle{ display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#334155; cursor:pointer; user-select:none; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 38</div>
+      <h1 class="text-xl font-bold">&#129691; Stochastic Depth &mdash; a 100-layer ResNet is slow to train and its gradients still fade. So <strong>randomly drop whole residual blocks</strong> each training pass: each block gets a <em>survival probability</em> (deeper blocks drop more, on a linear schedule); a dropped block becomes a plain <span class="mono">identity</span> bypass, so the network is <em>shallower</em> that step. At test time you keep <em>every</em> block but scale its output by its survival probability. It&rsquo;s dropout&rsquo;s <em>drop-a-whole-LAYER</em> cousin &mdash; trains very deep nets faster and regularises them as an implicit ensemble of many shorter networks</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">A tower of residual blocks. Flip a coin on each one &mdash; the survivors do the work, the rest are bypassed.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto">The green line down the left is the ResNet <strong>identity highway</strong> &mdash; it always carries the signal (and a clean <span class="mono">+1</span> gradient) straight through. Each block adds a residual branch <span class="mono">F(x)</span> on top. In <strong class="text-emerald-600">training</strong>, every block draws a coin from its own <em>survival probability</em> <span class="sk">p</span>: heads it stays (<span class="text-emerald-600 font-bold">alive</span>, computes <span class="mono">x + F(x)</span>), tails it&rsquo;s <span class="text-slate-500 font-bold">dropped</span> to a bare <span class="mono">identity</span>. With linear decay the <em>deeper</em> blocks are dropped more often. Hit <b>Sample a training pass</b> to roll every coin at once &mdash; watch the network get shorter, and the gradient&rsquo;s trip get quicker. At <strong class="text-indigo-600">test</strong> time nothing is dropped: every block stays, but its branch is scaled by <span class="mono">p</span> so the expected signal matches training.</p>
+
+      <div class="bg-white rounded-xl border border-rose-200 p-4 mb-4 text-left">
+        <div class="flex items-center gap-4 flex-wrap">
+          <div class="flex gap-2">
+            <button id="m_train" data-mode="train" class="modebtn on px-4 py-2 rounded-lg font-semibold text-sm border border-slate-300">🟢 Training</button>
+            <button id="m_test"  data-mode="test"  class="modebtn px-4 py-2 rounded-lg font-semibold text-sm border border-slate-300">🔵 Test</button>
+          </div>
+          <div class="ctrl flex-1" style="min-width:240px;">
+            <label>final-block survival <span class="mono">p<sub>L</sub></span> &mdash; the deepest block&rsquo;s keep-chance <span id="v_p" class="sk stat">0.50</span></label>
+            <input type="range" id="s_p" min="0.1" max="1" step="0.05" value="0.5">
+          </div>
+          <label class="toggle"><input type="checkbox" id="c_decay" checked> linear decay <span class="text-slate-400 font-normal">(deeper &rarr; drop more)</span></label>
+          <div class="flex gap-2">
+            <button id="sampleBtn" class="bg-emerald-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#127922; Sample a training pass</button>
+            <button id="ens25" class="bg-rose-600 text-white px-3 py-2 rounded-lg font-semibold text-xs">sample &times;25 (ensemble)</button>
+          </div>
+        </div>
+        <div id="formula" class="mt-3 text-sm text-slate-600"></div>
+      </div>
+
+      <div class="grid lg:grid-cols-[1.15fr_1fr] gap-4 mb-4 text-left">
+        <!-- the block tower -->
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="flex items-center justify-between mb-2">
+            <div class="text-xs uppercase font-bold text-slate-500 tracking-wider">The residual stack &mdash; input at top, output at bottom</div>
+            <div id="depthPill" class="pill"></div>
+          </div>
+          <div class="endcap">&darr; input x&#8320;</div>
+          <div id="stack"></div>
+          <div class="endcap">&darr; output &mdash; prediction</div>
+          <div class="text-[11px] text-slate-400 mt-2">Green rail = identity/skip highway (always on). Each box = that block&rsquo;s residual branch <span class="mono">F(x)</span>. <b class="text-emerald-600">Alive</b> blocks transform; <b class="text-slate-400">dropped</b> blocks vanish to a straight-through identity.</div>
+        </div>
+
+        <!-- stats + gradient story -->
+        <div class="space-y-4">
+          <div class="bg-white rounded-xl border border-emerald-200 p-4">
+            <div class="text-xs uppercase font-bold text-emerald-700 tracking-wider mb-2">Depth &mdash; expected vs. this pass</div>
+            <div id="depthBox" class="text-sm"></div>
+          </div>
+          <div class="bg-white rounded-xl border border-slate-200 p-4">
+            <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Why shorter paths help gradients</div>
+            <div id="gradBox" class="text-sm text-slate-700"></div>
+          </div>
+          <div class="bg-white rounded-xl border border-rose-200 p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">Implicit ensemble &mdash; effective depth over 25 sampled passes</div>
+            <p class="text-xs text-slate-400 mb-2">Every training step trains a <em>different</em> shorter sub-network. Across steps the model averages over an exponential family of them &mdash; that averaging is the regulariser. Hit <b>sample &times;25</b>.</p>
+            <div id="hist" class="hist"></div>
+            <div id="histCap" class="text-[11px] text-slate-400 mt-1">&mdash;</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="note" class="rounded-xl border border-rose-200 bg-rose-50 text-rose-900 p-4 text-sm text-left mb-4"></div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-left overflow-x-auto">
+        <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Dropout vs. Stochastic Depth vs. a plain deep net</div>
+        <table class="cmp w-full text-sm"><thead><tr>
+          <th>Method</th><th>What it drops</th><th>Granularity</th><th>Test-time rule</th><th>Main payoff</th>
+        </tr></thead><tbody>
+          <tr><td>Plain deep ResNet<br><span class="text-xs font-normal text-slate-400">(no drop)</span></td><td>nothing</td><td>&mdash;</td><td>run all layers as-is</td><td>full depth, but slow &amp; can overfit</td></tr>
+          <tr><td class="sk">Dropout<br><span class="text-xs font-normal text-slate-400">(Day 20)</span></td><td>individual <b>neurons / activations</b></td><td>drop-<b>NEURON</b></td><td>keep all, scale by keep-prob</td><td>regularises a layer&rsquo;s co-adaptation</td></tr>
+          <tr class="bg-rose-50"><td class="sk">Stochastic Depth</td><td>entire <b>residual blocks</b></td><td>drop-<b>LAYER</b></td><td>keep all blocks, scale <span class="mono">F</span> by survival <span class="mono">p</span></td><td>faster training of very deep nets + ensemble regularisation</td></tr>
+        </tbody></table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Dropping layers, not neurons</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">The live demo is a from-scratch stochastic-depth stack &mdash; no library, just a survival schedule, a coin flip per block, and an identity bypass. We build it one line at a time: a residual block with an identity skip, the linearly-decaying survival probabilities, the training forward pass that drops blocks with a Bernoulli coin, the full stack, the expected-depth calculation, the test-time forward that scales instead of drops &mdash; then we map it to the couple of lines you actually write with PyTorch / <code>timm</code>.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">A residual block &mdash; the identity skip is what makes dropping safe</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Every block is <code>y = x + F(x)</code>: an identity shortcut plus a learned branch <code>F</code> (conv&rarr;norm&rarr;relu&rarr;conv). Because the shortcut is already there, deleting <code>F</code> leaves a perfectly valid, still-connected network &mdash; the block just becomes a pass-through. That is the whole reason you can drop a <em>layer</em> at all.</p>
+        <div class="relative"><pre>// one residual block: identity highway + a residual branch F
+function block(x, F) {
+  return add(x, F(x));      // y = x + F(x)
+}
+// drop F entirely and you still have a valid net:  y = x  (identity)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Survival probabilities &mdash; deeper blocks drop more (linear decay)</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Each block <code>l</code> of <code>L</code> gets a keep-chance <code>p_l</code>. The paper&rsquo;s rule is a straight line: the first block survives almost always, and it decays linearly to <code>p_L</code> (e.g. 0.5) at the deepest block. Early features are precious, so protect them; late blocks are redundant, so drop them freely.</p>
+        <div class="relative"><pre>// linear decay:  p_1 ~ 1  ->  p_L at the last block
+function survival(l, L, pL) {
+  return 1 - (l / L) * (1 - pL);   // l = 1..L
+}
+// pL = 0.5, L = 54  ->  p_1 = 0.99 ... p_54 = 0.50
+// uniform variant: every block just uses the same pL</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Training forward &mdash; a Bernoulli coin per block</h3></div>
+        <p class="text-sm text-slate-600 mb-3">On each training step, draw an independent coin for every block. Heads (prob <code>p_l</code>): run the block normally, <code>x + F(x)</code>. Tails: skip the branch completely and pass <code>x</code> straight through. The dropped branch does no compute and gets no gradient this step.</p>
+        <div class="relative"><pre>function trainBlock(x, F, p) {
+  if (Math.random() &lt; p) return add(x, F(x));  // survives: x + F(x)
+  else                    return x;             // dropped: identity
+}
+// note: NOT scaled during training in the original paper —
+// the survival happens or it doesn't (a hard 0/1 gate).</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">The whole stack, one training pass</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Chain the blocks: feed <code>x</code> through each, dropping some. Whatever survives forms a <em>shorter</em> sub-network for this step &mdash; a different one every time. The identity highway guarantees the signal (and gradient) still reaches every end even when many blocks are gone.</p>
+        <div class="relative"><pre>function forwardTrain(x, blocks, L, pL) {
+  blocks.forEach((F, i) =&gt; {
+    const p = survival(i + 1, L, pL);
+    x = trainBlock(x, F, p);       // some blocks become identity
+  });
+  return x;                        // effective depth varies each step
+}</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Expected depth &mdash; how deep the net really is on average</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The expected number of active blocks is just the sum of the survival probabilities. With linear decay to 0.5 over 54 blocks it&rsquo;s about 40 &mdash; so you train a ~54-block net at the cost of a ~40-block one, and the gradients only have to survive ~40 transforms on average.</p>
+        <div class="relative"><pre>function expectedDepth(L, pL) {
+  let e = 0;
+  for (let l = 1; l &lt;= L; l++) e += survival(l, L, pL);
+  return e;                         // E[active blocks] = Σ p_l
+}
+// L=54, pL=0.5  ->  ~40 active blocks on average (~25% shorter)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Test time &mdash; keep every block, scale by survival</h3></div>
+        <p class="text-sm text-slate-600 mb-3">At inference you want the full, deterministic network &mdash; no coins. So keep <em>all</em> blocks but weight each branch by its survival probability: <code>y = x + p_l&middot;F(x)</code>. That makes the expected contribution match what training saw. It&rsquo;s exactly dropout&rsquo;s train-drop / test-scale trick, moved up from neurons to whole layers.</p>
+        <div class="relative"><pre>function testBlock(x, F, p) {
+  return add(x, scale(F(x), p));    // y = x + p * F(x)  (no dropping)
+}
+// every block runs; its branch is damped by p so E[output] matches
+// training. Modern frameworks often calibrate this automatically.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">Why it works &mdash; an ensemble of shorter nets + a gradient shortcut</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Two effects. (1) Every step&rsquo;s surviving subset is a different network, so training implicitly averages over an exponential family of shallower nets &mdash; strong regularisation, like an ensemble. (2) A shorter active path means backprop passes through fewer nonlinearities, so gradients stay healthy and training is faster &mdash; the original paper trained a <b>1202-layer</b> ResNet that a plain net couldn&rsquo;t.</p>
+        <div class="relative"><pre>// implicit ensemble: 2^L possible sub-networks, one sampled per step
+// gradient path this step = number of ALIVE blocks (not L)
+//   fewer nonlinearities to backprop through -> less vanishing
+// net effect: deeper nets train FASTER and generalise BETTER
+//   (CIFAR-10: a 1202-layer ResNet trainable only with this)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">8</div><h3 class="font-bold text-lg">The real thing &mdash; a few lines in PyTorch / timm</h3></div>
+        <p class="text-sm text-slate-600 mb-3">You never hand-roll the coin. Torchvision ships <code>StochasticDepth</code> and timm calls it <code>DropPath</code> &mdash; you drop it inside each residual block and hand it the per-block drop rate (1&minus;p, decayed with depth). It&rsquo;s a no-op at <code>eval()</code> (the module rescales for you), needs no architecture change, and is standard in ResNets, EfficientNet, and every modern ViT / ConvNeXt.</p>
+        <div class="relative"><pre>from torchvision.ops import StochasticDepth   # timm: from timm.models.layers import DropPath
+
+class ResBlock(nn.Module):
+    def __init__(self, ch, drop_prob):
+        super().__init__()
+        self.F = nn.Sequential(conv(ch), norm(ch), relu(), conv(ch))
+        self.drop = StochasticDepth(drop_prob, mode="row")  # drop_prob = 1 - p_l
+
+    def forward(self, x):
+        return x + self.drop(self.F(x))       # train: drops whole branch; eval: scales
+
+# per-block drop rate, linearly increasing with depth:
+drop_rates = [i / (L - 1) * 0.5 for i in range(L)]   # 0.0 ... 0.5
+# family of "drop things to generalise" tricks: dropout, dropconnect, drop-path.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 38 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2"><strong>Stochastic Depth</strong> takes dropout&rsquo;s &ldquo;drop things to generalise&rdquo; idea from single neurons up to <strong>whole residual blocks</strong>. Each block gets a <strong>survival probability</strong> that decays linearly with depth (early blocks kept, deep blocks dropped often); on every training step a <strong>Bernoulli coin</strong> either runs the block (<span class="mono">x + F(x)</span>) or collapses it to a bare <strong>identity</strong> bypass &mdash; safe precisely because a ResNet block already carries an identity skip. The network is therefore <em>shorter</em> that step, so backprop crosses fewer nonlinearities (healthier gradients, <strong>faster training</strong>) and, across steps, the model averages over an exponential <strong>implicit ensemble</strong> of shallower sub-networks (regularisation). At <strong>test</strong> time you drop nothing and instead scale each branch by its survival <span class="mono">p</span>, so expected activations match training &mdash; the same train-drop / test-scale bargain as dropout. The payoff: you can train absurdly deep nets (the paper&rsquo;s <strong>1202-layer</strong> ResNet), get a solid accuracy bump for free, and it&rsquo;s one line (<code>StochasticDepth</code> / <code>DropPath</code>) in every modern ResNet, EfficientNet and ViT. <strong>&#128073; Tomorrow, Day 39:</strong> DenseNet &mdash; instead of dropping connections, <em>add</em> them: every layer feeds directly into every later layer, maximal feature reuse.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+</script>
+
+<script>
+// ============================================================
+// REAL from-scratch Stochastic Depth, computed live in JS.
+//   L residual blocks on an identity highway
+//   survival p_l = linear decay 1 - (l/L)(1-pL)  (or uniform pL)
+//   TRAIN: Bernoulli(p_l) per block -> alive (x+F) or dropped (x)
+//   TEST : keep all, branch scaled by p_l  (x + p*F)
+//   expected depth = Σ p_l ; ensemble = 25 sampled effective-depths
+// ============================================================
+const L = 16;
+let baseP = 0.5;     // p_L, survival of the deepest block
+let decay = true;    // linear decay on/off
+let MODE  = "train"; // train | test
+let alive = null;    // boolean[L] after a sample; null = not yet rolled
+
+const survival = l => decay ? 1 - (l / L) * (1 - baseP) : baseP;   // l = 1..L
+const expectedDepth = () => { let e = 0; for (let l = 1; l <= L; l++) e += survival(l); return e; };
+const pct = v => (v * 100).toFixed(0) + "%";
+
+function sampleTrain() {
+  alive = [];
+  for (let l = 1; l <= L; l++) alive.push(Math.random() < survival(l));
+  MODE = "train"; syncModeBtns(); render();
+}
+
+// ---------- render the block tower ----------
+function render() {
+  document.getElementById("v_p").textContent = baseP.toFixed(2);
+
+  const stack = document.getElementById("stack");
+  stack.innerHTML = "";
+  let aliveCount = 0;
+
+  for (let l = 1; l <= L; l++) {
+    const p = survival(l);
+    let cls, state, ftxt;
+    if (MODE === "test") {
+      cls = "b-test"; state = "&times; " + p.toFixed(2); ftxt = `<span class="mono">x + ${p.toFixed(2)}&middot;F(x)</span>`;
+    } else if (alive === null) {
+      cls = "b-pend";
+      state = `<span class="survbar"><i style="width:${(p*100).toFixed(0)}%"></i></span> ${p.toFixed(2)}`;
+      ftxt = `<span class="mono">x + F(x)</span> <span class="text-slate-400">keep-chance ${p.toFixed(2)}</span>`;
+    } else if (alive[l-1]) {
+      cls = "b-alive"; state = "ALIVE"; ftxt = `<span class="mono">x + F(x)</span>`; aliveCount++;
+    } else {
+      cls = "b-drop"; state = "DROPPED"; ftxt = `<span class="mono">x</span> <span class="text-slate-400">(identity bypass)</span>`;
+    }
+    stack.insertAdjacentHTML("beforeend",
+      `<div class="blk fade-in">
+         <div class="rail"><div class="node"></div></div>
+         <div class="bbox ${cls}">
+           <div class="bn">L${l}</div>
+           <div class="bf">${ftxt}</div>
+           <div class="bs">${state}</div>
+         </div>
+       </div>`);
+  }
+
+  const E = expectedDepth();
+
+  // depth pill
+  const pill = document.getElementById("depthPill");
+  if (MODE === "test") { pill.style.background = "#e0e7ff"; pill.style.color = "#4338ca"; pill.innerHTML = `all ${L} blocks kept`; }
+  else if (alive === null) { pill.style.background = "#f1f5f9"; pill.style.color = "#475569"; pill.innerHTML = `roll the coins &rarr;`; }
+  else { pill.style.background = "#d1fae5"; pill.style.color = "#047857"; pill.innerHTML = `${aliveCount}/${L} blocks alive`; }
+
+  // formula readout
+  const F = document.getElementById("formula");
+  if (MODE === "test") {
+    F.innerHTML = `<b class="text-indigo-600">Test.</b> nothing is dropped &mdash; every block runs as <span class="mono">y = x + p<sub>l</sub>&middot;F(x)</span>, scaling each branch by its survival <span class="mono">p</span> so the expected signal matches training.`;
+  } else {
+    F.innerHTML = `<b class="text-emerald-600">Training.</b> each block survives with prob <span class="mono">p<sub>l</sub> = ${decay ? "1 &minus; (l/L)(1 &minus; " + baseP.toFixed(2) + ")" : baseP.toFixed(2) + " (uniform)"}</span>` +
+      (alive === null ? ` &mdash; hit <b>&#127922; Sample a training pass</b> to roll every coin.` :
+       ` &mdash; this pass kept <b class="sk">${aliveCount} of ${L}</b> blocks.`);
+  }
+
+  // depth box
+  document.getElementById("depthBox").innerHTML =
+    `<div class="flex items-baseline gap-2 mb-1"><span class="text-3xl font-black stat text-emerald-600">${E.toFixed(1)}</span><span class="text-sm text-slate-500">expected active blocks &nbsp;<span class="mono">E = &Sigma; p<sub>l</sub></span> of ${L}</span></div>` +
+    `<div class="survbar" style="width:100%;height:10px;"><i style="width:${(E/L*100).toFixed(0)}%"></i></div>` +
+    (MODE === "train" && alive !== null
+      ? `<div class="text-sm mt-2">This sampled pass: <b class="sk">${aliveCount}</b> active blocks &mdash; a ${(100 - aliveCount/L*100).toFixed(0)}% shorter network than the full ${L}.</div>`
+      : `<div class="text-sm mt-2 text-slate-500">Lower <span class="mono">p<sub>L</sub></span> &rarr; deeper blocks vanish more often &rarr; a shorter average net (${(E/L*100).toFixed(0)}% of full depth).</div>`);
+
+  // gradient story
+  const g = document.getElementById("gradBox");
+  const pathLen = (MODE === "train" && alive !== null) ? aliveCount : Math.round(E);
+  g.innerHTML =
+    `The green identity highway always carries a clean <span class="mono">+1</span> gradient straight to the input &mdash; that is ResNet&rsquo;s gift. Stochastic depth adds to it: this ${MODE === "train" && alive !== null ? "sampled" : "average"} network sends the signal through only <b class="sk">~${pathLen}</b> residual transforms instead of ${L}, ` +
+    `so backprop crosses <b>fewer nonlinearities</b> &mdash; less chance to vanish, and a faster step. Train a step, roll again, and each step optimises a different short path.`;
+
+  // narrative note
+  const note = document.getElementById("note");
+  if (MODE === "test") {
+    note.innerHTML = `<strong>Test time is deterministic.</strong> You would never gamble on predictions, so the coins are gone: every one of the ${L} blocks runs, but each residual branch is multiplied by its own survival probability <span class="mono">p<sub>l</sub></span>. That rescaling makes each block&rsquo;s <em>expected</em> output identical to what it produced during training (where it was present a fraction <span class="mono">p<sub>l</sub></span> of the time) &mdash; the exact same train-drop / test-scale bargain dropout strikes, just at the granularity of whole layers instead of single neurons. Flip back to <b>Training</b> and sample to see the coins again.`;
+  } else if (alive === null) {
+    note.innerHTML = `<strong>Roll the coins.</strong> Right now you can see each block&rsquo;s survival probability (the little green bars) &mdash; with linear decay the top blocks are near-certain to survive and the deepest sit at <span class="mono">p<sub>L</sub> = ${baseP.toFixed(2)}</span>. Hit <b>&#127922; Sample a training pass</b> and every block flips its own coin at once: survivors compute <span class="mono">x + F(x)</span>, the unlucky ones collapse to a straight-through identity. That shorter surviving network is what this training step actually trains.`;
+  } else {
+    const kept = alive.filter(Boolean).length, dropped = L - kept;
+    note.innerHTML = `<strong>One training pass.</strong> ${dropped === 0 ? "This roll happened to keep every block" : `This roll dropped <b>${dropped}</b> of ${L} blocks`} &mdash; the dropped ones are now bare identity bypasses that cost no compute and receive no gradient this step. The signal still reaches the output because the identity highway is untouched. Sample again and you get a <em>different</em> sub-network: over thousands of steps the model is trained as an <b>implicit ensemble</b> of these shorter nets, which is where the regularisation comes from. Deeper blocks (higher <span class="mono">l</span>) drop more often &mdash; look how the bottom of the tower thins out.`;
+  }
+}
+
+// ---------- ensemble histogram over 25 sampled passes ----------
+function ensemble25() {
+  MODE = "train"; syncModeBtns();
+  const counts = [];
+  let last = null;
+  for (let s = 0; s < 25; s++) {
+    let c = 0, a = [];
+    for (let l = 1; l <= L; l++) { const ok = Math.random() < survival(l); a.push(ok); if (ok) c++; }
+    counts.push(c); last = a;
+  }
+  alive = last;   // show the final sampled pass in the tower
+  render();
+
+  // build histogram bars over depth range 0..L
+  const bins = new Array(L + 1).fill(0);
+  counts.forEach(c => bins[c]++);
+  const maxBin = Math.max(...bins, 1);
+  const hist = document.getElementById("hist");
+  hist.innerHTML = "";
+  for (let d = 0; d <= L; d++) {
+    const h = (bins[d] / maxBin) * 100;
+    hist.insertAdjacentHTML("beforeend",
+      `<i title="${bins[d]} pass(es) with ${d} active blocks" style="height:${h}%;${bins[d] === 0 ? "opacity:.18;" : ""}"></i>`);
+  }
+  const mean = counts.reduce((a, b) => a + b, 0) / counts.length;
+  const lo = Math.min(...counts), hi = Math.max(...counts);
+  document.getElementById("histCap").innerHTML =
+    `25 passes &mdash; effective depth ranged <b>${lo}&ndash;${hi}</b> active blocks (mean <b class="sk">${mean.toFixed(1)}</b>, expected <b>${expectedDepth().toFixed(1)}</b>). Each bar = a different sub-network the model trained on.`;
+}
+
+// ---------- wire controls ----------
+document.getElementById("s_p").addEventListener("input", e => {
+  baseP = +e.target.value; alive = null; render();
+});
+document.getElementById("c_decay").addEventListener("change", e => {
+  decay = e.target.checked; alive = null; render();
+});
+document.getElementById("sampleBtn").onclick = sampleTrain;
+document.getElementById("ens25").onclick = ensemble25;
+
+function syncModeBtns() {
+  document.querySelectorAll(".modebtn").forEach(x => x.classList.toggle("on", x.dataset.mode === MODE));
+}
+document.querySelectorAll(".modebtn").forEach(b => b.onclick = () => {
+  MODE = b.dataset.mode;
+  if (MODE === "train") alive = null;   // reset coins when returning to training
+  syncModeBtns(); render();
+});
+
+// initial paint
+render();
+</script>
+
+<script>
+const STEPS = [
+ { title:"1. The problem: very deep nets are slow, and gradients still fade",
+   why:"ResNet's identity skips let us train networks hundreds of layers deep without them diverging — but two problems remain. First, a 1000-layer network is enormously expensive: every training step must forward AND backward through all of them. Second, even with skip connections, the gradient signal that reaches the earliest layers, after passing through hundreds of nonlinear residual branches, is weak and noisy — training barely moves those early layers, and there's a diminishing return to depth. Stochastic depth attacks both at once: if most steps only use a SHORTER network, each step is cheaper AND the gradient has fewer transforms to cross.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">a 1000-layer ResNet<br>&rarr; every step forwards+backprops ALL 1000 layers (slow)<br>&rarr; gradient crosses 1000 branches to reach layer 1 (faint)<br><br>can we train it as if it were SHALLOWER most of the time?</div>`,
+   code:"# deep ResNet: correct but costly\n#   forward  through all L blocks\n#   backward through all L blocks   <- expensive every step\n#   gradient to block 1 survives L nonlinearities  <- weak\n# idea: make most steps use FEWER than L blocks." },
+ { title:"2. The idea: randomly drop WHOLE residual blocks each step",
+   why:"Stochastic depth (Huang et al., 2016) makes network depth itself random during training. On each mini-batch, each residual block is either kept or entirely bypassed, decided by an independent coin flip. A kept block does its usual x + F(x); a dropped block becomes a plain identity, y = x, contributing nothing and costing no compute. So the network you actually train on this step is a random, usually shorter, sub-network — and a different one next step. It's a training-only trick: at test time you use the full network.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">each step, per block: flip a coin<br>HEADS &rarr; keep it:  y = x + F(x)<br>TAILS &rarr; drop it:  y = x   (identity)<br><br>depth becomes RANDOM &mdash; usually shorter than L</div>`,
+   code:"# per training step, for each block l:\n#   keep with prob p_l  ->  y = x + F(x)\n#   else                ->  y = x         (bypassed)\n# the ACTIVE network is a random shorter sub-network." },
+ { title:"3. The identity skip is what makes dropping a layer legal",
+   why:"You can't just delete an arbitrary layer from a plain network — the shapes and the learned path would break. The reason stochastic depth works is that it drops RESIDUAL blocks, which already contain an identity shortcut: y = x + F(x). Set F to nothing and you're left with y = x, a perfectly valid, still-connected transformation that preserves the tensor shape. So a dropped block is not a hole in the network — it's a well-defined pass-through. This is why stochastic depth is specifically a ResNet-family technique.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">residual block:  y = x + F(x)<br>&nbsp;&nbsp;&nbsp;&nbsp;identity skip ---^&nbsp;&nbsp;&nbsp;^--- learned branch<br><br>drop F(x)  &rarr;  y = x  &nbsp;(still valid, same shape)<br>only possible BECAUSE the skip is already there</div>`,
+   code:"# plain block:  y = F(x)        -> dropping F breaks the net\n# residual   :  y = x + F(x)    -> dropping F leaves y = x  (OK)\n# stochastic depth ONLY works on residual/skip architectures." },
+ { title:"4. Drop-LAYER vs drop-NEURON: how it differs from dropout",
+   why:"Dropout (Day 20) and stochastic depth are cousins from the same 'randomly remove things to prevent co-adaptation' family, but they operate at different granularities. Dropout zeroes individual NEURONS/activations within a layer — the layer still runs, just with a randomly thinned set of units, which stops neurons from co-adapting. Stochastic depth removes an entire residual BLOCK — a whole layer's worth of computation disappears for that step. Dropping neurons regularises WITHIN a layer; dropping layers regularises the DEPTH of the network and, crucially, also shortens the compute and the gradient path, which dropout does not.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">DROPOUT (drop-neuron)      STOCHASTIC DEPTH (drop-layer)<br>&#9632;&#9633;&#9632;&#9633;&#9632;  one layer,          &#9632;&#9632;&#9632;&#9632;&#9632;  whole block<br>&#9633;&#9632;&#9633;&#9632;&#9633;  some units off       ~~~~~~  gone (identity)<br><br>regularise WITHIN a layer   |  shorten the NETWORK</div>`,
+   code:"# dropout:          mask individual activations in a layer\n#   h = h * bernoulli_mask(keep_prob)   # layer still runs\n# stochastic depth: mask the ENTIRE residual branch\n#   y = x + bernoulli(p) * F(x)         # whole block on/off\n# same family (drop to generalise), different granularity." },
+ { title:"5. Survival probability & the linear-decay rule",
+   why:"Not every block should be dropped equally. Early blocks learn low-level, widely-reused features (edges, textures) that everything downstream depends on — dropping them often is destructive. Later blocks learn more specialised, redundant features that the network can better afford to lose. So the survival probability p_l is set to DECAY LINEARLY with depth: the first block survives with probability ≈1, decreasing straight down to p_L (typically 0.5) at the last block. One hyper-parameter, p_L, controls the whole schedule; a uniform variant (all blocks share p_L) also works but the linear rule is the paper's default and performs best.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">p_l = 1 &minus; (l / L)(1 &minus; p_L)<br><br>block 1  &rarr; p &asymp; 1.00  (almost never dropped)<br>block L/2&rarr; p &asymp; 0.75<br>block L  &rarr; p = p_L = 0.50  (dropped half the time)<br><br>protect early features, drop deep ones freely</div>`,
+   code:"def survival(l, L, pL=0.5):        # l = 1..L\n    return 1 - (l / L) * (1 - pL)  # linear decay\n# p_1 ~ 1.0  (keep) ... p_L = 0.5  (deepest, drop most)\n# one knob: pL. smaller pL = more aggressive dropping." },
+ { title:"6. Expected depth: how deep the network is on average",
+   why:"Because each block survives independently with probability p_l, the expected number of ACTIVE blocks on any step is simply the sum of the survival probabilities, E[depth] = Σ p_l. With linear decay to p_L=0.5 over L blocks, this works out to roughly 0.75·L — so a 54-block ResNet trains as a ~40-block network on average, and the famous 1202-layer version behaves like a ~900-layer one per step. That's a large, free reduction in per-step cost, and it's why stochastic depth actually TRAINS FASTER in wall-clock time, not just regularises.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">E[active blocks] = &Sigma;&#8321;&#7524; p_l<br><br>linear decay to p_L = 0.5  &rarr;  E &asymp; 0.75 &middot; L<br>L = 54  &rarr;  ~40 blocks per step (~25% shorter)<br><br>&rarr; cheaper steps + shorter gradient path</div>`,
+   code:"def expected_depth(L, pL=0.5):\n    return sum(survival(l, L, pL) for l in range(1, L+1))\n# linear decay pL=0.5  ->  ~0.75 * L active blocks on average\n# => faster wall-clock training, not only regularisation." },
+ { title:"7. Test time: keep every block, scale by survival probability",
+   why:"Randomness is great for training but unacceptable at inference — you want one deterministic, best answer. So at test time nothing is dropped: every block runs. But a block that was only present a fraction p_l of the time during training would now contribute too much if used at full strength. The fix is exactly dropout's: scale each residual branch by its survival probability, y = x + p_l·F(x), so its EXPECTED contribution matches training. This calibration is why train and test agree; modern library implementations apply the rescaling automatically when you switch to eval mode.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">TRAIN:  y = x + F(x)  present a fraction p_l of steps<br>TEST :  y = x + p_l &middot; F(x)  present always, damped<br><br>scaling makes E[contribution] identical<br>&mdash; same train-drop / test-scale trick as dropout &mdash;</div>`,
+   code:"# training (stochastic):  y = x + bernoulli(p) * F(x)\n# testing  (deterministic): y = x + p * F(x)   # keep all, scale\n# expected branch output matches -> no train/test mismatch\n# frameworks rescale for you at model.eval()." },
+ { title:"8. Why it works: implicit ensemble + a gradient shortcut",
+   why:"Two mechanisms give the payoff. (1) Regularisation as an implicit ENSEMBLE: with L blocks there are 2^L possible keep/drop sub-networks, and each training step optimises a different one; the final network behaves like an average over this huge family of shallower nets, much as dropout averages over thinned networks — this reduces overfitting. (2) A gradient SHORTCUT: because the active path is shorter on most steps, backprop passes through fewer nonlinear branches, so gradients to early layers stay strong and training converges faster. Together these let you train networks far deeper than a plain residual net can — the paper trained a 1202-layer ResNet on CIFAR-10 that IMPROVED with stochastic depth where the plain 1202-layer net overfit.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">2&#7524; possible sub-networks, one sampled per step<br>&rarr; trained as an ENSEMBLE of shallower nets (regularises)<br>&rarr; shorter active path = healthier gradients (faster)<br><br>result: a 1202-layer ResNet that trains AND generalises</div>`,
+   code:"# (1) ensemble:  2^L sub-networks, averaged implicitly\n#      -> less overfitting, better test accuracy\n# (2) shortcut:  gradient crosses ~E[depth] < L branches\n#      -> faster convergence, deeper nets trainable\n# CIFAR-10: 1202-layer ResNet improved by stochastic depth." },
+ { title:"9. In practice: one line, standard in modern nets",
+   why:"You never write the coin flip yourself. Torchvision provides StochasticDepth and timm provides the identically-purposed DropPath; you insert it inside each residual block wrapping the branch, and pass a per-block DROP rate (1 − p_l) that increases linearly with depth. It's a no-op at eval() (the module handles the rescaling), needs zero architecture change, and stacks with your other regularisers. It's now standard equipment — ResNets, EfficientNet, ConvNeXt, and essentially every Vision Transformer use drop-path with rates around 0.1–0.5. Start with a max drop rate of ~0.1 for moderate depth and raise it for very deep or very large models.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">torchvision: StochasticDepth(p, "row")<br>timm:        DropPath(drop_prob)<br><br>y = x + drop_path(F(x))<br>drop rate rises linearly with depth (0 &rarr; ~0.5)<br>used in ResNet / EfficientNet / ConvNeXt / ViT</div>`,
+   code:"from timm.models.layers import DropPath\n\nclass Block(nn.Module):\n    def __init__(self, ch, drop_prob):\n        self.F = residual_branch(ch)\n        self.drop = DropPath(drop_prob)   # 1 - p_l\n    def forward(self, x):\n        return x + self.drop(self.F(x))\n# drop_rates = linspace(0, 0.5, L)  # deeper = higher" }
+];
+</script>
+
+<script>
+const stepsEl=document.getElementById("steps");
+const prevB=document.getElementById("prev"), nextB=document.getElementById("next-btn"), autoB=document.getElementById("auto");
+let curS=0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },5200); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>
