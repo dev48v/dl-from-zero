@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 39 — DenseNet</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .cmp td, .cmp th { padding:8px 10px; border-bottom:1px solid #e2e8f0; text-align:left; vertical-align:top; }
+  .cmp th { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#64748b; }
+  .cmp td:first-child{ font-weight:800; white-space:nowrap; }
+  /* ---- dense connectivity diagram ---- */
+  #dense{ width:100%; height:auto; display:block; }
+  .dnode{ fill:#fff; stroke:#8b5cf6; stroke-width:2; }
+  .dnode0{ fill:#ede9fe; stroke:#7c3aed; }
+  .darc{ fill:none; stroke:#8b5cf6; stroke-width:1.4; opacity:.34; }
+  .dlbl{ font:700 11px "SFMono-Regular",Consolas,monospace; fill:#4c1d95; }
+  .dch{ font:600 10px "SFMono-Regular",Consolas,monospace; fill:#64748b; }
+  /* ---- channel-growth bars ---- */
+  .cbrow{ display:grid; grid-template-columns:44px 1fr 62px; align-items:center; gap:8px; margin-bottom:5px; }
+  .cbname{ font:700 11px "SFMono-Regular",Consolas,monospace; color:#475569; }
+  .cbtrack{ height:16px; border-radius:5px; background:#f1f5f9; overflow:hidden; display:flex; }
+  .cbin{ height:100%; background:linear-gradient(90deg,#a78bfa,#8b5cf6); }
+  .cbnew{ height:100%; background:#f43f5e; }
+  .cbval{ font:600 11px "SFMono-Regular",Consolas,monospace; color:#334155; text-align:right; }
+  /* ---- transition / compression ---- */
+  .tbar{ height:22px; border-radius:6px; display:flex; align-items:center; justify-content:center; color:#fff; font:700 12px "SFMono-Regular",Consolas,monospace; }
+  /* ---- side-by-side mini towers ---- */
+  .tower{ display:flex; flex-direction:column; gap:4px; align-items:center; }
+  .tbox{ border-radius:7px; padding:4px 8px; font:700 11px "SFMono-Regular",Consolas,monospace; text-align:center; white-space:nowrap; transition:width .15s; }
+  .res-box{ background:#ecfdf5; border:1.5px solid #6ee7b7; color:#047857; }
+  .dns-box{ background:#f5f3ff; border:1.5px solid #c4b5fd; color:#6d28d9; }
+  .op{ font:800 13px "SFMono-Regular",Consolas,monospace; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 39</div>
+      <h1 class="text-xl font-bold">&#128376;&#65039; DenseNet &mdash; ResNet <em>adds</em> a skip connection (<span class="mono">y = x + F(x)</span>), which can dilute what earlier layers computed. DenseNet goes to the other extreme: inside a <strong>dense block</strong>, every layer is wired to <em>every</em> layer before it &mdash; layer &#8467; receives the <strong>concatenation</strong> of the feature-maps of <em>all</em> preceding layers and passes its own maps on to <em>all</em> that follow. Each layer adds only <strong>k</strong> new feature-maps (the <em>growth rate</em>, small &mdash; 12/24/32), so channels grow <em>linearly</em> <span class="mono">k&#8320; + k&middot;&#8467;</span> and the block holds <span class="mono">L(L+1)/2</span> direct connections. <strong>Transition layers</strong> with a compression factor <span class="mono">&theta;</span> shrink channels between blocks. The payoff of all that feature <em>reuse</em>: state-of-the-art accuracy with a <strong>fraction</strong> of ResNet&rsquo;s parameters</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Wire every layer to every later layer. Drag the knobs &mdash; watch the channels stack up and the connections multiply.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto">Inside a dense block the input <span class="mono">x&#8320;</span> (with <span class="text-violet-600 font-bold">k&#8320;</span> channels) flows down through <span class="sk">L</span> layers. Layer &#8467; doesn&rsquo;t just see the previous layer &mdash; it sees the <strong>concatenation</strong> of <em>every</em> feature-map produced so far, so its input has <span class="mono">k&#8320; + k&middot;(&#8467;&minus;1)</span> channels. It then produces just <span class="sk">k</span> new maps (the <strong>growth rate</strong>) and hands them to <em>all</em> the layers below. Because every earlier map is still reachable, nothing has to be re-learned &mdash; that is <strong>feature reuse</strong>, and it&rsquo;s why DenseNet is so parameter-thrifty. Drag <span class="mono">k</span>, <span class="mono">L</span>, <span class="mono">k&#8320;</span> and the compression <span class="mono">&theta;</span> and watch the channel math, the <span class="mono">L(L+1)/2</span> connection count, and the ResNet contrast update live.</p>
+
+      <div class="bg-white rounded-xl border border-rose-200 p-4 mb-4 text-left">
+        <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="ctrl"><label>initial channels <span class="mono">k&#8320;</span><span id="v_k0" class="sk stat">24</span></label><input type="range" id="s_k0" min="8" max="64" step="4" value="24"></div>
+          <div class="ctrl"><label>growth rate <span class="mono">k</span><span id="v_k" class="sk stat">12</span></label><input type="range" id="s_k" min="4" max="40" step="4" value="12"></div>
+          <div class="ctrl"><label>layers in block <span class="mono">L</span><span id="v_L" class="sk stat">6</span></label><input type="range" id="s_L" min="2" max="16" step="1" value="6"></div>
+          <div class="ctrl"><label>compression <span class="mono">&theta;</span><span id="v_th" class="sk stat">0.50</span></label><input type="range" id="s_th" min="0.1" max="1" step="0.05" value="0.5"></div>
+        </div>
+        <div id="formula" class="mt-3 text-sm text-slate-600"></div>
+      </div>
+
+      <div class="grid lg:grid-cols-[1.05fr_1fr] gap-4 mb-4 text-left">
+        <!-- dense connectivity diagram -->
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="flex items-center justify-between mb-2">
+            <div class="text-xs uppercase font-bold text-slate-500 tracking-wider">The dense block &mdash; every arc is a direct connection</div>
+            <div id="connPill" class="pill"></div>
+          </div>
+          <svg id="dense" viewBox="0 0 360 400" preserveAspectRatio="xMidYMin meet"></svg>
+          <div class="text-[11px] text-slate-400 mt-1"><span class="text-violet-600 font-bold">&#9679; x&#8320;</span> = block input (k&#8320; maps). Each numbered node = one layer. A <span style="color:#8b5cf6;font-weight:700;">violet arc</span> feeds an earlier layer&rsquo;s output into a later layer &mdash; layer &#8467; has &#8467; arcs coming in, for <span class="mono">L(L+1)/2</span> total.</div>
+        </div>
+
+        <!-- stats -->
+        <div class="space-y-4">
+          <div class="bg-white rounded-xl border border-violet-200 p-4">
+            <div class="text-xs uppercase font-bold text-violet-700 tracking-wider mb-2">Channels grow linearly &mdash; input to each layer</div>
+            <div id="chbars"></div>
+            <div id="chOut" class="text-sm mt-2"></div>
+          </div>
+          <div class="bg-white rounded-xl border border-slate-200 p-4">
+            <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Connections &mdash; dense vs. a plain chain</div>
+            <div id="connBox" class="text-sm text-slate-700"></div>
+          </div>
+          <div class="bg-white rounded-xl border border-indigo-200 p-4">
+            <div class="text-xs uppercase font-bold text-indigo-700 tracking-wider mb-2">Transition layer &mdash; 1&times;1 conv compresses by <span class="mono">&theta;</span></div>
+            <div id="transBox"></div>
+          </div>
+          <div class="bg-white rounded-xl border border-rose-200 p-4">
+            <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">Parameter efficiency &mdash; feature reuse pays off</div>
+            <div id="paramBox" class="text-sm text-slate-700"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- side-by-side ResNet vs DenseNet -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">
+        <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-3">Additive skip (ResNet) vs. dense concat (DenseNet) &mdash; same L layers</div>
+        <div class="grid grid-cols-2 gap-6">
+          <div>
+            <div class="text-sm font-bold text-emerald-700 mb-1">ResNet &mdash; <span class="mono">y = x + F(x)</span></div>
+            <p class="text-[11px] text-slate-400 mb-2 h-8">Each block <em>adds</em> its output back onto <span class="mono">x</span>. Widths stay <b>constant</b> (you can only add equal-shaped tensors); features are summed, so earlier signals blur together.</p>
+            <div id="towerRes" class="tower"></div>
+          </div>
+          <div>
+            <div class="text-sm font-bold text-violet-700 mb-1">DenseNet &mdash; <span class="mono">x&#8467; = H([x&#8320;,&hellip;,x&#8467;&#8331;&#8321;])</span></div>
+            <p class="text-[11px] text-slate-400 mb-2 h-8">Each layer <em>concatenates</em> its k new maps onto the stack. Widths <b>grow</b> by k every layer; every earlier map stays intact and reusable downstream.</p>
+            <div id="towerDns" class="tower"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="note" class="rounded-xl border border-violet-200 bg-violet-50 text-violet-900 p-4 text-sm text-left mb-4"></div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-left overflow-x-auto">
+        <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Plain net vs. ResNet vs. DenseNet</div>
+        <table class="cmp w-full text-sm"><thead><tr>
+          <th>Architecture</th><th>Skip mechanism</th><th>Channel width</th><th>Connections (L layers)</th><th>Signature payoff</th>
+        </tr></thead><tbody>
+          <tr><td>Plain CNN<br><span class="text-xs font-normal text-slate-400">(no skips)</span></td><td>none &mdash; strict chain</td><td>set by hand each layer</td><td class="mono">L</td><td>simple, but deep = gradients vanish</td></tr>
+          <tr><td class="text-emerald-700">ResNet<br><span class="text-xs font-normal text-slate-400">(Day 22)</span></td><td><b>add</b> &nbsp;<span class="mono">x + F(x)</span></td><td>constant within a stage</td><td class="mono">L</td><td>identity highway &rarr; trains very deep nets</td></tr>
+          <tr class="bg-violet-50"><td class="text-violet-700">DenseNet</td><td><b>concatenate</b> &nbsp;<span class="mono">[x&#8320;&hellip;x&#8467;&#8331;&#8321;]</span></td><td>grows <span class="mono">k&#8320;+k&middot;&#8467;</span></td><td class="mono">L(L+1)/2</td><td>max feature reuse &rarr; top accuracy at few params</td></tr>
+        </tbody></table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Connect everything to everything</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">The live demo is a from-scratch DenseNet skeleton &mdash; no library, just concatenation, a growth rate, and a compression factor. We assemble it one line at a time: the composite layer <code>H</code> that produces k new maps, the dense block that keeps concatenating them, the channel bookkeeping (<code>k&#8320; + k&middot;&#8467;</code>), the connection count, the transition layer that compresses by <code>&theta;</code>, the full network, the one-line diff against a ResNet block, and finally the couple of lines you actually write with <code>torchvision</code>.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">The composite layer H &mdash; each layer makes only k new maps</h3></div>
+        <p class="text-sm text-slate-600 mb-3">One layer is <code>H = BN &rarr; ReLU &rarr; 3&times;3 conv</code>, and it outputs exactly <code>k</code> feature-maps &mdash; the <em>growth rate</em>. k is small (12, 24, 32) on purpose: a layer only has to contribute a thin slice of new information, because everything computed before it is still available by concatenation.</p>
+        <div class="relative"><pre>// composite function H_l: BN -> ReLU -> 3x3 conv, outputs k maps
+function H(x, k) {
+  x = relu(batchnorm(x));
+  return conv3x3(x, /*out_channels=*/ k);   // k = growth rate (small!)
+}
+// optional bottleneck (DenseNet-B): a 1x1 conv -> 4k maps first,
+// to cap the cost of a very wide concatenated input.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">The dense block &mdash; concatenate, don&rsquo;t add</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Keep a running list of every feature-map produced so far. To run layer &#8467;, concatenate the whole list along the channel axis, feed it to <code>H</code>, and append the k new maps back onto the list. This is the one idea that defines DenseNet: <strong>concatenation</strong>, so each layer sees all prior features directly.</p>
+        <div class="relative"><pre>function denseBlock(x0, L, k) {
+  let feats = [x0];                       // collect all feature-maps
+  for (let l = 1; l &lt;= L; l++) {
+    const inp = concat(feats);            // [x0, x1, ..., x_{l-1}]
+    const xl  = H(inp, k);                // k new maps
+    feats.push(xl);                       // reuse forever after
+  }
+  return concat(feats);                   // block output
+}</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Channel bookkeeping &mdash; growth is linear, not explosive</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Layer &#8467; receives <code>k&#8320; + k&middot;(&#8467;&minus;1)</code> channels and adds <code>k</code>. After all L layers the block output is <code>k&#8320; + k&middot;L</code>. It <em>feels</em> like everything connects to everything, but the width only grows by a constant k per layer &mdash; linear, and cheap to keep in check.</p>
+        <div class="relative"><pre>function inChannels(l, k0, k) { return k0 + k * (l - 1); }  // into layer l
+function blockOutChannels(L, k0, k) { return k0 + k * L; }  // after L layers
+// k0=24, k=12, L=6  ->  layer inputs: 24,36,48,60,72,84
+//                       block output: 24 + 12*6 = 96 channels</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Counting connections &mdash; L(L+1)/2</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A plain L-layer chain has L connections (each layer feeds the next). In a dense block, layer &#8467; is fed by &#8467; sources (x&#8320; through x&#8467;&#8331;&#8321;), so the total is 1 + 2 + &hellip; + L = <code>L(L+1)/2</code> direct connections &mdash; a quadratic web of short paths from any layer to any later one.</p>
+        <div class="relative"><pre>function connections(L)      { return L * (L + 1) / 2; }  // dense
+function plainConnections(L) { return L; }                 // a chain
+// L = 6  ->  dense: 21 connections,  plain: 6
+// every layer has a short path to every later layer -> strong gradients</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Transition layer &mdash; compress by &theta; between blocks</h3></div>
+        <p class="text-sm text-slate-600 mb-3">You cannot concatenate across a downsample (feature-maps change size), and channels would balloon across many blocks. So between dense blocks sits a <em>transition</em>: a 1&times;1 conv that squeezes <code>m</code> channels down to <code>&#8970;&theta;&middot;m&#8971;</code> (compression, DenseNet-C uses <code>&theta;=0.5</code>), then a 2&times;2 average-pool that halves the spatial size.</p>
+        <div class="relative"><pre>function transition(x, m, theta) {          // m = incoming channels
+  x = conv1x1(x, Math.floor(theta * m));    // compress channels (theta<=1)
+  x = avgPool2x2(x);                        // halve H and W
+  return x;                                 // now smaller & thinner
+}
+// theta = 1.0 -> no compression ; theta = 0.5 -> DenseNet-C / -BC</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Assemble the network &mdash; stem, blocks, transitions, head</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A full DenseNet is: a conv stem, then several dense blocks separated by transition layers, then a global average pool and a linear classifier. DenseNet-121 uses four blocks of <code>[6, 12, 24, 16]</code> layers with <code>k = 32</code>.</p>
+        <div class="relative"><pre>function DenseNet(x, blocks, k, k0, theta) {
+  let ch = stemConv(x, k0);                 // -> k0 channels
+  blocks.forEach((L, i) =&gt; {
+    ch = denseBlock(ch, L, k);              // width += k each layer
+    let m = channelsOf(ch);
+    if (i &lt; blocks.length - 1)              // transition after all but last
+      ch = transition(ch, m, theta);        // compress + downsample
+  });
+  return linear(globalAvgPool(ch), numClasses);
+}
+// DenseNet-121: blocks=[6,12,24,16], k=32, theta=0.5</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">The whole difference from ResNet, in one line</h3></div>
+        <p class="text-sm text-slate-600 mb-3">ResNet and DenseNet both give early layers a short path to the loss. ResNet does it by <strong>summing</strong> a same-shaped residual back on; DenseNet does it by <strong>concatenating</strong> new maps and keeping the old ones. Summing can overwrite; concatenating preserves &mdash; which is why DenseNet reuses features so aggressively.</p>
+        <div class="relative"><pre>// ResNet block:   add — width stays the same, features get summed
+y = x.add( F(x) );                 //  y = x + F(x)
+
+// DenseNet layer:  concat — width grows by k, every map kept
+y = concat([ x, F(x) ]);           //  y = [x, F(x)]  (F outputs k maps)
+// add can dilute earlier signal; concat guarantees it survives intact.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">8</div><h3 class="font-bold text-lg">The real thing &mdash; a few lines in torchvision</h3></div>
+        <p class="text-sm text-slate-600 mb-3">You never hand-roll the concatenation. Torchvision ships the whole family &mdash; <code>densenet121/169/201/161</code> &mdash; already wired with dense blocks, bottlenecks and &theta;=0.5 transitions. DenseNet-121 matches a much heavier ResNet on ImageNet with roughly <strong>a third</strong> of the parameters, purely from feature reuse.</p>
+        <div class="relative"><pre>import torchvision.models as models
+
+net = models.densenet121(weights="IMAGENET1K_V1")  # k=32, blocks=[6,12,24,16]
+# ~8M params vs ResNet-50's ~25M — similar ImageNet accuracy.
+
+# build-your-own knobs (torchvision.models.DenseNet):
+net = models.DenseNet(growth_rate=32,
+                      block_config=(6, 12, 24, 16),
+                      num_init_features=64,       # k0 (stem)
+                      bn_size=4,                   # bottleneck: 1x1 -> 4k
+                      compression=0.5)             # theta at transitions
+# lineage of feature-reuse nets: DenseNet -> DPN -> CSPNet (used in YOLO).</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 39 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2"><strong>DenseNet</strong> takes ResNet&rsquo;s short-path idea to its logical extreme: instead of <em>adding</em> a residual (<span class="mono">y = x + F(x)</span>), every layer inside a <strong>dense block</strong> receives the <strong>concatenation</strong> of the feature-maps of <em>all</em> preceding layers and passes its own maps to <em>all</em> that follow &mdash; giving <span class="mono">L(L+1)/2</span> direct connections. Each layer contributes only <strong>k</strong> new feature-maps (the small <strong>growth rate</strong>), so channels grow just linearly as <span class="mono">k&#8320; + k&middot;&#8467;</span>; <strong>transition layers</strong> with a compression factor <span class="mono">&theta;</span> squeeze channels and downsample between blocks. Because every earlier feature stays directly reachable, nothing has to be re-learned &mdash; that <strong>feature reuse</strong> gives every layer a short path to the loss (strong gradients, no vanishing) and buys top-tier accuracy at a <strong>fraction</strong> of ResNet&rsquo;s parameter count (DenseNet-121 &asymp; a ResNet-50 with ~3&times; fewer params). <strong>&#128073; Tomorrow, Day 40:</strong> Squeeze-and-Excitation networks &mdash; instead of adding connections, let the network learn <em>which channels matter</em> and recalibrate them (channel-wise attention).</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+</script>
+
+<script>
+// ============================================================
+// REAL from-scratch DenseNet channel math, computed live in JS.
+//   dense block: layer l sees concat(x0..x_{l-1}) = k0 + k*(l-1) channels
+//   growth rate k -> +k maps per layer -> block out = k0 + k*L
+//   connections = L(L+1)/2 (dense) vs L (plain chain)
+//   transition: 1x1 conv compresses m -> floor(theta*m), then avg-pool
+// ============================================================
+let k0 = 24, k = 12, L = 6, theta = 0.5;
+
+const inCh       = l => k0 + k * (l - 1);      // channels INTO layer l (1..L)
+const blockOut   = () => k0 + k * L;           // concatenated block output
+const connDense  = () => L * (L + 1) / 2;      // direct connections
+const transOut   = () => Math.floor(theta * blockOut());
+const fmt = n => n >= 1e6 ? (n/1e6).toFixed(2) + "M" : n >= 1e3 ? (n/1e3).toFixed(1) + "K" : String(n);
+
+// 3x3-conv params for the whole block (illustrative, no bottleneck):
+//   sum_l inCh(l) * k * 9
+function denseParams() { let p = 0; for (let l = 1; l <= L; l++) p += inCh(l) * k * 9; return p; }
+// a "plain" block of the same L layers, every layer as wide as the dense output:
+function plainParams() { const w = blockOut(); return L * w * w * 9; }
+
+function render() {
+  document.getElementById("v_k0").textContent = k0;
+  document.getElementById("v_k").textContent  = k;
+  document.getElementById("v_L").textContent  = L;
+  document.getElementById("v_th").textContent = theta.toFixed(2);
+
+  drawDense();
+  drawBars();
+  drawTowers();
+
+  const out = blockOut(), c = connDense();
+
+  // connection pill
+  const pill = document.getElementById("connPill");
+  pill.style.background = "#ede9fe"; pill.style.color = "#6d28d9";
+  pill.innerHTML = `${c} connections &nbsp;<span class="mono">= ${L}&middot;${L+1}/2</span>`;
+
+  // formula readout
+  document.getElementById("formula").innerHTML =
+    `<b class="text-violet-700">Dense connectivity.</b> layer &#8467; input <span class="mono">= k&#8320; + k&middot;(&#8467;&minus;1)</span>; ` +
+    `after <span class="sk">L=${L}</span> layers the block holds <span class="mono">k&#8320; + k&middot;L = ${k0} + ${k}&middot;${L} = <b class="sk">${out}</b></span> channels, ` +
+    `wired with <span class="mono"><b class="sk">${c}</b> = L(L+1)/2</span> direct connections. Growth rate <span class="mono">k=${k}</span> is what you keep small.`;
+
+  // block output line under bars
+  document.getElementById("chOut").innerHTML =
+    `<div class="flex items-baseline gap-2"><span class="text-3xl font-black stat text-violet-600">${out}</span>` +
+    `<span class="text-sm text-slate-500">channels out of the block &nbsp;<span class="mono">= k&#8320; + k&middot;L</span></span></div>` +
+    `<div class="text-xs text-slate-400 mt-1">Each <span style="color:#f43f5e;font-weight:700;">red</span> slice = the k new maps that layer added; the <span class="text-violet-600 font-semibold">violet</span> base is everything reused from before.</div>`;
+
+  // connections box
+  document.getElementById("connBox").innerHTML =
+    `<div class="flex gap-6 items-baseline mb-1">` +
+    `<div><span class="text-2xl font-black stat text-violet-600">${c}</span> <span class="text-xs text-slate-500">dense <span class="mono">L(L+1)/2</span></span></div>` +
+    `<div><span class="text-2xl font-black stat text-slate-400">${L}</span> <span class="text-xs text-slate-500">plain chain <span class="mono">L</span></span></div>` +
+    `</div><div>Every layer gets a <b>short path</b> to every later layer &mdash; and, in reverse, a short path for the gradient. That direct wiring is why DenseNet trains cleanly without vanishing gradients, the same benefit ResNet buys with its additive skip.</div>`;
+
+  // transition box
+  const t = transOut();
+  const wA = 100, wB = Math.max(6, Math.round(100 * t / out));
+  document.getElementById("transBox").innerHTML =
+    `<div class="flex items-center gap-2 text-sm">` +
+    `<div style="flex:0 0 ${wA}px;"><div class="tbar" style="background:#8b5cf6;">${out}</div><div class="text-[10px] text-center text-slate-400 mt-1">block out</div></div>` +
+    `<div class="text-slate-400 font-bold">&rarr;</div>` +
+    `<div class="text-[11px] text-slate-500 leading-tight">1&times;1 conv<br>&times; &theta;=${theta.toFixed(2)}</div>` +
+    `<div class="text-slate-400 font-bold">&rarr;</div>` +
+    `<div style="flex:0 0 ${Math.max(28,wB)}px;"><div class="tbar" style="background:#6366f1;">${t}</div><div class="text-[10px] text-center text-slate-400 mt-1">next block in</div></div>` +
+    `</div>` +
+    `<div class="text-xs text-slate-500 mt-2"><span class="mono">&#8970;&theta;&middot;${out}&#8971; = ${t}</span> channels, then a 2&times;2 avg-pool halves H&times;W. ${theta >= 0.999 ? "&theta;=1 &rarr; no compression." : `&theta;=${theta.toFixed(2)} throws away ${(100-theta*100).toFixed(0)}% of the width so the network stays lean across blocks (DenseNet-C/BC).`}</div>`;
+
+  // param box
+  const dp = denseParams(), pp = plainParams(), ratio = (pp / dp);
+  document.getElementById("paramBox").innerHTML =
+    `<div class="flex gap-6 items-baseline mb-1">` +
+    `<div><span class="text-2xl font-black stat text-rose-600">${fmt(dp)}</span> <span class="text-xs text-slate-500">dense-block 3&times;3 conv weights</span></div>` +
+    `<div><span class="text-2xl font-black stat text-slate-400">${fmt(pp)}</span> <span class="text-xs text-slate-500">same-width plain block</span></div>` +
+    `</div>` +
+    `<div>Because a layer only outputs <span class="mono">k=${k}</span> new maps (not the full <span class="mono">${out}</span>-wide tensor), the dense block is about <b class="sk">${ratio.toFixed(1)}&times;</b> cheaper than making every layer as wide as the block&rsquo;s output. Reusing old features instead of recomputing them is the whole parameter-efficiency story &mdash; DenseNet-121 rivals ResNet-50 at ~3&times; fewer weights.</div>`;
+
+  // note
+  document.getElementById("note").innerHTML =
+    `<strong>Read the tower.</strong> On the left, the input <span class="mono">x&#8320;</span> starts at <b class="text-violet-700">${k0}</b> channels. Every layer below concatenates <b class="sk">k=${k}</b> fresh maps on top of everything above it &mdash; so layer 1 sees ${inCh(1)}, layer 2 sees ${inCh(2)}, &hellip; layer ${L} sees <b>${inCh(L)}</b>, and the block pours out <b class="text-violet-700">${blockOut()}</b> channels. Crank <span class="mono">L</span> up and watch the arcs multiply as <span class="mono">L(L+1)/2</span> (quadratic) while the width still grows only linearly. Then a transition layer with <span class="mono">&theta;=${theta.toFixed(2)}</span> squeezes it back to <b class="text-indigo-700">${transOut()}</b> before the next block. Compare with ResNet on the right: its boxes never widen, because <span class="mono">x + F(x)</span> can only add same-shaped tensors.`;
+}
+
+// ---------- SVG dense-connectivity diagram ----------
+function drawDense() {
+  const svg = document.getElementById("dense");
+  const N = L + 1;                    // node 0 = x0, nodes 1..L = layers
+  const top = 26, rowH = Math.min(40, Math.max(22, 360 / N));
+  const H = top + (N - 1) * rowH + 26;
+  const nx = 66;                      // node column x
+  svg.setAttribute("viewBox", `0 0 360 ${H}`);
+  const y = i => top + i * rowH;
+
+  let arcs = "", nodes = "";
+  // arcs: from source i (0..l-1) into layer l (1..L)
+  for (let l = 1; l <= L; l++) {
+    for (let i = 0; i < l; i++) {
+      const y1 = y(i), y2 = y(l);
+      const bow = 24 + (l - i) * 9;
+      arcs += `<path class="darc" d="M ${nx} ${y1} C ${nx+bow} ${y1+6}, ${nx+bow} ${y2-6}, ${nx} ${y2}"/>`;
+    }
+  }
+  // nodes + labels
+  for (let i = 0; i < N; i++) {
+    const cy = y(i);
+    const cls = i === 0 ? "dnode dnode0" : "dnode";
+    nodes += `<circle class="${cls}" cx="${nx}" cy="${cy}" r="9"/>`;
+    if (i === 0) {
+      nodes += `<text class="dlbl" x="${nx}" y="${cy+4}" text-anchor="middle">x&#8320;</text>`;
+      nodes += `<text class="dch" x="${nx-16}" y="${cy+4}" text-anchor="end">${k0} ch</text>`;
+    } else {
+      nodes += `<text class="dlbl" x="${nx}" y="${cy+4}" text-anchor="middle">${i}</text>`;
+      nodes += `<text class="dch" x="${nx-16}" y="${cy+4}" text-anchor="end">in ${inCh(i)}</text>`;
+      nodes += `<text class="dch" x="${nx+16}" y="${cy+4}" text-anchor="start" fill="#be123c">+${k}</text>`;
+    }
+  }
+  // little in/out captions
+  const cap = `<text class="dch" x="${nx}" y="12" text-anchor="middle" fill="#7c3aed">&#8595; input</text>` +
+              `<text class="dch" x="${nx}" y="${H-8}" text-anchor="middle" fill="#7c3aed">&#8595; concat = ${blockOut()} ch out</text>`;
+  svg.innerHTML = arcs + nodes + cap;
+}
+
+// ---------- channel-growth bars ----------
+function drawBars() {
+  const box = document.getElementById("chbars");
+  const maxW = blockOut();
+  let html = "";
+  for (let l = 1; l <= L; l++) {
+    const inp = inCh(l);
+    const inPct = (inp / maxW) * 100;
+    const newPct = (k / maxW) * 100;
+    html += `<div class="cbrow">` +
+      `<div class="cbname">L${l}</div>` +
+      `<div class="cbtrack"><div class="cbin" style="width:${inPct}%"></div><div class="cbnew" style="width:${newPct}%"></div></div>` +
+      `<div class="cbval">${inp}<span class="text-slate-400">+${k}</span></div></div>`;
+  }
+  box.innerHTML = html;
+}
+
+// ---------- side-by-side ResNet(add) vs DenseNet(concat) towers ----------
+function drawTowers() {
+  const res = document.getElementById("towerRes");
+  const dns = document.getElementById("towerDns");
+  const maxW = blockOut();
+  const px = ch => Math.max(46, Math.round(190 * ch / maxW));
+  let r = `<div class="tbox res-box" style="width:${px(k0)}px">x &middot; ${k0}ch</div>`;
+  let d = `<div class="tbox dns-box" style="width:${px(k0)}px">x&#8320; &middot; ${k0}ch</div>`;
+  for (let l = 1; l <= L; l++) {
+    r += `<div class="op text-emerald-500">+</div>`;
+    r += `<div class="tbox res-box" style="width:${px(k0)}px">F&#8321;&#8321; ${l} &middot; ${k0}ch</div>`;
+    d += `<div class="op text-violet-400">&#8681;</div>`;
+    d += `<div class="tbox dns-box" style="width:${px(inCh(l)+k)}px">L${l} &middot; ${inCh(l)+k}ch</div>`;
+  }
+  r += `<div class="text-[11px] text-emerald-700 font-bold mt-1">out: ${k0}ch (unchanged)</div>`;
+  d += `<div class="text-[11px] text-violet-700 font-bold mt-1">out: ${blockOut()}ch (grew ${L}&times;k)</div>`;
+  res.innerHTML = r; dns.innerHTML = d;
+}
+
+// ---------- wire controls ----------
+document.getElementById("s_k0").addEventListener("input", e => { k0 = +e.target.value; render(); });
+document.getElementById("s_k").addEventListener("input",  e => { k  = +e.target.value; render(); });
+document.getElementById("s_L").addEventListener("input",  e => { L  = +e.target.value; render(); });
+document.getElementById("s_th").addEventListener("input", e => { theta = +e.target.value; render(); });
+
+// initial paint
+render();
+</script>
+
+<script>
+const STEPS = [
+ { title:"1. The problem: ResNet ADDS — and adding can dilute",
+   why:"ResNet solved the vanishing-gradient problem with an additive skip, y = x + F(x): a clean +1 gradient highway that let us train hundreds of layers. But addition has a subtle cost. When you sum F(x) onto x, the two are entangled into one tensor of the SAME width — earlier information isn't kept separate, it's blended, and can be partially overwritten by later layers. And because each stage keeps a fixed width, the network can't easily let a much later layer look directly at a very early, still-raw feature. DenseNet asks: what if, instead of adding and losing separability, we KEPT every feature-map and let every layer read all of them directly?",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">ResNet:  y = x + F(x)   (add — same width, features summed)<br>&rarr; earlier signal can be blurred / overwritten<br>&rarr; width fixed, no direct reach to far-earlier maps<br><br>what if we NEVER threw a feature-map away?</div>`,
+   code:"# ResNet residual block\n#   y = x + F(x)     # element-wise ADD (x and F(x) same shape)\n# consequences:\n#   - width stays constant across the stage\n#   - x and F(x) are summed -> not kept separate\n# DenseNet's alternative: keep every map, CONCATENATE." },
+ { title:"2. The idea: connect every layer to every later layer",
+   why:"DenseNet (Huang et al., 2017) introduces DENSE connectivity inside a 'dense block': layer l takes as input the feature-maps of ALL preceding layers x0, x1, ..., x_{l-1}, and its own output is fed to ALL subsequent layers. Where a plain L-layer chain has L connections and a ResNet adds a skip per block, a dense block of L layers has L(L+1)/2 direct connections. Every layer therefore has an extremely short path both to the input (for its features) and to the loss (for its gradient) — maximal information and gradient flow.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">layer l  &lt;-  x0, x1, ..., x_{l-1}   (reads ALL earlier maps)<br>layer l  -&gt;  every later layer         (feeds ALL of them)<br><br>connections in an L-layer block = L(L+1)/2<br>(plain chain would have just L)</div>`,
+   code:"# dense block: keep a list of ALL feature-maps so far\n# to run layer l:\n#   input_l = concat(x0, x1, ..., x_{l-1})   # every prior map\n#   x_l     = H(input_l)                     # produce new maps\n#   feats.append(x_l)                        # available forever\n# => L(L+1)/2 direct connections in one block" },
+ { title:"3. Concatenate, don't add — the one defining difference",
+   why:"This is the heart of DenseNet and the exact contrast with ResNet. ResNet combines by ADDITION: y = x + F(x), which requires x and F(x) to have identical shape and fuses them into one tensor. DenseNet combines by CONCATENATION: x_l = H([x0, ..., x_{l-1}]), stacking maps along the channel axis so every earlier feature-map survives untouched and individually addressable. Addition mixes and can overwrite; concatenation preserves and accumulates. That single choice — concat over add — is what turns skip connections into total feature reuse.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">RESNET (add)              DENSENET (concat)<br>y = x + F(x)              y = [ x , F(x) ]<br>same width, summed        width grows by k, all kept<br><br>add = fuse & maybe blur | concat = preserve & reuse</div>`,
+   code:"# ResNet:   combine by ADD   (shapes must match)\n#   y = x + F(x)\n# DenseNet: combine by CONCAT (channels stack up)\n#   y = torch.cat([x, F(x)], dim=1)   # dim=1 = channels\n# concat keeps every earlier feature-map intact -> reuse." },
+ { title:"4. Growth rate k — each layer adds only a thin slice",
+   why:"If every layer sees all previous maps, why don't channels explode? Because each layer outputs only k new feature-maps, where k — the GROWTH RATE — is deliberately small (the paper uses k = 12, 24, or 32). Layer l's input has k0 + k·(l-1) channels, it adds k, and after L layers the block outputs k0 + k·L. So width grows only LINEARLY in depth, at rate k. A small k works precisely because features are reused: a layer doesn't need to reproduce information that's already sitting in the concatenated stack — it only contributes its k-map increment of new information (its 'collective knowledge' added to the block's shared state).",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">input to layer l = k0 + k&middot;(l-1)  channels<br>layer l adds     = k              (growth rate, small)<br>block output     = k0 + k&middot;L<br><br>k0=24, k=12, L=6  &rarr;  24,36,48,60,72,84  &rarr;  out 96<br>linear growth, not explosive</div>`,
+   code:"def in_channels(l, k0, k):  return k0 + k * (l - 1)  # into layer l\ndef block_out(L, k0, k):    return k0 + k * L        # after L layers\n# growth rate k is SMALL (12/24/32): each layer contributes\n# only k new maps -> channels grow linearly, cheaply." },
+ { title:"5. The composite layer H (and the bottleneck, DenseNet-B)",
+   why:"Each 'layer' inside a block is a composite function H: Batch-Norm -> ReLU -> 3x3 convolution, producing k maps (this pre-activation order is important for the gradient flow). One problem: the concatenated input to a deep layer can be very wide (k0 + k·(l-1) can reach hundreds of channels), making the 3x3 conv expensive. DenseNet-B fixes this with a BOTTLENECK: a 1x1 conv first projects the wide input down to 4k channels, and only then does the 3x3 conv produce the k output maps. The 1x1 conv is cheap and caps the cost of the wide concatenation.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">H (basic):   BN &rarr; ReLU &rarr; 3x3 conv &rarr; k maps<br><br>H (bottleneck / DenseNet-B):<br>BN&rarr;ReLU&rarr;1x1 conv (&rarr;4k) &rarr; BN&rarr;ReLU&rarr;3x3 conv (&rarr;k)<br><br>1x1 first tames the wide concatenated input</div>`,
+   code:"# basic composite layer\ndef H(x, k):\n    x = relu(batchnorm(x))\n    return conv3x3(x, k)          # k output maps\n\n# DenseNet-B bottleneck: 1x1 -> 4k, then 3x3 -> k\ndef H_bottleneck(x, k):\n    x = conv1x1(relu(batchnorm(x)), 4*k)   # squeeze width\n    return conv3x3(relu(batchnorm(x)), k)" },
+ { title:"6. Dense blocks + transition layers",
+   why:"Concatenation only works while feature-maps share spatial size — you can't concatenate a 32x32 map with a 16x16 one. But CNNs must downsample. So DenseNet groups layers into several DENSE BLOCKS (dense connectivity inside each) and connects blocks with TRANSITION LAYERS. A transition is BN -> 1x1 conv -> 2x2 average-pool: the pool halves the spatial resolution between blocks, and the 1x1 conv adjusts the channel count. This is also where accumulated channels get reset down before the next block piles more on.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">[ Dense Block 1 ] &rarr; Transition &rarr; [ Dense Block 2 ] &rarr; ... &rarr; head<br><br>inside block: dense concat (same spatial size)<br>transition: 1x1 conv + 2x2 avg-pool (downsample)<br><br>DenseNet-121 blocks = [6, 12, 24, 16] layers</div>`,
+   code:"# network = stem -> (dense block -> transition) x N -> head\ndef transition(x, m, theta):\n    x = conv1x1(x, floor(theta * m))   # adjust channels\n    return avg_pool2x2(x)              # halve H and W\n# transitions let the net downsample; concat only works\n# WITHIN a block where spatial size is constant." },
+ { title:"7. Compression theta — keep the network lean",
+   why:"Even with a small k, channels accumulate across many blocks. COMPRESSION (DenseNet-C) makes the transition layer also SHRINK the channel count: if a block outputs m feature-maps, the transition's 1x1 conv emits only floor(theta·m), where theta in (0,1] is the compression factor. The paper uses theta = 0.5, halving the width at every transition. theta = 1 means no compression. A model with both bottleneck layers and compression is called DenseNet-BC — the most parameter-efficient variant and the one behind the headline results.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">block out = m channels<br>transition 1x1 conv &rarr; floor(theta &middot; m)<br><br>theta = 1.0  &rarr;  no compression<br>theta = 0.5  &rarr;  halve the width (DenseNet-C)<br>bottleneck + compression = DenseNet-BC (best)</div>`,
+   code:"# compression at every transition\nout_channels = floor(theta * in_channels)   # theta = 0.5 typical\n# theta = 1.0 -> DenseNet-C off (no compression)\n# bottleneck (B) + compression (C) => DenseNet-BC\n#   most parameter-efficient; the reported SOTA config." },
+ { title:"8. Feature reuse & parameter efficiency — the payoff",
+   why:"Because every layer can read every earlier feature-map directly, the network never has to RE-LEARN or re-transmit information just to make it available downstream — it's already there via concatenation. Studies of trained DenseNets show layers actively drawing on maps from many blocks back. This 'collective knowledge' means each layer only needs to add its thin k-map increment, so DenseNets hit the same accuracy as much larger ResNets with far fewer parameters and FLOPs: DenseNet-121 (~8M params) rivals ResNet-50 (~25M), roughly a 3x reduction. Dense connectivity also gives every layer a short path to the loss, so gradients stay strong — the same anti-vanishing benefit as ResNet, taken further.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">feature reuse: later layers read raw early maps directly<br>&rarr; no re-learning, each layer adds only k maps<br><br>DenseNet-121 &asymp; ResNet-50 accuracy at ~1/3 params<br>+ short path to loss for every layer (strong gradients)</div>`,
+   code:"# why so few params:\n#   layer l outputs k maps (not the full k0+k*l tensor)\n#   everything earlier is REUSED, never recomputed\n# DenseNet-121: ~8M params  ~=  ResNet-50 acc (~25M params)\n# bonus: every layer has a short path to the loss -> good grads" },
+ { title:"9. In practice — one import, and the lineage it started",
+   why:"You never hand-build the concatenation bookkeeping. Torchvision ships densenet121 / densenet169 / densenet201 / densenet161 (all DenseNet-BC, theta=0.5, bottleneck 4k), and exposes growth_rate, block_config, num_init_features and bn_size if you want to design your own. DenseNet's feature-reuse idea seeded a whole lineage: DPN (Dual Path Networks) fuse residual AND dense paths; CSPNet splits and partially dense-connects feature maps and is the backbone trick inside modern YOLO detectors. Use a pretrained densenet121 as a strong, compact backbone when parameter budget matters.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">torchvision: densenet121 / 169 / 201 / 161<br>knobs: growth_rate (k), block_config, compression<br><br>lineage of feature reuse:<br>DenseNet &rarr; DPN &rarr; CSPNet (YOLO backbones)</div>`,
+   code:"import torchvision.models as models\nnet = models.densenet121(weights='IMAGENET1K_V1')  # k=32\n\n# design your own DenseNet-BC:\nnet = models.DenseNet(growth_rate=32,\n                      block_config=(6,12,24,16),\n                      num_init_features=64,  # k0\n                      bn_size=4,             # bottleneck 4k\n                      compression=0.5)       # theta" }
+];
+</script>
+
+<script>
+const stepsEl=document.getElementById("steps");
+const prevB=document.getElementById("prev"), nextB=document.getElementById("next-btn"), autoB=document.getElementById("auto");
+let curS=0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },5200); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>
