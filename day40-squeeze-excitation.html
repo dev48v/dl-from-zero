@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 40 — Squeeze-and-Excitation</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .cmp td, .cmp th { padding:8px 10px; border-bottom:1px solid #e2e8f0; text-align:left; vertical-align:top; }
+  .cmp th { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#64748b; }
+  .cmp td:first-child{ font-weight:800; white-space:nowrap; }
+  /* ---- channel columns + feature-map grids ---- */
+  .chstrip{ display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  .chcol{ display:flex; flex-direction:column; align-items:center; gap:3px; width:52px; }
+  .chlab{ font:700 10px "SFMono-Regular",Consolas,monospace; color:#64748b; }
+  .fmap{ display:grid; grid-template-columns:repeat(4,1fr); width:46px; height:46px; gap:1px; border-radius:5px; overflow:hidden; border:1px solid #e2e8f0; transition:box-shadow .15s, opacity .15s; }
+  .fmap>div{ width:100%; height:100%; }
+  .zbartrack{ width:16px; height:40px; background:#f1f5f9; border-radius:3px; display:flex; align-items:flex-end; overflow:hidden; }
+  .zbar{ width:100%; background:linear-gradient(180deg,#fb7185,#e11d48); }
+  .zval{ font:600 10px "SFMono-Regular",Consolas,monospace; color:#334155; }
+  .gx{ font:700 10px "SFMono-Regular",Consolas,monospace; color:#334155; }
+  .pill2{ font:700 9px "SFMono-Regular",Consolas,monospace; padding:1px 6px; border-radius:999px; text-transform:uppercase; letter-spacing:.03em; }
+  /* ---- gate bars ---- */
+  .gbrow{ display:grid; grid-template-columns:36px 1fr 42px; align-items:center; gap:8px; margin-bottom:4px; }
+  .gbname{ font:700 10px "SFMono-Regular",Consolas,monospace; color:#475569; }
+  .gbtrack{ position:relative; height:15px; border-radius:5px; background:#f1f5f9; overflow:hidden; }
+  .gbfill{ height:100%; border-radius:5px 0 0 5px; transition:width .18s, background .18s; }
+  .gbmid{ position:absolute; top:0; bottom:0; left:50%; width:1px; background:#94a3b8; }
+  .gbval{ font:700 11px "SFMono-Regular",Consolas,monospace; text-align:right; }
+  /* ---- excite MLP diagram ---- */
+  #exsvg{ width:100%; height:auto; display:block; }
+  .enode{ fill:#fff; stroke:#94a3b8; stroke-width:1.6; }
+  .enz{ stroke:#e11d48; }
+  .end{ fill:#ede9fe; stroke:#7c3aed; stroke-width:1.8; }
+  .earc{ stroke:#cbd5e1; stroke-width:.8; fill:none; opacity:.6; }
+  .elbl{ font:700 10px "SFMono-Regular",Consolas,monospace; fill:#475569; }
+  .preset-btn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:7px 12px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; transition:.12s; }
+  .preset-btn:hover{ border-color:#fda4af; }
+  .preset-btn.on{ background:#f43f5e; border-color:#f43f5e; color:#fff; }
+  .stage-num{ display:inline-flex; width:22px; height:22px; border-radius:999px; background:#f43f5e; color:#fff; font:800 12px sans-serif; align-items:center; justify-content:center; margin-right:6px; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 40</div>
+      <h1 class="text-xl font-bold">&#127898;&#65039; Squeeze-and-Excitation &mdash; a plain convolution treats all <span class="mono">C</span> output channels as equally important. SE bolts on a lightweight <strong>channel-attention</strong> gate. <strong>SQUEEZE</strong>: collapse each channel&rsquo;s <span class="mono">H&times;W</span> feature-map to a single number with global average pooling &mdash; a per-channel descriptor. <strong>EXCITE</strong>: push that <span class="mono">C</span>-vector through a tiny two-layer bottleneck MLP (<span class="mono">FC C&rarr;C/r &rarr; ReLU &rarr; FC C/r&rarr;C &rarr; sigmoid</span>) to get per-channel gates in <span class="mono">(0,1)</span>. <strong>SCALE</strong>: multiply every feature-map by its gate. The net <em>learns which channels matter for this input</em> and recalibrates them &mdash; amplifying the informative ones, damping the rest &mdash; for only <span class="mono">&asymp;2C&sup2;/r</span> extra params. It won <strong>ILSVRC 2017</strong> and now lives inside MobileNetV3 and EfficientNet.</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Pick an input, then watch <span class="sk">squeeze &rarr; excite &rarr; rescale</span> run for real. Drag <span class="mono">r</span> and see the gates &mdash; and the cost &mdash; change.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto">Below are <span class="mono">C = 8</span> feature-maps (each a <span class="mono">4&times;4</span> grid) produced by a conv layer. The <strong>squeeze</strong> averages each whole map down to one number <span class="mono">z<sub>c</sub></span>. The <strong>excite</strong> MLP reads that 8-vector, funnels it through a bottleneck of width <span class="mono">C/r</span>, and emits a gate <span class="mono">s<sub>c</sub>&isin;(0,1)</span> per channel. Finally we <strong>rescale</strong>: each map is multiplied by its gate, so suppressed channels fade to near-nothing and boosted ones stay vivid. Everything here &mdash; the pooling, the two FC layers, the ReLU and sigmoid &mdash; is computed live in your browser. Switch the synthetic input to see the gate pattern change; drag <span class="mono">r</span> to trade capacity for parameters.</p>
+
+      <!-- controls -->
+      <div class="bg-white rounded-xl border border-rose-200 p-4 mb-4 text-left">
+        <div class="grid lg:grid-cols-[1.4fr_1fr] gap-4 items-center">
+          <div>
+            <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Synthetic input &mdash; which channels light up</div>
+            <div id="presets" class="flex flex-wrap gap-2"></div>
+            <div id="presetDesc" class="text-xs text-slate-400 mt-2"></div>
+          </div>
+          <div class="ctrl">
+            <label>reduction ratio <span class="mono">r</span><span id="v_r" class="sk stat">2</span></label>
+            <input type="range" id="s_r" min="0" max="4" step="1" value="1">
+            <div id="rCost" class="text-xs text-slate-500 mt-1"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STAGE 1: squeeze -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4 text-left">
+        <div class="text-sm font-bold text-slate-700 mb-1"><span class="stage-num">1</span>SQUEEZE &mdash; global average pool <span class="mono">H&times;W &rarr; 1</span> per channel</div>
+        <p class="text-xs text-slate-400 mb-3">Each <span class="mono">4&times;4</span> map is averaged to a single scalar <span class="mono">z<sub>c</sub></span> (the red bar). This throws away <em>where</em> things fired and keeps only <em>how much</em> each channel responded &mdash; a compact channel descriptor with a global receptive field.</p>
+        <div id="sqStrip" class="chstrip"></div>
+      </div>
+
+      <!-- STAGE 2: excite -->
+      <div class="bg-white rounded-xl border border-violet-200 p-4 mb-4 text-left">
+        <div class="text-sm font-bold text-violet-800 mb-1"><span class="stage-num" style="background:#7c3aed">2</span>EXCITE &mdash; a tiny bottleneck MLP turns the descriptor into gates</div>
+        <p class="text-xs text-slate-400 mb-3"><span class="mono">z</span> (8 values) &rarr; <span class="mono">FC 8&rarr;<span id="dLbl">4</span></span> &rarr; ReLU &rarr; <span class="mono">FC <span id="dLbl2">4</span>&rarr;8</span> &rarr; sigmoid &rarr; gates <span class="mono">s</span>. The bottleneck (width <span class="mono">C/r</span>) forces the layer to model channel <em>interdependencies</em> from global context, not just copy <span class="mono">z</span> through.</p>
+        <div class="grid lg:grid-cols-[1fr_1fr] gap-4 items-center">
+          <svg id="exsvg" viewBox="0 0 380 300" preserveAspectRatio="xMidYMid meet"></svg>
+          <div>
+            <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Per-channel gates <span class="mono">s<sub>c</sub> = &sigma;(&hellip;) &isin; (0,1)</span></div>
+            <div id="gateBars"></div>
+            <div class="text-[11px] text-slate-400 mt-1"><span style="color:#e11d48;font-weight:700">warm &gt; 0.5</span> = amplify &middot; <span style="color:#2563eb;font-weight:700">cool &lt; 0.5</span> = suppress &middot; the grey line marks the neutral <span class="mono">0.5</span>.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STAGE 3: scale -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4 text-left">
+        <div class="text-sm font-bold text-slate-700 mb-1"><span class="stage-num" style="background:#0f172a">3</span>SCALE &mdash; recalibrate: every map <span class="mono">&times; s<sub>c</sub></span></div>
+        <p class="text-xs text-slate-400 mb-3">Same maps as stage 1, each multiplied by its gate. Channels the network decided are irrelevant fade toward zero; the informative ones (ringed) keep their signal. This rescaled stack is what flows into the next layer.</p>
+        <div id="scStrip" class="chstrip"></div>
+      </div>
+
+      <div class="grid lg:grid-cols-[1fr_1fr] gap-4 mb-4 text-left">
+        <div class="bg-white rounded-xl border border-rose-200 p-4">
+          <div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">Parameter cost &mdash; <span class="mono">2C&sup2;/r</span> is tiny</div>
+          <div id="costBox" class="text-sm text-slate-700"></div>
+        </div>
+        <div id="note" class="rounded-xl border border-violet-200 bg-violet-50 text-violet-900 p-4 text-sm"></div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-left overflow-x-auto">
+        <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Plain conv vs. channel attention (SE) vs. channel + spatial (CBAM)</div>
+        <table class="cmp w-full text-sm"><thead><tr>
+          <th>Block</th><th>Recalibration</th><th>What it re-weights</th><th>Extra params</th><th>Signature payoff</th>
+        </tr></thead><tbody>
+          <tr><td>Plain conv<br><span class="text-xs font-normal text-slate-400">(baseline)</span></td><td>none</td><td>every channel treated equally</td><td class="mono">0</td><td>simple, but wastes capacity on unhelpful channels</td></tr>
+          <tr class="bg-rose-50"><td class="text-rose-700">SE block</td><td><b>squeeze&rarr;excite&rarr;scale</b></td><td><b>which channels</b> matter (per input)</td><td class="mono">&asymp;2C&sup2;/r</td><td>ILSVRC&rsquo;17 winner; ~1% top-5 gain for &lt;1% more params</td></tr>
+          <tr><td class="text-violet-700">CBAM</td><td>channel <em>then</em> spatial attention</td><td>which channels <b>and where</b></td><td class="mono">2C&sup2;/r + a bit</td><td>adds a spatial &ldquo;where&rdquo; map on top of SE&rsquo;s &ldquo;what&rdquo;</td></tr>
+        </tbody></table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Let the network learn which channels matter</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">The live demo is a from-scratch SE block &mdash; no library, just an average, two matrix multiplies, a ReLU and a sigmoid. We assemble it one line at a time: the <strong>squeeze</strong> (global average pool), the two-layer <strong>excite</strong> MLP with its reduction bottleneck, the sigmoid <strong>gates</strong>, the channel-wise <strong>scale</strong>, the whole thing as a tidy <code>nn.Module</code>, the <code>r</code>-vs-cost arithmetic, how it drops into a <strong>ResNet</strong> bottleneck, and finally the one line you actually write in practice.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Squeeze &mdash; global average pool each channel to one number</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Take the <code>C&times;H&times;W</code> feature-map and average over the whole spatial plane, giving a <code>C</code>-length vector <code>z</code>. Element <code>z<sub>c</sub></code> is a scalar summary of channel <code>c</code> with a <em>global</em> receptive field &mdash; the network can now reason about a channel using the entire image, not just a 3&times;3 window.</p>
+        <div class="relative"><pre>// squeeze: average every HxW map down to a single value
+function squeeze(maps) {            // maps: C channels, each H*W values
+  return maps.map(m =&gt;              // -&gt; z: one number per channel
+    m.reduce((a, v) =&gt; a + v, 0) / m.length);
+}
+// z has length C; z[c] = mean activation of channel c  (a descriptor)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Excite, part 1 &mdash; squeeze the descriptor through a bottleneck</h3></div>
+        <p class="text-sm text-slate-600 mb-3">First FC layer maps the <code>C</code>-vector down to <code>C/r</code> hidden units, then ReLU. The reduction ratio <code>r</code> (paper default 16) is the whole point: the bottleneck is far cheaper than a full <code>C&rarr;C</code> layer and forces the block to capture channel <em>relationships</em> rather than memorise each channel independently.</p>
+        <div class="relative"><pre>function fc(vec, W, b) {                       // W: [out][in], b: [out]
+  return W.map((row, i) =&gt;
+    row.reduce((a, w, j) =&gt; a + w * vec[j], 0) + b[i]);
+}
+const relu = v =&gt; v.map(x =&gt; Math.max(0, x));
+
+// C -&gt; C/r  (the reduction bottleneck), then ReLU
+const hidden = relu(fc(z, W1, b1));            // length C/r</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Excite, part 2 &mdash; expand back to C and sigmoid into gates</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Second FC layer maps <code>C/r &rarr; C</code>, then a <strong>sigmoid</strong> squashes each output into <code>(0,1)</code>. These are the gates <code>s</code>. Sigmoid (not softmax) is deliberate: channels are <em>not</em> mutually exclusive &mdash; many can be &ldquo;on&rdquo; at once &mdash; so each gets its own independent 0&ndash;1 importance.</p>
+        <div class="relative"><pre>const sigmoid = v =&gt; v.map(x =&gt; 1 / (1 + Math.exp(-x)));
+
+// C/r -&gt; C, then sigmoid -&gt; per-channel gates in (0,1)
+const s = sigmoid(fc(hidden, W2, b2));         // length C
+// s[c] near 1 -&gt; keep channel c ; near 0 -&gt; suppress it
+// sigmoid, NOT softmax: gates are independent, not competing.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Scale &mdash; recalibrate each map by its gate</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Multiply every value of channel <code>c</code> by its scalar gate <code>s<sub>c</sub></code> (broadcast across <code>H&times;W</code>). That is the entire &ldquo;recalibration&rdquo;: the block re-weights the channels of its <em>own</em> input and passes the result on. Cheap element-wise multiply, big representational effect.</p>
+        <div class="relative"><pre>// scale: broadcast each gate over its whole HxW map
+function scale(maps, s) {
+  return maps.map((m, c) =&gt; m.map(v =&gt; v * s[c]));
+}
+const out = scale(maps, s);        // recalibrated feature-maps
+// full block:  X~ = scale( X, excite( squeeze(X) ) )</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">The whole block as one nn.Module</h3></div>
+        <p class="text-sm text-slate-600 mb-3">In PyTorch it is a handful of lines: <code>AdaptiveAvgPool2d(1)</code> is the squeeze, two <code>1&times;1</code> convs (or Linear layers) are the excite, sigmoid makes the gates, and a broadcast multiply is the scale. Note the shapes: gates come out as <code>(B, C, 1, 1)</code> so they broadcast cleanly over the feature-maps.</p>
+        <div class="relative"><pre>import torch, torch.nn as nn
+
+class SEBlock(nn.Module):
+    def __init__(self, C, r=16):
+        super().__init__()
+        self.squeeze = nn.AdaptiveAvgPool2d(1)      # C x H x W -&gt; C x 1 x 1
+        self.excite = nn.Sequential(
+            nn.Linear(C, C // r, bias=False), nn.ReLU(inplace=True),
+            nn.Linear(C // r, C, bias=False), nn.Sigmoid())
+    def forward(self, x):                            # x: (B, C, H, W)
+        b, c, _, _ = x.shape
+        z = self.squeeze(x).view(b, c)               # (B, C)  squeeze
+        s = self.excite(z).view(b, c, 1, 1)          # (B, C, 1, 1) gates
+        return x * s                                 # scale (broadcast)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">The reduction ratio r &mdash; capacity vs. cost</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The two FC layers hold <code>C&middot;(C/r) + (C/r)&middot;C = 2C&sup2;/r</code> weights &mdash; the only parameters SE adds. Small <code>r</code> = a wider bottleneck = more capacity but more params; large <code>r</code> = cheaper but the gates get coarser (push it too far and they collapse toward a flat 0.5, doing nothing). The paper found <code>r = 16</code> a sweet spot across channel counts.</p>
+        <div class="relative"><pre>function seParams(C, r) { return 2 * C * (C / r); }   // = 2C^2 / r
+// C=512, r=16 -&gt; 2*512*32 = 32,768 weights for a whole stage's block
+// that is a fraction of one 3x3 conv (C*C*9 = 2.36M at C=512)
+// r up   -&gt; fewer params, coarser gating
+// r down -&gt; more params, finer gating (r=1 is the full 2C^2)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">Where it slots in &mdash; SE-ResNet</h3></div>
+        <p class="text-sm text-slate-600 mb-3">SE is a drop-in module, not a new architecture. In a ResNet bottleneck you apply it to the residual branch <em>right before</em> the identity is added back &mdash; the block recalibrates <code>F(x)</code>, then <code>y = x + SE(F(x))</code>. The skip connection is untouched, so nothing about training stability changes; you just gained learned channel attention.</p>
+        <div class="relative"><pre>class SEResidualBottleneck(nn.Module):
+    def __init__(self, C, r=16):
+        super().__init__()
+        self.conv = nn.Sequential(...)     # the usual 1x1 -&gt; 3x3 -&gt; 1x1
+        self.se   = SEBlock(C, r)          # <-- recalibrate the residual
+    def forward(self, x):
+        f = self.conv(x)                   # F(x)
+        f = self.se(f)                     # gate F(x) channel-wise
+        return torch.relu(x + f)           # add identity, THEN activate
+# SE also drops into Inception, MobileNetV3, EfficientNet the same way.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">8</div><h3 class="font-bold text-lg">The real thing &mdash; one import, and the family it spawned</h3></div>
+        <p class="text-sm text-slate-600 mb-3">You rarely hand-roll it. <code>timm</code> ships SE-ResNets and every EfficientNet (which uses SE in every block) pretrained. SE&rsquo;s &ldquo;recalibrate the channels&rdquo; idea kicked off a whole attention lineage: <strong>CBAM</strong> adds a spatial map, <strong>ECA</strong> replaces the FC bottleneck with a cheap 1-D conv, and SE is a standard ingredient in MobileNetV3.</p>
+        <div class="relative"><pre>import timm
+net = timm.create_model('seresnet50', pretrained=True)      # SE-ResNet-50
+net = timm.create_model('efficientnet_b0', pretrained=True) # SE in every block
+
+# torchvision exposes the squeeze-excite layer directly:
+from torchvision.ops import SqueezeExcitation
+se = SqueezeExcitation(input_channels=256, squeeze_channels=16)  # C, C/r
+# lineage of channel attention: SE -> CBAM (spatial too) -> ECA (1-D conv).</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 40 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2"><strong>Squeeze-and-Excitation</strong> gives a network cheap, learned <strong>channel attention</strong>. <strong>Squeeze</strong> collapses each channel&rsquo;s <span class="mono">H&times;W</span> map to one number via global average pooling; <strong>excite</strong> runs that <span class="mono">C</span>-vector through a two-layer bottleneck MLP (<span class="mono">FC C&rarr;C/r &rarr; ReLU &rarr; FC C/r&rarr;C &rarr; sigmoid</span>) to produce a per-channel gate in <span class="mono">(0,1)</span>; <strong>scale</strong> multiplies every map by its gate to recalibrate the stack. The only added parameters are the two FC layers, <span class="mono">&asymp;2C&sup2;/r</span> &mdash; the reduction ratio <span class="mono">r</span> trades capacity for cost (paper default 16). Sigmoid, not softmax, keeps the gates independent so many channels can stay on. It drops into ResNet, Inception, MobileNetV3 and EfficientNet with no retuning, won ILSVRC 2017, and seeded the attention lineage SE &rarr; CBAM &rarr; ECA. <strong>&#128073; Tomorrow, Day 41:</strong> Depthwise-separable convolutions &amp; MobileNet &mdash; factor a conv into a per-channel spatial filter plus a 1&times;1 mixer for order-of-magnitude fewer FLOPs.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+</script>
+
+<script>
+// ============================================================
+// REAL from-scratch Squeeze-and-Excitation, computed live in JS.
+//   squeeze : z_c = mean over HxW of channel c        (global avg pool)
+//   excite  : s = sigmoid( W2 . ReLU( W1 . z_centered ) )   (bottleneck MLP)
+//   scale   : out_c = map_c * s_c                      (channel recalibration)
+// C = 8 channels fixed so all 8 grids stay visible; r drives the
+// bottleneck width d = round(C/r). Weights are fixed (seeded) values
+// standing in for learned ones -- the point is the mechanism.
+// ============================================================
+const C = 8, HH = 4, WW = 4, GAIN = 4, WSEED = 33553;
+const R_VALUES = [1, 2, 4, 8, 16];
+
+// deterministic PRNG (mulberry32-style) for stable synthetic maps + weights
+function rng(seed){ let s=seed>>>0; return ()=>{ s=(s+0x6D2B79F5)>>>0; let t=s; t=Math.imul(t^(t>>>15), t|1); t^=t+Math.imul(t^(t>>>7), t|61); return ((t^(t>>>14))>>>0)/4294967296; }; }
+
+const PRESETS = [
+  { key:"edges",   name:"Edges",      pidx:0, desc:"a few low-level edge channels fire hard, the rest stay quiet",   energy:c => c<3 ? 0.88 : 0.14 },
+  { key:"texture", name:"Texture",    pidx:1, desc:"mid-band texture channels dominate, edges &amp; flats are quiet", energy:c => (c>=2 && c<6) ? 0.82 : 0.18 },
+  { key:"busy",    name:"Busy scene", pidx:2, desc:"many channels active at varying levels &mdash; a cluttered image", energy:c => 0.35 + 0.5*Math.abs(Math.sin(c*1.3+0.6)) },
+  { key:"flat",    name:"Flat sky",   pidx:3, desc:"everything is low &amp; uniform &rarr; gates stay near neutral 0.5", energy:c => 0.30 + (c===1?0.05:0) },
+];
+let preset = PRESETS[0];
+let rIdx = 1;                      // -> r = 2 (default)
+
+// ---- synthetic feature-maps (stable per preset) ----
+function genMaps(p){
+  const rnd = rng(9001 + p.pidx*911);
+  const maps = [];
+  for (let c=0; c<C; c++){
+    const base = p.energy(c);
+    const g = [];
+    for (let i=0; i<HH*WW; i++){ let v = base + (rnd()-0.5)*0.45; g.push(Math.max(0, Math.min(1, v))); }
+    maps.push(g);
+  }
+  return maps;
+}
+const squeeze = maps => maps.map(g => g.reduce((a,b)=>a+b,0)/g.length);
+
+// ---- excite: real 2-layer bottleneck MLP (tied weights W2 = W1^T) ----
+function makeW1(d){ const rnd = rng(WSEED); const W1=[]; for(let i=0;i<d;i++){ const row=[]; for(let j=0;j<C;j++) row.push(rnd()*2-1); W1.push(row); } return W1; }
+function excite(z, d){
+  const W1 = makeW1(d);
+  const zbar = z.reduce((a,b)=>a+b,0)/C;
+  const zc = z.map(v => v - zbar);                 // center: gate on relative salience
+  const a1 = new Array(d).fill(0);
+  for (let i=0;i<d;i++){ let s=0; for(let j=0;j<C;j++) s += W1[i][j]*zc[j]; a1[i] = Math.max(0, s); }  // FC1 + ReLU
+  const u = new Array(C).fill(0);
+  for (let j=0;j<C;j++){ let s=0; for(let i=0;i<d;i++) s += W1[i][j]*a1[i]; u[j] = s; }               // FC2 (= W1^T a1)
+  return u.map(v => 1/(1+Math.exp(-GAIN*v)));       // sigmoid -> gates
+}
+
+// ---- live state ----
+let S = {};
+function compute(){
+  const r = R_VALUES[rIdx];
+  const d = Math.max(1, Math.round(C / r));
+  const maps = genMaps(preset);
+  const z = squeeze(maps);
+  const gates = excite(z, d);
+  const params = 2 * C * d;
+  S = { r, d, maps, z, gates, params };
+}
+
+// ---- colour helpers ----
+function cellColor(v){
+  v = Math.max(0, Math.min(1, v));
+  const lo=[238,242,255], hi=[225,29,72];
+  const r=Math.round(lo[0]+(hi[0]-lo[0])*v), g=Math.round(lo[1]+(hi[1]-lo[1])*v), b=Math.round(lo[2]+(hi[2]-lo[2])*v);
+  return `rgb(${r},${g},${b})`;
+}
+const gateColor = gv => `hsl(${Math.round(215 - 200*gv)} 78% 52%)`;
+function gridHTML(grid, scale){ let c=""; for(let i=0;i<grid.length;i++){ c += `<div style="background:${cellColor(grid[i]*(scale===undefined?1:scale))}"></div>`; } return c; }
+
+// ---- renderers ----
+function renderPresets(){
+  document.getElementById("presets").innerHTML = PRESETS.map(p =>
+    `<button class="preset-btn ${p.key===preset.key?"on":""}" data-k="${p.key}">${p.name}</button>`).join("");
+  document.querySelectorAll(".preset-btn").forEach(b => b.onclick = () => {
+    preset = PRESETS.find(p => p.key===b.dataset.k); render();
+  });
+  document.getElementById("presetDesc").innerHTML = "&#8226; " + preset.desc;
+}
+function renderSqueeze(){
+  const { maps, z } = S;
+  let h="";
+  for (let c=0;c<C;c++){
+    h += `<div class="chcol"><div class="chlab">ch${c}</div>`+
+         `<div class="fmap">${gridHTML(maps[c])}</div>`+
+         `<div class="zbartrack"><div class="zbar" style="height:${Math.round(z[c]*100)}%"></div></div>`+
+         `<div class="zval">${z[c].toFixed(2)}</div></div>`;
+  }
+  document.getElementById("sqStrip").innerHTML = h;
+}
+function drawExcite(){
+  const { z, d, gates } = S;
+  const svg = document.getElementById("exsvg");
+  const top=32, spanY=232, xL=52, xM=190, xR=328, rad=8;
+  const yL = i => top + i*(spanY/(C-1));
+  const yM = j => d===1 ? top+spanY/2 : top + j*(spanY/(d-1));
+  let arcs="", nodes="";
+  for (let i=0;i<C;i++) for (let j=0;j<d;j++) arcs += `<line class="earc" x1="${xL}" y1="${yL(i)}" x2="${xM}" y2="${yM(j)}"/>`;
+  for (let j=0;j<d;j++) for (let i=0;i<C;i++) arcs += `<line class="earc" x1="${xM}" y1="${yM(j)}" x2="${xR}" y2="${yL(i)}"/>`;
+  for (let i=0;i<C;i++){
+    nodes += `<circle class="enode enz" cx="${xL}" cy="${yL(i)}" r="${rad}"/>`;
+    nodes += `<text class="elbl" x="${xL-14}" y="${yL(i)+3}" text-anchor="end">${z[i].toFixed(1)}</text>`;
+    nodes += `<circle cx="${xR}" cy="${yL(i)}" r="${rad}" fill="${gateColor(gates[i])}" stroke="#fff" stroke-width="1.4"/>`;
+    nodes += `<text class="elbl" x="${xR+14}" y="${yL(i)+3}" text-anchor="start" fill="#334155">${gates[i].toFixed(2)}</text>`;
+  }
+  for (let j=0;j<d;j++) nodes += `<circle class="enode end" cx="${xM}" cy="${yM(j)}" r="${rad}"/>`;
+  const cap = `<text class="elbl" x="${xL}" y="16" text-anchor="middle" fill="#e11d48">z &middot; C=${C}</text>`+
+              `<text class="elbl" x="${xM}" y="16" text-anchor="middle" fill="#7c3aed">C/r = ${d}</text>`+
+              `<text class="elbl" x="${xR}" y="16" text-anchor="middle" fill="#334155">gates &middot; &sigma;</text>`+
+              `<text class="elbl" x="${xM}" y="${top+spanY+22}" text-anchor="middle" fill="#94a3b8">FC &rarr; ReLU &rarr; FC &rarr; sigmoid</text>`;
+  svg.innerHTML = arcs + nodes + cap;
+}
+function renderGates(){
+  const { gates } = S;
+  document.getElementById("gateBars").innerHTML = gates.map((g,i) =>
+    `<div class="gbrow"><div class="gbname">ch${i}</div>`+
+    `<div class="gbtrack"><div class="gbfill" style="width:${Math.round(g*100)}%;background:${gateColor(g)}"></div><div class="gbmid"></div></div>`+
+    `<div class="gbval" style="color:${gateColor(g)}">${g.toFixed(2)}</div></div>`).join("");
+}
+function renderScale(){
+  const { maps, gates } = S;
+  let h="";
+  for (let c=0;c<C;c++){
+    const g = gates[c];
+    const tag = g>0.6 ? ["boost","#e11d48"] : g<0.4 ? ["suppress","#2563eb"] : ["keep","#64748b"];
+    const ring = g>0.6 ? "box-shadow:0 0 0 2px #fb7185, 0 0 8px rgba(244,63,94,.5);" : "";
+    h += `<div class="chcol"><div class="chlab">ch${c}</div>`+
+         `<div class="fmap" style="${ring}">${gridHTML(maps[c], g)}</div>`+
+         `<div class="gx">&times;${g.toFixed(2)}</div>`+
+         `<div class="pill2" style="background:${tag[1]}1f;color:${tag[1]}">${tag[0]}</div></div>`;
+  }
+  document.getElementById("scStrip").innerHTML = h;
+}
+function renderCost(){
+  const { r, d, params } = S;
+  const full = 2*C*C;                       // r = 1
+  const pct = (params/full*100).toFixed(0);
+  const convW = C*C*9;                      // one 3x3 conv over C channels
+  document.getElementById("v_r").textContent = r;
+  document.getElementById("dLbl").textContent = d;
+  document.getElementById("dLbl2").textContent = d;
+  document.getElementById("rCost").innerHTML =
+    `bottleneck <span class="mono">C/r = ${C}/${r} &rarr; ${d}</span> &middot; SE params <span class="mono sk">2&middot;C&middot;(C/r) = ${params}</span>`;
+  document.getElementById("costBox").innerHTML =
+    `<div class="flex gap-6 items-baseline mb-1">`+
+    `<div><span class="text-2xl font-black stat text-rose-600">${params}</span> <span class="text-xs text-slate-500">SE weights <span class="mono">= 2C&sup2;/r</span></span></div>`+
+    `<div><span class="text-2xl font-black stat text-slate-400">${convW}</span> <span class="text-xs text-slate-500">one 3&times;3 conv <span class="mono">C&sup2;&middot;9</span></span></div>`+
+    `</div>`+
+    `<div>At <span class="mono">r=${r}</span> the two FC layers add just <b class="sk">${params}</b> weights &mdash; <b>${pct}%</b> of the un-reduced <span class="mono">2C&sup2;=${full}</span>, and a rounding error next to a single conv&rsquo;s <span class="mono">${convW}</span>. `+
+    (d<=1 ? `But <span class="mono">r=${r}</span> starves the bottleneck to width <b>${d}</b>: too little capacity to model channel relationships, so the gates flatten toward a useless 0.5. That is the cost of over-reducing.`
+          : `Smaller <span class="mono">r</span> widens the bottleneck (finer gates, more params); larger <span class="mono">r</span> is cheaper but coarser. The paper&rsquo;s <span class="mono">r=16</span> balances the two on real channel counts.`)+
+    `</div>`;
+}
+function renderNote(){
+  const { gates } = S;
+  const up = gates.map((g,i)=>[i,g]).filter(x=>x[1]>0.6).map(x=>`ch${x[0]}`);
+  const dn = gates.map((g,i)=>[i,g]).filter(x=>x[1]<0.4).map(x=>`ch${x[0]}`);
+  document.getElementById("note").innerHTML =
+    `<strong>Read the recalibration.</strong> For the <b>${preset.name}</b> input, the excite MLP boosted `+
+    (up.length ? `<span class="sk">${up.join(", ")}</span>` : `<span class="sk">no</span>`)+
+    ` (gate &gt; 0.6) and suppressed `+
+    (dn.length ? `<span style="color:#2563eb;font-weight:700">${dn.join(", ")}</span>` : `<span style="color:#2563eb;font-weight:700">no</span>`)+
+    ` (gate &lt; 0.4) channels &mdash; the ones it read as informative survive, the rest fade in stage 3. Switch the input and the whole gate pattern shifts: recalibration is <em>input-dependent</em>. Pick <b>Flat sky</b> and every gate hugs 0.5 &mdash; nothing stands out, so nothing gets re-weighted.`;
+}
+function render(){
+  compute();
+  renderPresets();
+  renderSqueeze();
+  drawExcite();
+  renderGates();
+  renderScale();
+  renderCost();
+  renderNote();
+}
+
+// ---- wire controls ----
+document.getElementById("s_r").addEventListener("input", e => { rIdx = +e.target.value; render(); });
+render();
+</script>
+
+<script>
+const STEPS = [
+ { title:"1. The blind spot: convolutions weight every channel equally",
+   why:"A convolution layer produces C output channels, each a feature detector (an edge, a texture, a colour blob). But once produced, every channel is passed downstream with equal footing — the layer has no built-in way to say 'for THIS image, the fur-texture channel matters and the sky-gradient channel doesn't.' Standard conv models spatial structure inside a receptive field beautifully, yet it never explicitly models the interdependencies BETWEEN channels, nor does it adapt channel importance to the input. Squeeze-and-Excitation (Hu et al., 2017) adds exactly that: a cheap, learnable gate that recalibrates channel importance per input.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">conv output = C channels (edge, texture, colour, ...)<br>all passed on with EQUAL weight<br><br>but some channels are useless for a given image<br>&rarr; SE learns a per-channel importance gate</div>`,
+   code:"# a conv layer emits C feature-maps, each H x W\n#   x: (B, C, H, W)\n# problem: every channel is treated the same downstream,\n#   regardless of how useful it is for THIS input.\n# SE fix: gate each channel by a learned 0..1 importance." },
+ { title:"2. Squeeze — global average pooling to a channel descriptor",
+   why:"To decide a channel's importance you first need a summary of it. SE 'squeezes' each C-channel's entire H x W feature-map into a single number by GLOBAL AVERAGE POOLING: z_c = mean of all H*W activations in channel c. The result is a C-length vector z where z_c is a global descriptor of channel c. This is the key trick that gives the gate a global receptive field: a normal conv only sees a small window, but the squeezed descriptor summarises the whole spatial extent of the channel, so the excite step can reason about the image as a whole.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">channel c:  H x W map  ---(avg over H,W)---&gt;  z_c<br><br>z = [z_0, z_1, ..., z_{C-1}]   (length C)<br>one global number summarising each channel<br>(receptive field = the WHOLE feature-map)</div>`,
+   code:"import torch.nn as nn\nsqueeze = nn.AdaptiveAvgPool2d(1)   # (B,C,H,W) -> (B,C,1,1)\n\n# from scratch:\ndef squeeze(maps):                  # maps: C x (H*W)\n    return [sum(m)/len(m) for m in maps]   # z_c = mean(channel c)\n# z is a C-vector of per-channel descriptors." },
+ { title:"3. Excite, part 1 — the reduction bottleneck (FC C→C/r + ReLU)",
+   why:"Now turn the descriptor z into gates. The excite is a tiny two-layer MLP, and its first layer is a DIMENSIONALITY-REDUCTION: a fully-connected layer maps C down to C/r units, followed by ReLU. r is the reduction ratio (default 16). Two reasons for the bottleneck: (1) it makes the module cheap — a full C->C layer would cost C^2, this costs only C^2/r; (2) it forces the block to learn a compact, non-linear function of ALL channels together, capturing which channels tend to co-activate, rather than treating each channel in isolation.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">z (C)  --FC-->  C/r hidden units  --ReLU-->  h<br><br>r = reduction ratio (paper: 16)<br>bottleneck = cheap + models channel interactions<br>C=512, r=16  &rarr;  hidden width 32</div>`,
+   code:"# first FC: C -> C/r, then ReLU\nfc1  = nn.Linear(C, C // r, bias=False)\nrelu = nn.ReLU(inplace=True)\nh = relu(fc1(z))          # length C/r  (the bottleneck)\n# r trades capacity for cost: params here = C * (C/r)." },
+ { title:"4. Excite, part 2 — expand to C and sigmoid → gates in (0,1)",
+   why:"The second FC layer maps the C/r hidden units back UP to C, and a SIGMOID squashes each into (0,1). Those C numbers are the gates s. Crucially SE uses sigmoid, NOT softmax: softmax would force the gates to compete and sum to 1 (as if exactly one channel could be 'on'), but channels are not mutually exclusive — an image can need many strong channels at once. Independent per-channel sigmoids let the block turn any subset up or down freely. A gate near 1 means 'keep this channel', near 0 means 'suppress it', and 0.5 is neutral.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">h (C/r)  --FC-->  C  --sigmoid-->  s in (0,1)<br><br>s_c near 1 = keep   |   s_c near 0 = suppress<br><br>SIGMOID not softmax: gates are INDEPENDENT<br>(many channels can be 'on' at once)</div>`,
+   code:"# second FC: C/r -> C, then sigmoid -> gates\nfc2 = nn.Linear(C // r, C, bias=False)\ns = torch.sigmoid(fc2(h))       # C gates, each in (0,1)\n# sigmoid (independent) — NOT softmax (competing).\n# excite = sigmoid( W2 @ relu( W1 @ z ) )." },
+ { title:"5. Scale — channel-wise recalibration of the feature-maps",
+   why:"The final step is trivial but is where the magic lands: multiply each original feature-map by its gate. Channel c's entire H x W map is scaled by the single scalar s_c (broadcast over space). Informative channels (gate near 1) pass through almost untouched; unhelpful ones (gate near 0) are damped toward zero. The block has recalibrated its own input channel-by-channel and hands the result to the next layer. Because it only rescales existing maps — never invents new ones — it composes with any architecture without disturbing shapes.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">X~_c = s_c &middot; X_c      (broadcast s_c over H x W)<br><br>gate 0.95 &rarr; channel kept vivid<br>gate 0.05 &rarr; channel faded to near zero<br><br>full block:  X~ = X &middot; excite(squeeze(X))</div>`,
+   code:"# scale: broadcast each gate over its H x W map\ns = s.view(B, C, 1, 1)      # (B,C,1,1) to broadcast\nout = x * s                 # channel-wise recalibration\n# from scratch:\nout = [[v * s[c] for v in maps[c]] for c in range(C)]" },
+ { title:"6. The reduction ratio r — capacity vs. parameter cost",
+   why:"r is SE's one real knob. The two FC layers together hold 2 * C * (C/r) = 2C^2/r weights — the ONLY parameters SE adds to the network. Small r (wide bottleneck) gives the gates more capacity but costs more; large r is cheaper but the gating gets coarse, and pushed to the extreme the bottleneck is too small to represent anything useful and the gates collapse toward a flat 0.5 (no recalibration at all). The authors swept r and found 16 a robust accuracy/cost sweet spot. Total SE overhead on a ResNet-50 is only ~2.5% more parameters.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">SE params = 2 &middot; C &middot; (C/r) = 2C&sup2;/r<br><br>r small &rarr; finer gates, more params<br>r large &rarr; cheaper, coarser gates<br>r too large &rarr; gates collapse to ~0.5 (useless)<br>paper default r = 16  (+~2.5% params on ResNet-50)</div>`,
+   code:"def se_params(C, r): return 2 * C * (C // r)   # = 2C^2 / r\n# C=256,r=16 -> 2*256*16 = 8,192 weights (tiny)\n# vs one 3x3 conv at C=256: 256*256*9 = 590K\n# r is the accuracy/efficiency dial; 16 is the default." },
+ { title:"7. Where it slots in — SE-ResNet, Inception, and beyond",
+   why:"SE is a MODULE, not an architecture — it drops into an existing block. In an SE-ResNet you insert it on the residual branch, right before the identity add: y = x + SE(F(x)). The skip connection is left alone, so training dynamics don't change; you just gained learned channel attention on F(x). The same one-liner augments Inception modules, and SE became a standard component of MobileNetV3 and every EfficientNet block. Adding SE to ResNet-50 lifted ImageNet top-5 error by ~1% for well under 1% more compute — which is what won the 2017 ILSVRC classification challenge.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">ResNet:     y = x + F(x)<br>SE-ResNet:  y = x + SE(F(x))   &lt;- gate the residual<br><br>skip untouched &rarr; same stability, + channel attention<br>also in: Inception, MobileNetV3, EfficientNet</div>`,
+   code:"class SEResBottleneck(nn.Module):\n    def __init__(self, C, r=16):\n        super().__init__()\n        self.conv = ...            # 1x1 -> 3x3 -> 1x1\n        self.se   = SEBlock(C, r)  # recalibrate F(x)\n    def forward(self, x):\n        f = self.se(self.conv(x))  # gate the residual branch\n        return torch.relu(x + f)   # identity untouched" },
+ { title:"8. In practice — one import, and the attention lineage it started",
+   why:"You never hand-build SE for real work. timm ships SE-ResNets and every EfficientNet (SE in every block) pretrained; torchvision exposes a SqueezeExcitation op directly. SE also launched a family of attention modules: CBAM adds a SPATIAL attention map (which channels AND where) after the channel gate; ECA-Net replaces the FC bottleneck with a cheap 1-D convolution to cut even those parameters; and the channel-recalibration idea shows up throughout modern efficient CNNs. If parameter budget matters, a pretrained EfficientNet or SE-ResNet is a strong, compact backbone.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">timm: seresnet50, efficientnet_b0 (SE everywhere)<br>torchvision.ops.SqueezeExcitation(C, C/r)<br><br>lineage of channel attention:<br>SE &rarr; CBAM (spatial too) &rarr; ECA (1-D conv)</div>`,
+   code:"import timm\nnet = timm.create_model('seresnet50', pretrained=True)\nnet = timm.create_model('efficientnet_b0', pretrained=True)\n\nfrom torchvision.ops import SqueezeExcitation\nse = SqueezeExcitation(256, 16)   # input_channels=C, squeeze=C/r\n# SE -> CBAM -> ECA: the channel-attention family tree." }
+];
+</script>
+
+<script>
+const stepsEl=document.getElementById("steps");
+const prevB=document.getElementById("prev"), nextB=document.getElementById("next-btn"), autoB=document.getElementById("auto");
+let curS=0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },5200); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>
