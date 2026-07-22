@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 41 — Depthwise-Separable Convolutions</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .cmp td, .cmp th { padding:8px 10px; border-bottom:1px solid #e2e8f0; text-align:left; vertical-align:top; }
+  .cmp th { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#64748b; }
+  .cmp td:first-child{ font-weight:800; white-space:nowrap; }
+  /* ---- SVG channel diagrams ---- */
+  #dwsvg, #pwsvg { width:100%; height:auto; display:block; }
+  .dlbl { font:700 10px "SFMono-Regular",Consolas,monospace; fill:#475569; }
+  /* ---- factorization blocks ---- */
+  .fblock{ border-radius:11px; padding:12px 14px; text-align:center; }
+  .fbig{ font:800 13px "SFMono-Regular",Consolas,monospace; letter-spacing:.02em; }
+  .fsub{ font-size:11px; margin-top:3px; opacity:.85; }
+  .fplus{ font:800 22px sans-serif; color:#94a3b8; align-self:center; }
+  /* ---- cost bars ---- */
+  .barrow{ margin-bottom:10px; }
+  .barhead{ display:flex; justify-content:space-between; font-size:12px; font-weight:700; color:#334155; margin-bottom:3px; }
+  .bartrack{ height:26px; border-radius:7px; background:#f1f5f9; overflow:hidden; display:flex; }
+  .barseg{ height:100%; display:flex; align-items:center; justify-content:center; font:700 10px "SFMono-Regular",Consolas,monospace; color:#fff; white-space:nowrap; transition:width .2s; overflow:hidden; }
+  /* ---- misc ---- */
+  .preset-btn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:7px 12px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; transition:.12s; }
+  .preset-btn:hover{ border-color:#fda4af; }
+  .preset-btn.on{ background:#f43f5e; border-color:#f43f5e; color:#fff; }
+  .stage-num{ display:inline-flex; width:22px; height:22px; border-radius:999px; background:#f43f5e; color:#fff; font:800 12px sans-serif; align-items:center; justify-content:center; margin-right:6px; }
+  .metric{ font-variant-numeric:tabular-nums; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 41</div>
+      <h1 class="text-xl font-bold">&#128241; Depthwise-Separable Convolutions &mdash; a standard conv does two jobs at once with one fat tensor (<span class="mono">D<sub>k</sub>&times;D<sub>k</sub>&times;C<sub>in</sub>&times;C<sub>out</sub></span>): it filters <em>space</em> and mixes <em>channels</em> in a single sweep, paying <span class="mono">D<sub>k</sub>&sup2;&middot;C<sub>in</sub>&middot;C<sub>out</sub></span> multiply-adds per pixel. MobileNet <strong>factors</strong> that into two cheap steps. <strong>DEPTHWISE</strong>: one <span class="mono">D<sub>k</sub>&times;D<sub>k</sub></span> filter <em>per input channel</em> &mdash; pure spatial filtering, <span class="mono">C<sub>in</sub>&rarr;C<sub>in</sub></span>, zero cross-channel mixing (<span class="mono">D<sub>k</sub>&sup2;&middot;C<sub>in</sub></span>). <strong>POINTWISE</strong>: a <span class="mono">1&times;1</span> conv that mixes channels at every pixel with no spatial extent, <span class="mono">C<sub>in</sub>&rarr;C<sub>out</sub></span> (<span class="mono">C<sub>in</sub>&middot;C<sub>out</sub></span>). Same output shape, but the cost drops by <span class="mono">1/C<sub>out</sub> + 1/D<sub>k</sub>&sup2;</span> &mdash; roughly <strong>8&ndash;9&times;</strong> fewer multiplies for a 3&times;3 kernel &mdash; for a tiny accuracy hit. It is the engine of <strong>MobileNet</strong>, Xception and every on-device CNN.</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto text-center">
+      <h2 class="text-2xl font-bold mb-1">Drag the four dimensions and watch the <span class="sk">multiply-add counts</span> &mdash; and the <span class="sk">savings ratio</span> &mdash; recompute live.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto">A standard convolution turns <span class="mono">C<sub>in</sub></span> input channels into <span class="mono">C<sub>out</sub></span> output channels over a <span class="mono">D<sub>f</sub>&times;D<sub>f</sub></span> feature-map using a <span class="mono">D<sub>k</sub>&times;D<sub>k</sub></span> kernel &mdash; and it costs <span class="mono">D<sub>k</sub>&sup2;&middot;C<sub>in</sub>&middot;C<sub>out</sub>&middot;D<sub>f</sub>&sup2;</span> multiply-adds. The depthwise-separable version splits that into a per-channel spatial <strong>depthwise</strong> conv plus a <span class="mono">1&times;1</span> channel-mixing <strong>pointwise</strong> conv. Everything below &mdash; both cost totals, the two bars, and the reduction ratio <span class="mono">1/C<sub>out</sub> + 1/D<sub>k</sub>&sup2;</span> &mdash; is computed live in your browser from the slider values. Notice the ratio does <em>not</em> depend on <span class="mono">D<sub>f</sub></span> (it cancels), and that a <span class="mono">1&times;1</span> kernel gives <em>no</em> saving at all.</p>
+
+      <!-- controls -->
+      <div class="bg-white rounded-xl border border-rose-200 p-4 mb-4 text-left">
+        <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Presets &mdash; representative MobileNet-style layers</div>
+        <div id="presets" class="flex flex-wrap gap-2 mb-4"></div>
+        <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="ctrl">
+            <label>kernel <span class="mono">D<sub>k</sub></span><span id="v_dk" class="sk stat">3</span></label>
+            <input type="range" id="s_dk" min="1" max="7" step="2" value="3">
+          </div>
+          <div class="ctrl">
+            <label>input ch <span class="mono">C<sub>in</sub></span><span id="v_cin" class="sk stat">32</span></label>
+            <input type="range" id="s_cin" min="0" max="7" step="1" value="3">
+          </div>
+          <div class="ctrl">
+            <label>output ch <span class="mono">C<sub>out</sub></span><span id="v_cout" class="sk stat">64</span></label>
+            <input type="range" id="s_cout" min="0" max="7" step="1" value="3">
+          </div>
+          <div class="ctrl">
+            <label>map size <span class="mono">D<sub>f</sub></span><span id="v_df" class="sk stat">28</span></label>
+            <input type="range" id="s_df" min="0" max="5" step="1" value="2">
+          </div>
+        </div>
+      </div>
+
+      <!-- headline reduction -->
+      <div class="grid lg:grid-cols-[1.1fr_1fr] gap-4 mb-4">
+        <div class="bg-slate-900 text-white rounded-xl p-5 flex flex-col justify-center">
+          <div class="text-xs uppercase font-bold text-rose-300 tracking-wider mb-1">Fewer multiply-adds</div>
+          <div class="flex items-baseline gap-2 justify-center">
+            <span id="speedBig" class="text-6xl font-black metric text-rose-400">7.9&times;</span>
+            <span class="text-slate-300 text-sm">cheaper</span>
+          </div>
+          <div id="speedSub" class="text-center text-xs text-slate-400 mt-2"></div>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-200 p-4 text-left">
+          <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">The reduction formula</div>
+          <div id="formulaBox" class="text-sm text-slate-700"></div>
+        </div>
+      </div>
+
+      <!-- factorization at a glance -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4 text-left">
+        <div class="text-sm font-bold text-slate-700 mb-3">One fat conv &rarr; two lean ones (identical output shape)</div>
+        <div class="grid md:grid-cols-[1fr_auto_1.3fr] gap-3 items-stretch">
+          <div class="fblock" style="background:#fee2e2;border:1.5px solid #fca5a5">
+            <div class="text-[11px] uppercase font-bold text-rose-700 mb-1">Standard conv</div>
+            <div class="fbig text-rose-800" id="fbStd">D&#8342;&times;D&#8342;&times;C&#8339;&times;C&#8352;</div>
+            <div class="fsub text-rose-700">filters space <b>and</b> mixes channels in one tensor</div>
+            <div class="fsub text-rose-700 mono" id="fbStdN"></div>
+          </div>
+          <div class="fplus">=</div>
+          <div class="grid grid-cols-[1fr_auto_1fr] gap-2 items-stretch">
+            <div class="fblock" style="background:#ffe4e6;border:1.5px solid #fda4af">
+              <div class="text-[11px] uppercase font-bold text-rose-700 mb-1">Depthwise</div>
+              <div class="fbig text-rose-800" id="fbDw">D&#8342;&times;D&#8342;&times;C&#8339;</div>
+              <div class="fsub text-rose-700">spatial only, per channel</div>
+              <div class="fsub text-rose-700 mono" id="fbDwN"></div>
+            </div>
+            <div class="fplus" style="font-size:18px">+</div>
+            <div class="fblock" style="background:#ede9fe;border:1.5px solid #c4b5fd">
+              <div class="text-[11px] uppercase font-bold text-violet-700 mb-1">Pointwise 1&times;1</div>
+              <div class="fbig text-violet-800" id="fbPw">1&times;1&times;C&#8339;&times;C&#8352;</div>
+              <div class="fsub text-violet-700">mixes channels, no space</div>
+              <div class="fsub text-violet-700 mono" id="fbPwN"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STAGE 1: depthwise -->
+      <div class="bg-white rounded-xl border border-rose-200 p-4 mb-4 text-left">
+        <div class="text-sm font-bold text-slate-700 mb-1"><span class="stage-num">1</span>DEPTHWISE &mdash; one <span class="mono">D<sub>k</sub>&times;D<sub>k</sub></span> filter per channel, no mixing (<span class="mono">C<sub>in</sub>&rarr;C<sub>in</sub></span>)</div>
+        <p class="text-xs text-slate-400 mb-3">Each input channel gets its <em>own</em> spatial filter and produces exactly one output channel &mdash; a straight line across, same colour. Channel <span class="mono">i</span> never talks to channel <span class="mono">j</span>. It is pure spatial filtering, so the channel count is unchanged and the cost is only <span class="mono">D<sub>k</sub>&sup2;&middot;C<sub>in</sub>&middot;D<sub>f</sub>&sup2;</span>.</p>
+        <div class="grid lg:grid-cols-[1fr_1fr] gap-4 items-center">
+          <svg id="dwsvg" viewBox="0 0 360 230" preserveAspectRatio="xMidYMid meet"></svg>
+          <div class="text-sm text-slate-600" id="dwNote"></div>
+        </div>
+      </div>
+
+      <!-- STAGE 2: pointwise -->
+      <div class="bg-white rounded-xl border border-violet-200 p-4 mb-4 text-left">
+        <div class="text-sm font-bold text-violet-800 mb-1"><span class="stage-num" style="background:#7c3aed">2</span>POINTWISE &mdash; a <span class="mono">1&times;1</span> conv mixes all channels (<span class="mono">C<sub>in</sub>&rarr;C<sub>out</sub></span>)</div>
+        <p class="text-xs text-slate-400 mb-3">Now recombine. At every single pixel, a <span class="mono">1&times;1</span> conv takes a weighted sum of <em>all</em> <span class="mono">C<sub>in</sub></span> channels to build each of the <span class="mono">C<sub>out</sub></span> outputs &mdash; full cross-channel mixing, but zero spatial footprint. This is where new feature combinations are formed; cost <span class="mono">C<sub>in</sub>&middot;C<sub>out</sub>&middot;D<sub>f</sub>&sup2;</span>.</p>
+        <div class="grid lg:grid-cols-[1fr_1fr] gap-4 items-center">
+          <svg id="pwsvg" viewBox="0 0 360 230" preserveAspectRatio="xMidYMid meet"></svg>
+          <div class="text-sm text-slate-600" id="pwNote"></div>
+        </div>
+      </div>
+
+      <!-- cost bars -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4 text-left">
+        <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-3">Multiply-adds &mdash; standard vs. depthwise + pointwise</div>
+        <div id="bars"></div>
+        <div id="costText" class="text-sm text-slate-700 mt-2"></div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-left overflow-x-auto">
+        <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Standard conv vs. its factored pieces (per-pixel multiply-adds &times; <span class="mono">D<sub>f</sub>&sup2;</span>)</div>
+        <table class="cmp w-full text-sm"><thead><tr>
+          <th>Layer</th><th>What it does</th><th>Output channels</th><th>Multiply-adds</th>
+        </tr></thead><tbody id="cmpBody"></tbody></table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Split spatial filtering from channel mixing</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">The live demo is nothing but arithmetic on the four dimensions. We assemble the whole idea one line at a time: the <strong>standard conv</strong> cost we are trying to beat, a from-scratch <strong>depthwise</strong> conv (per-channel spatial filter), the <strong>pointwise</strong> <span class="mono">1&times;1</span> mixer, the two glued into one <strong>separable block</strong> with BN + ReLU, the <strong>reduction-ratio</strong> arithmetic, the real <code>groups=C<sub>in</sub></code> trick in PyTorch, MobileNet&rsquo;s <strong>width &amp; resolution multipliers</strong>, and finally the one import you actually use.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">The baseline &mdash; what a standard conv actually costs</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A standard conv slides a <code>D<sub>k</sub>&times;D<sub>k</sub>&times;C<sub>in</sub></code> filter <code>C<sub>out</sub></code> times over the map. For every one of the <code>D<sub>f</sub>&sup2;</code> output pixels and every one of the <code>C<sub>out</sub></code> outputs it multiplies <code>D<sub>k</sub>&sup2;&middot;C<sub>in</sub></code> values &mdash; so it fuses <em>spatial filtering</em> and <em>channel mixing</em> into a single, expensive operation.</p>
+        <div class="relative"><pre>// standard conv: multiply-adds for a Df x Df output
+function stdCost(Dk, Cin, Cout, Df) {
+  return Dk*Dk * Cin * Cout * Df*Df;   // one fat tensor does everything
+}
+// weights (params) alone:  Dk*Dk * Cin * Cout
+// e.g. 3x3, Cin=Cout=512  ->  9*512*512 = 2,359,296 weights per layer</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Depthwise &mdash; one spatial filter per channel, no mixing</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Give each input channel its <em>own</em> <code>D<sub>k</sub>&times;D<sub>k</sub></code> kernel and convolve it in isolation. Channel <code>c</code> in &rarr; channel <code>c</code> out; nothing crosses between channels. The output has the same <code>C<sub>in</sub></code> channels, and the cost collapses to <code>D<sub>k</sub>&sup2;&middot;C<sub>in</sub>&middot;D<sub>f</sub>&sup2;</code> &mdash; the <code>C<sub>out</sub></code> factor is gone.</p>
+        <div class="relative"><pre>// depthwise: conv each channel with its OWN kernel (no mixing)
+function depthwise(maps, kernels, Dk) {   // maps[c], kernels[c] = Dk*Dk
+  return maps.map((m, c) =&gt; conv2d(m, kernels[c]));  // c -&gt; c only
+}
+function dwCost(Dk, Cin, Df) { return Dk*Dk * Cin * Df*Df; }
+// output still has Cin channels; pure spatial filtering.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Pointwise &mdash; a 1&times;1 conv that mixes channels</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Depthwise never combined channels, so a <code>1&times;1</code> conv does exactly that. At each pixel it takes a weighted sum across all <code>C<sub>in</sub></code> channels to produce each of <code>C<sub>out</sub></code> outputs &mdash; a plain matrix multiply per pixel, no spatial extent. Cost <code>C<sub>in</sub>&middot;C<sub>out</sub>&middot;D<sub>f</sub>&sup2;</code>.</p>
+        <div class="relative"><pre>// pointwise: 1x1 conv = per-pixel channel mix  (Cin -&gt; Cout)
+function pointwise(chVals, W) {        // chVals: length Cin at one pixel
+  return W.map(row =&gt;                  // W: [Cout][Cin]
+    row.reduce((a, w, c) =&gt; a + w * chVals[c], 0));
+}
+function pwCost(Cin, Cout, Df) { return Cin*Cout * Df*Df; }
+// no spatial footprint (1x1) — this is where new features are built.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">The separable block &mdash; depthwise then pointwise</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Chain them: depthwise for <em>where</em>, pointwise for <em>what</em>. In MobileNet each conv is followed by BatchNorm + ReLU, so the block is <code>DW &rarr; BN &rarr; ReLU &rarr; PW &rarr; BN &rarr; ReLU</code>. Same input and output shapes as one standard conv &mdash; it is a drop-in replacement, just far cheaper.</p>
+        <div class="relative"><pre>// depthwise-separable = depthwise (space) THEN pointwise (channels)
+function separable(maps, dwKernels, pwW, Dk) {
+  const spatial = depthwise(maps, dwKernels, Dk);  // Cin -&gt; Cin
+  return pointwiseAllPixels(spatial, pwW);         // Cin -&gt; Cout
+}
+// MobileNet block:  DW -> BN -> ReLU -> PW(1x1) -> BN -> ReLU
+// identical in/out shape to one standard conv, a fraction of the cost.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">The reduction ratio &mdash; where 8&ndash;9&times; comes from</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Divide separable cost by standard cost and <code>D<sub>f</sub>&sup2;</code> and one <code>C<sub>in</sub></code> cancel, leaving <code>1/C<sub>out</sub> + 1/D<sub>k</sub>&sup2;</code>. With a 3&times;3 kernel and a decent channel count the second term dominates: <code>&asymp; 1/9</code>, so about <strong>8&ndash;9&times;</strong> cheaper. A <code>1&times;1</code> kernel gives <code>1/C<sub>out</sub> + 1</code> &mdash; no saving, because there is no spatial cost to factor out.</p>
+        <div class="relative"><pre>function reduction(Dk, Cout) {         // separable / standard
+  return 1/Cout + 1/(Dk*Dk);
+}
+// Dk=3, Cout=256 -> 1/256 + 1/9 = 0.115  ->  ~8.7x fewer multiplies
+// Dk=1           -> 1/Cout + 1   > 1      ->  NO benefit (1x1 already)
+// note: independent of Df and (mostly) of Cin.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">In PyTorch &mdash; the groups=C&#8339; trick</h3></div>
+        <p class="text-sm text-slate-600 mb-3">There is no separate &ldquo;depthwise&rdquo; layer &mdash; you get it by setting <code>groups=in_channels</code> on a normal <code>Conv2d</code>, which forces each channel into its own group with no mixing. The pointwise step is just a <code>Conv2d</code> with <code>kernel_size=1</code>. Two lines rebuild the whole block.</p>
+        <div class="relative"><pre>import torch.nn as nn
+
+class SeparableConv(nn.Module):
+    def __init__(self, Cin, Cout, Dk=3, stride=1):
+        super().__init__()
+        # depthwise: groups=Cin  => one filter per channel, no mixing
+        self.dw = nn.Conv2d(Cin, Cin, Dk, stride, Dk//2,
+                            groups=Cin, bias=False)
+        self.pw = nn.Conv2d(Cin, Cout, 1, bias=False)   # pointwise 1x1
+        self.bn1, self.bn2 = nn.BatchNorm2d(Cin), nn.BatchNorm2d(Cout)
+    def forward(self, x):
+        x = torch.relu(self.bn1(self.dw(x)))   # space
+        return torch.relu(self.bn2(self.pw(x)))# channels</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">MobileNet&rsquo;s two dials &mdash; width &alpha; and resolution &rho;</h3></div>
+        <p class="text-sm text-slate-600 mb-3">On top of the factorization, MobileNet exposes two global shrink knobs. The <strong>width multiplier</strong> <code>&alpha;</code> scales every channel count (cost <code>&prop; &alpha;&sup2;</code>); the <strong>resolution multiplier</strong> <code>&rho;</code> scales the input size (cost <code>&prop; &rho;&sup2;</code>). Together they sweep out a whole family of models trading accuracy for latency &mdash; MobileNet-0.5-160, etc.</p>
+        <div class="relative"><pre>def scaled_cost(Dk, Cin, Cout, Df, alpha=1.0, rho=1.0):
+    Cin, Cout = int(Cin*alpha), int(Cout*alpha)   # width  ~ alpha^2
+    Df = int(Df*rho)                              # resolution ~ rho^2
+    return Dk*Dk*Cin*Df*Df + Cin*Cout*Df*Df       # depthwise + pointwise
+# alpha in {1.0, 0.75, 0.5, 0.25}, rho set by input {224,192,160,128}
+# alpha=0.5 -> ~4x cheaper still, a few % accuracy for big speedups.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">8</div><h3 class="font-bold text-lg">The real thing &mdash; one import, and the family it built</h3></div>
+        <p class="text-sm text-slate-600 mb-3">You never hand-roll it. torchvision ships MobileNetV2/V3 pretrained; <code>timm</code> has them plus Xception and EfficientNet (which pairs the separable block with Day-40&rsquo;s squeeze-excite). The depthwise-separable idea is now the default building block for anything that must run on a phone.</p>
+        <div class="relative"><pre>import torchvision.models as m
+net = m.mobilenet_v3_large(weights="DEFAULT")   # separable convs everywhere
+
+import timm
+net = timm.create_model('mobilenetv3_small_100', pretrained=True)
+net = timm.create_model('xception', pretrained=True)   # separable, deeper
+# lineage: MobileNetV1 (this) -> V2 inverted residuals -> V3 + SE
+#          -> EfficientNet (separable + squeeze-excite + compound scaling)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 41 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2"><strong>Depthwise-separable convolutions</strong> factor one expensive standard conv into two cheap ones. A <strong>depthwise</strong> conv applies a single <span class="mono">D<sub>k</sub>&times;D<sub>k</sub></span> spatial filter to each channel independently (<span class="mono">C<sub>in</sub>&rarr;C<sub>in</sub></span>, cost <span class="mono">D<sub>k</sub>&sup2;&middot;C<sub>in</sub>&middot;D<sub>f</sub>&sup2;</span>) with <em>no</em> cross-channel mixing; a <strong>pointwise</strong> <span class="mono">1&times;1</span> conv then mixes all channels at every pixel (<span class="mono">C<sub>in</sub>&rarr;C<sub>out</sub></span>, cost <span class="mono">C<sub>in</sub>&middot;C<sub>out</sub>&middot;D<sub>f</sub>&sup2;</span>) with no spatial extent. Same output shape as a standard conv, but the multiply-adds drop by <span class="mono">1/C<sub>out</sub> + 1/D<sub>k</sub>&sup2;</span> &mdash; roughly <strong>8&ndash;9&times;</strong> for a 3&times;3 kernel &mdash; for only a small accuracy cost. In PyTorch you get depthwise for free via <code>groups=C<sub>in</sub></code>, and MobileNet layers a width multiplier <span class="mono">&alpha;</span> and resolution multiplier <span class="mono">&rho;</span> on top to shrink further. It powers MobileNet, Xception, and (with squeeze-excite) EfficientNet. <strong>&#128073; Tomorrow, Day 42:</strong> EfficientNet &amp; compound scaling &mdash; balance depth, width and resolution with one coefficient, stacking MBConv blocks (inverted-residual depthwise-separable + squeeze-excite) into a state-of-the-art efficiency frontier.</p></div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+</script>
+
+<script>
+// ============================================================
+// Depthwise-Separable convolution cost, computed live in JS.
+//   standard  : Dk^2 * Cin * Cout * Df^2   (space + channels fused)
+//   depthwise : Dk^2 * Cin        * Df^2   (space only, per channel)
+//   pointwise :        Cin * Cout * Df^2   (1x1 channel mix)
+//   separable = depthwise + pointwise
+//   reduction = separable / standard = 1/Cout + 1/Dk^2   (Df cancels)
+// ============================================================
+const CIN_VALS  = [3, 8, 16, 32, 64, 128, 256, 512];
+const COUT_VALS = [8, 16, 32, 64, 128, 256, 512, 1024];
+const DF_VALS   = [7, 14, 28, 56, 112, 224];
+const CH = ["#f43f5e","#fb923c","#facc15","#4ade80","#38bdf8","#a78bfa","#f472b6","#2dd4bf"];
+const VIS = 6; // max channels drawn per column
+
+const PRESETS = [
+  { name:"Typical 3×3", dk:3, cin:32,  cout:64,  df:28 },
+  { name:"Deep layer",  dk:3, cin:512, cout:512, df:7  },
+  { name:"Big 5×5",     dk:5, cin:128, cout:128, df:28 },
+  { name:"1×1 (no gain)",dk:1, cin:64,  cout:128, df:28 },
+];
+
+let dk = 3, ciIdx = 3, coIdx = 3, dfIdx = 2;   // defaults: 3, 32, 64, 28
+let dims = {};
+
+function fmt(n){ return Math.round(n).toLocaleString('en-US'); }
+function compact(n){
+  if (n >= 1e9) return (n/1e9).toFixed(2)+"G";
+  if (n >= 1e6) return (n/1e6).toFixed(2)+"M";
+  if (n >= 1e3) return (n/1e3).toFixed(1)+"K";
+  return ""+Math.round(n);
+}
+
+function compute(){
+  const cin = CIN_VALS[ciIdx], cout = COUT_VALS[coIdx], df = DF_VALS[dfIdx];
+  const std = dk*dk*cin*cout*df*df;
+  const dw  = dk*dk*cin*df*df;
+  const pw  = cin*cout*df*df;
+  const sep = dw + pw;
+  const ratio = sep/std;            // = 1/cout + 1/dk^2
+  const speed = std/sep;
+  const pStd = dk*dk*cin*cout, pDw = dk*dk*cin, pPw = cin*cout, pSep = pDw+pPw;
+  dims = { dk, cin, cout, df, std, dw, pw, sep, ratio, speed, pStd, pDw, pPw, pSep };
+}
+
+// ---- SVG: depthwise (per-channel, straight-through) ----
+function drawDepthwise(){
+  const { cin, dk } = dims;
+  const nv = Math.min(cin, VIS);
+  const top = 34, span = 150, xL = 74, xR = 286, mid = (xL+xR)/2;
+  const yy = i => nv===1 ? top+span/2 : top + i*(span/(nv-1));
+  let s = "";
+  s += `<text class="dlbl" x="${xL-24}" y="18" text-anchor="middle" fill="#be123c">in · C=${cin}</text>`;
+  s += `<text class="dlbl" x="${mid}" y="18" text-anchor="middle" fill="#475569">${dk}×${dk} filter</text>`;
+  s += `<text class="dlbl" x="${xR+24}" y="18" text-anchor="middle" fill="#be123c">out · C=${cin}</text>`;
+  for (let i=0;i<nv;i++){
+    const c = CH[i%CH.length];
+    s += `<line x1="${xL+11}" y1="${yy(i)}" x2="${xR-11}" y2="${yy(i)}" stroke="${c}" stroke-width="2.6"/>`;
+    s += `<rect x="${xL-13}" y="${yy(i)-11}" width="22" height="22" rx="4" fill="${c}"/>`;
+    s += `<rect x="${mid-9}" y="${yy(i)-9}" width="18" height="18" rx="3" fill="#fff" stroke="${c}" stroke-width="1.7"/>`;
+    s += `<rect x="${xR-9}" y="${yy(i)-11}" width="22" height="22" rx="4" fill="${c}"/>`;
+  }
+  if (cin > nv){
+    const yb = top + span + 22;
+    s += `<text class="dlbl" x="${xL-2}" y="${yb}" text-anchor="middle">⋮</text>`;
+    s += `<text class="dlbl" x="${xR}" y="${yb}" text-anchor="middle">⋮</text>`;
+    s += `<text class="dlbl" x="${mid}" y="${yb}" text-anchor="middle" fill="#94a3b8">+${cin-nv} more channels, each its own filter</text>`;
+  }
+  document.getElementById("dwsvg").innerHTML = s;
+  document.getElementById("dwNote").innerHTML =
+    `<strong>${dims.cin} filters, ${dims.cin} outputs.</strong> Every channel is filtered in its own lane &mdash; the wires never cross, so no information moves <em>between</em> channels here. That is why depthwise can&rsquo;t change the channel count and costs only <span class="mono sk">${compact(dims.dw)}</span> multiply-adds (<span class="mono">${dk}²·${dims.cin}·${dims.df}²</span>). It captures spatial pattern; it just can&rsquo;t combine features.`;
+}
+
+// ---- SVG: pointwise (full bipartite mix) ----
+function drawPointwise(){
+  const { cin, cout } = dims;
+  const nvi = Math.min(cin, VIS), nvo = Math.min(cout, VIS);
+  const top = 34, span = 150, xL = 78, xR = 282;
+  const yI = i => nvi===1 ? top+span/2 : top + i*(span/(nvi-1));
+  const yO = j => nvo===1 ? top+span/2 : top + j*(span/(nvo-1));
+  let lines = "", nodes = "";
+  for (let i=0;i<nvi;i++) for (let j=0;j<nvo;j++)
+    lines += `<line x1="${xL}" y1="${yI(i)}" x2="${xR}" y2="${yO(j)}" stroke="#c4b5fd" stroke-width="0.7" opacity="0.6"/>`;
+  for (let i=0;i<nvi;i++){ const c = CH[i%CH.length]; nodes += `<rect x="${xL-22}" y="${yI(i)-10}" width="20" height="20" rx="4" fill="${c}"/>`; }
+  for (let j=0;j<nvo;j++) nodes += `<circle cx="${xR}" cy="${yO(j)}" r="9" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.9"/>`;
+  let cap = `<text class="dlbl" x="${xL-12}" y="18" text-anchor="middle" fill="#be123c">in · C=${cin}</text>`+
+            `<text class="dlbl" x="${(xL+xR)/2}" y="18" text-anchor="middle" fill="#7c3aed">1×1 mix</text>`+
+            `<text class="dlbl" x="${xR+12}" y="18" text-anchor="middle" fill="#7c3aed">out · C=${cout}</text>`;
+  if (cin > nvi || cout > nvo){
+    const yb = top + span + 22;
+    cap += `<text class="dlbl" x="${(xL+xR)/2}" y="${yb}" text-anchor="middle" fill="#94a3b8">every output = weighted sum of ALL ${cin} inputs (shown truncated)</text>`;
+  }
+  document.getElementById("pwsvg").innerHTML = lines + nodes + cap;
+  document.getElementById("pwNote").innerHTML =
+    `<strong>Fully connected across channels.</strong> Each of the ${dims.cout} outputs is a learned mix of <em>all</em> ${dims.cin} inputs &mdash; that is what the dense web of wires means &mdash; but it happens at a single pixel (<span class="mono">1×1</span>), so there is no spatial cost. This is the step that actually builds new feature combinations, for <span class="mono" style="color:#7c3aed;font-weight:700">${compact(dims.pw)}</span> multiply-adds (<span class="mono">${dims.cin}·${dims.cout}·${dims.df}²</span>).`;
+}
+
+// ---- headline + formula + factor blocks ----
+function renderHead(){
+  const { dk, cout, ratio, speed, std, sep } = dims;
+  const speedTxt = speed >= 1 ? speed.toFixed(2)+"×" : speed.toFixed(2)+"×";
+  document.getElementById("speedBig").textContent = speedTxt;
+  document.getElementById("speedBig").style.color = speed >= 2 ? "#fb7185" : (speed >= 1 ? "#fbbf24" : "#94a3b8");
+  document.getElementById("speedSub").innerHTML =
+    `<span class="mono">${compact(std)}</span> &rarr; <span class="mono">${compact(sep)}</span> multiply-adds` +
+    (speed < 1 ? ` &middot; <b class="text-rose-300">separable is bigger here!</b>` : "");
+  const t1 = 1/cout, t2 = 1/(dk*dk);
+  document.getElementById("formulaBox").innerHTML =
+    `<div class="mono text-slate-800 mb-2">separable / standard = 1/C<sub>out</sub> + 1/D<sub>k</sub>² = 1/${cout} + 1/${dk*dk} = <b class="sk">${ratio.toFixed(3)}</b></div>`+
+    `<div class="text-xs text-slate-500">The <span class="mono">1/C<sub>out</sub></span> term (=${t1.toFixed(4)}) is the depthwise share; the <span class="mono">1/D<sub>k</sub>²</span> term (=${t2.toFixed(4)}) is the pointwise share. `+
+    (dk===1
+      ? `With a <b>1×1 kernel</b> the second term is 1, so there is nothing to factor &mdash; the &ldquo;separable&rdquo; form is <b>more</b> expensive. Factorization only pays off when <span class="mono">D<sub>k</sub> &gt; 1</span>.`
+      : `For a <span class="mono">${dk}×${dk}</span> kernel the <span class="mono">1/D<sub>k</sub>²=${t2.toFixed(3)}</span> term dominates once <span class="mono">C<sub>out</sub></span> is large &mdash; which is why 3×3 depthwise-separable lands near <b>${(1/t2).toFixed(1)}×</b>.`)+
+    `</div>`;
+  document.getElementById("fbStdN").textContent  = compact(dims.pStd)+" weights";
+  document.getElementById("fbDwN").textContent   = compact(dims.pDw)+" weights";
+  document.getElementById("fbPwN").textContent   = compact(dims.pPw)+" weights";
+}
+
+// ---- cost bars ----
+function renderBars(){
+  const { std, dw, pw, sep, speed } = dims;
+  const dwPct = dw/std*100, pwPct = pw/std*100, sepPct = sep/std*100;
+  const bars =
+    `<div class="barrow"><div class="barhead"><span>Standard conv</span><span class="mono sk">${fmt(std)} &nbsp;(${compact(std)})</span></div>`+
+    `<div class="bartrack"><div class="barseg" style="width:100%;background:#f43f5e">${compact(std)} mult-adds</div></div></div>`+
+    `<div class="barrow"><div class="barhead"><span>Depthwise + Pointwise</span><span class="mono sk">${fmt(sep)} &nbsp;(${compact(sep)})</span></div>`+
+    `<div class="bartrack">`+
+      `<div class="barseg" style="width:${dwPct}%;background:#fb7185" title="depthwise">${dwPct>10?"DW "+compact(dw):""}</div>`+
+      `<div class="barseg" style="width:${pwPct}%;background:#7c3aed" title="pointwise">${pwPct>10?"PW "+compact(pw):""}</div>`+
+      `<div class="barseg" style="width:${Math.max(0,100-sepPct)}%;background:transparent;color:#94a3b8;justify-content:flex-start;padding-left:6px">${sepPct<80?"↞ saved":""}</div>`+
+    `</div></div>`;
+  document.getElementById("bars").innerHTML = bars;
+  document.getElementById("costText").innerHTML =
+    `Depthwise is the <b class="sk">${compact(dw)}</b> sliver; pointwise is the <b style="color:#7c3aed">${compact(pw)}</b> chunk &mdash; together <b>${sep<std?"only ":""}${(sepPct).toFixed(1)}%</b> of the standard conv&rsquo;s ${compact(std)}. `+
+    (speed>=1
+      ? `That is <b class="sk">${speed.toFixed(2)}×</b> fewer multiply-adds for the same output shape. Pointwise almost always dominates the separable cost &mdash; the depthwise spatial filtering is nearly free.`
+      : `Here separable is actually <b class="text-rose-600">${(1/speed).toFixed(2)}× larger</b> &mdash; with a 1×1 kernel the depthwise step adds cost without removing any spatial work.`);
+}
+
+// ---- comparison table ----
+function renderTable(){
+  const { dk, cin, cout, df, std, dw, pw, sep } = dims;
+  const rows = [
+    ["Standard conv", "spatial filter <b>+</b> channel mix (fused)", `${cout}`, std, "#be123c", true],
+    ["Depthwise", "spatial filter only, per channel", `${cin} <span class='text-slate-400'>(unchanged)</span>`, dw, "#e11d48", false],
+    ["Pointwise 1×1", "channel mix only, per pixel", `${cout}`, pw, "#7c3aed", false],
+    ["Separable (DW+PW)", "the two chained = the replacement", `${cout}`, sep, "#0f172a", true],
+  ];
+  document.getElementById("cmpBody").innerHTML = rows.map(r =>
+    `<tr class="${r[5]?'bg-rose-50':''}"><td style="color:${r[4]}">${r[0]}</td><td class="text-slate-600">${r[1]}</td><td class="mono">${r[2]}</td><td class="mono">${fmt(r[3])} <span class="text-slate-400">(${compact(r[3])})</span></td></tr>`
+  ).join("");
+}
+
+// ---- presets ----
+function activePreset(){
+  return PRESETS.findIndex(p => p.dk===dk && CIN_VALS[ciIdx]===p.cin && COUT_VALS[coIdx]===p.cout && DF_VALS[dfIdx]===p.df);
+}
+function renderPresets(){
+  const act = activePreset();
+  document.getElementById("presets").innerHTML = PRESETS.map((p,i) =>
+    `<button class="preset-btn ${i===act?'on':''}" data-i="${i}">${p.name}</button>`).join("");
+  document.querySelectorAll("#presets .preset-btn").forEach(b => b.onclick = () => {
+    const p = PRESETS[+b.dataset.i];
+    dk = p.dk; ciIdx = CIN_VALS.indexOf(p.cin); coIdx = COUT_VALS.indexOf(p.cout); dfIdx = DF_VALS.indexOf(p.df);
+    syncSliders(); render();
+  });
+}
+function syncSliders(){
+  document.getElementById("s_dk").value = dk;
+  document.getElementById("s_cin").value = ciIdx;
+  document.getElementById("s_cout").value = coIdx;
+  document.getElementById("s_df").value = dfIdx;
+}
+
+function render(){
+  compute();
+  document.getElementById("v_dk").textContent = dk;
+  document.getElementById("v_cin").textContent = CIN_VALS[ciIdx];
+  document.getElementById("v_cout").textContent = COUT_VALS[coIdx];
+  document.getElementById("v_df").textContent = DF_VALS[dfIdx];
+  renderPresets();
+  renderHead();
+  drawDepthwise();
+  drawPointwise();
+  renderBars();
+  renderTable();
+}
+
+// ---- wire controls ----
+document.getElementById("s_dk").addEventListener("input",  e => { dk = +e.target.value; render(); });
+document.getElementById("s_cin").addEventListener("input", e => { ciIdx = +e.target.value; render(); });
+document.getElementById("s_cout").addEventListener("input",e => { coIdx = +e.target.value; render(); });
+document.getElementById("s_df").addEventListener("input",  e => { dfIdx = +e.target.value; render(); });
+render();
+</script>
+
+<script>
+const STEPS = [
+ { title:"1. Why a standard conv is expensive",
+   why:"A single convolution layer quietly does two very different jobs at once. It filters SPACE (a Dk x Dk window looks at local pattern) and it mixes CHANNELS (it sums across all Cin input channels to build each of Cout outputs). Because those are fused into one Dk x Dk x Cin x Cout tensor, the cost is Dk^2 * Cin * Cout * Df^2 multiply-adds — quadratic in channel count and quadratic in kernel size. On a phone, stacks of these are the bottleneck. The question MobileNet asks: do we really need to filter space and mix channels in the same operation?",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">standard conv = Dk×Dk×Cin×Cout (one tensor)<br>filters SPACE and mixes CHANNELS together<br><br>cost = Dk² · Cin · Cout · Df²  multiply-adds<br>(quadratic in channels AND kernel size)</div>`,
+   code:"# one standard conv fuses two jobs into a fat tensor\n#   spatial filtering (Dk x Dk window)\n#   channel mixing   (sum over all Cin -> each Cout)\ncost = Dk*Dk * Cin * Cout * Df*Df\n# question: must these two happen in the SAME operation?" },
+ { title:"2. The idea — separate the two jobs",
+   why:"The insight (Sifre 2014, popularised by Xception and MobileNet 2017) is that spatial filtering and channel mixing are separable. Do the spatial part with a cheap per-channel filter, then do the channel-mixing part with a cheap 1x1 conv. Two small operations back to back replace one big one, with the SAME input and output shape. The approximation is that you no longer learn arbitrary joint spatial-channel filters — but in practice that lost expressivity costs very little accuracy and buys a huge compute reduction.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">standard  =  DEPTHWISE (space)  then  POINTWISE (channels)<br><br>Dk×Dk×Cin×Cout  ->  [Dk×Dk×Cin] + [1×1×Cin×Cout]<br><br>same in/out shape, two cheap steps instead of one fat one</div>`,
+   code:"# factor the fat conv into two lean ones:\n#   1) depthwise  : Dk x Dk, one filter PER channel (space)\n#   2) pointwise  : 1 x 1, mixes channels (features)\n# chained, they map Cin -> Cout just like the standard conv." },
+ { title:"3. Depthwise — one spatial filter per channel",
+   why:"The depthwise conv gives each of the Cin input channels its OWN Dk x Dk kernel and convolves them independently. Channel c produces exactly one output channel, using only channel c's data — there is zero cross-channel mixing. So the output has the same Cin channels, and the cost is Dk^2 * Cin * Df^2: the Cout factor has vanished entirely. This is pure spatial pattern extraction, done per channel. In PyTorch it is not a special layer — it is just Conv2d with groups=Cin, which partitions the channels so none of them mix.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">ch0 --[k0]--> ch0    ch1 --[k1]--> ch1   ... (no crossing)<br><br>Cin channels in  ->  Cin channels out (unchanged)<br>cost = Dk² · Cin · Df²   (NO Cout factor)<br>PyTorch: nn.Conv2d(Cin, Cin, Dk, groups=Cin)</div>`,
+   code:"# depthwise: each channel convolved with its OWN kernel\nfor c in range(Cin):\n    out[c] = conv2d(x[c], kernel[c])   # c -> c only, no mixing\n\n# in PyTorch: groups=Cin forces one group per channel\ndw = nn.Conv2d(Cin, Cin, Dk, padding=Dk//2, groups=Cin, bias=False)\n# cost = Dk*Dk * Cin * Df*Df" },
+ { title:"4. Pointwise — a 1x1 conv mixes the channels",
+   why:"Depthwise never combined channels, so nothing new was built across features — that job is handed to the pointwise conv: a 1x1 convolution. At each pixel it takes a weighted sum across all Cin channels to produce each of the Cout outputs. It is literally a per-pixel matrix multiply (Cout x Cin), with no spatial extent at all. This is where cross-channel feature combinations are formed and where the channel count changes from Cin to Cout. Cost: Cin * Cout * Df^2. Together with depthwise it reconstructs everything a standard conv produced.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">at each pixel:  out[j] = Σ_c W[j][c] · in[c]<br><br>1×1 conv  ->  full channel mix, ZERO spatial footprint<br>Cin channels in  ->  Cout channels out<br>cost = Cin · Cout · Df²</div>`,
+   code:"# pointwise: 1x1 conv = per-pixel channel mixing\npw = nn.Conv2d(Cin, Cout, kernel_size=1, bias=False)\n\n# from scratch, at one pixel:\nout = [sum(W[j][c]*x[c] for c in range(Cin)) for j in range(Cout)]\n# cost = Cin * Cout * Df*Df   (this changes the channel count)" },
+ { title:"5. The savings — 1/Cout + 1/Dk^2",
+   why:"Put the pieces together: separable cost = Dk^2*Cin*Df^2 + Cin*Cout*Df^2. Divide by the standard cost Dk^2*Cin*Cout*Df^2 and almost everything cancels, leaving exactly 1/Cout + 1/Dk^2. Two clean consequences. First, it is INDEPENDENT of the feature-map size Df — the ratio is the same at every resolution. Second, for a 3x3 kernel the 1/Dk^2 = 1/9 term dominates once Cout is reasonably large, so you get roughly 8–9x fewer multiply-adds. The flip side: a 1x1 kernel gives 1/Cout + 1, i.e. MORE cost — there is no spatial work to factor out, so the trick only helps for Dk > 1.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">separable / standard = 1/Cout + 1/Dk²<br><br>Dk=3, Cout large  ->  ~1/9  ->  ~8–9× cheaper<br>independent of Df (cancels out)<br>Dk=1  ->  1/Cout + 1  >  1  ->  NO gain</div>`,
+   code:"reduction = 1/Cout + 1/(Dk*Dk)     # separable / standard\n# 3x3, Cout=256 -> 1/256 + 1/9 = 0.115  -> ~8.7x cheaper\n# 5x5, Cout=256 -> 1/256 + 1/25 = 0.044 -> ~23x cheaper\n# 1x1           -> 1/Cout + 1 > 1       -> costs MORE\n# note: Df does not appear -> same ratio at any resolution." },
+ { title:"6. The accuracy trade-off",
+   why:"Depthwise-separable is an APPROXIMATION of a full conv: it can only represent filters that factor into a spatial part and a channel-mixing part, not arbitrary joint spatial-channel filters. In theory that is less expressive. In practice MobileNetV1 lost only about 1% ImageNet top-1 versus a comparable full-conv VGG-style net while using roughly 8x fewer multiply-adds and far fewer parameters. To recover stability and non-linearity each conv is followed by BatchNorm and ReLU, so the real block is DW -> BN -> ReLU -> PW -> BN -> ReLU. The overwhelming verdict: the tiny accuracy cost is more than worth the massive efficiency gain, especially on-device.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">full conv  = arbitrary spatial×channel filters (expressive)<br>separable  = factored approximation (cheaper)<br><br>MobileNetV1: ~ -1% top-1  for  ~8× fewer FLOPs<br>block: DW → BN → ReLU → PW → BN → ReLU</div>`,
+   code:"# separable is a factored APPROXIMATION of a full conv\n# recover expressivity with BN + ReLU between the two convs:\nx = relu(bn1(depthwise(x)))   # space\nx = relu(bn2(pointwise(x)))   # channels\n# MobileNetV1: ~1% top-1 drop for ~8x fewer multiply-adds." },
+ { title:"7. MobileNet's dials — width alpha & resolution rho",
+   why:"On top of the factorization, MobileNet adds two GLOBAL hyperparameters to trade accuracy for latency. The width multiplier alpha (in {1, 0.75, 0.5, 0.25}) scales every channel count: Cin, Cout -> alpha*Cin, alpha*Cout, so cost falls roughly as alpha^2. The resolution multiplier rho scales the input image (224, 192, 160, 128), so cost falls roughly as rho^2. These don't change the architecture — they just shrink it — and sweeping them traces out a whole family of models on the accuracy/latency curve, letting you pick the right point for a given phone or watch.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">width α  scales channels    ->  cost ∝ α²<br>resolution ρ scales input   ->  cost ∝ ρ²<br><br>α ∈ {1, .75, .5, .25}   input ∈ {224,192,160,128}<br>one family of models along the accuracy/latency curve</div>`,
+   code:"def scaled(Dk, Cin, Cout, Df, alpha=1.0, rho=1.0):\n    Cin, Cout = int(Cin*alpha), int(Cout*alpha)  # width  ~ alpha^2\n    Df = int(Df*rho)                             # res    ~ rho^2\n    return Dk*Dk*Cin*Df*Df + Cin*Cout*Df*Df\n# alpha=0.5 -> ~4x cheaper again on top of the ~8x factorization." },
+ { title:"8. In practice — the family it launched",
+   why:"You never hand-build these for real work. torchvision ships mobilenet_v2 and mobilenet_v3 pretrained; timm adds Xception (a deeper all-separable net) and EfficientNet. The depthwise-separable block is now the standard efficient building block and it kicked off a lineage: MobileNetV2 wraps it in an inverted residual (expand -> depthwise -> project) with a skip; MobileNetV3 adds squeeze-and-excitation (Day 40) and neural-architecture search; and EfficientNet combines the separable block, squeeze-excite, and compound scaling to define the efficiency frontier. If you need a compact backbone that runs on a phone, you are almost certainly running depthwise-separable convs.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">torchvision: mobilenet_v2 / v3   |   timm: xception, efficientnet<br><br>lineage:  MobileNetV1 (this)  →  V2 inverted residual<br>→  V3 + squeeze-excite  →  EfficientNet (+ compound scaling)</div>`,
+   code:"import torchvision.models as m\nnet = m.mobilenet_v3_large(weights='DEFAULT')\n\nimport timm\nnet = timm.create_model('mobilenetv3_small_100', pretrained=True)\nnet = timm.create_model('efficientnet_b0', pretrained=True)\n# separable conv -> the default block for on-device vision." }
+];
+</script>
+
+<script>
+const stepsEl=document.getElementById("steps");
+const prevB=document.getElementById("prev"), nextB=document.getElementById("next-btn"), autoB=document.getElementById("auto");
+let curS=0;
+STEPS.forEach((s,i)=>{ const bn=document.createElement("button"); bn.className="w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; bn.innerHTML=`<div class="font-semibold">${s.title}</div>`; bn.onclick=()=>show(i); stepsEl.appendChild(bn); });
+function show(i){ curS=i; const s=STEPS[i];
+  document.getElementById("concept").innerHTML=`<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML=`<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent=s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx)=>{ bn.className = idx===i ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick=()=>show(Math.max(0,curS-1)); nextB.onclick=()=>show(Math.min(STEPS.length-1,curS+1));
+let tm=null; autoB.onclick=()=>{ if(tm){clearInterval(tm);tm=null;autoB.textContent="▶ Auto-play";return;} autoB.textContent="⏸ Pause"; show(0); tm=setInterval(()=>{ if(curS>=STEPS.length-1){clearInterval(tm);tm=null;autoB.textContent="▶ Replay";return;} show(curS+1); },5200); };
+show(0);
+
+function copy(btn){ const pre=btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=o,1500); }
+</script>
+</body>
+</html>
