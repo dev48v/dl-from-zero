@@ -48,6 +48,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 39 — DenseNet](https://dev48v.infy.uk/dl/day39-densenet.html) — `day39-densenet.html`
 - [DeepLearningFromZero · Day 40 — Squeeze-and-Excitation](https://dev48v.infy.uk/dl/day40-squeeze-excitation.html) — `day40-squeeze-excitation.html`
 - [DeepLearningFromZero · Day 41 — Depthwise-Separable Convolutions](https://dev48v.infy.uk/dl/day41-depthwise-separable.html) — `day41-depthwise-separable.html`
+- [DeepLearningFromZero · Day 42 — Variational Autoencoder (VAE)](https://dev48v.infy.uk/dl/day42-vae.html) — `day42-vae.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk

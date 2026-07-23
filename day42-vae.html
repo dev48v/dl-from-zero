@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 42 — Variational Autoencoder (VAE)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .preset-btn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:7px 12px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; transition:.12s; }
+  .preset-btn:hover{ border-color:#fda4af; }
+  .preset-btn.on{ background:#f43f5e; border-color:#f43f5e; color:#fff; }
+  .metric{ font-variant-numeric:tabular-nums; }
+  canvas{ display:block; }
+  #latent{ width:100%; height:auto; max-width:440px; border-radius:12px; cursor:crosshair; touch-action:none; }
+  .kvrow{ display:flex; justify-content:space-between; gap:10px; font-size:12px; padding:3px 0; border-bottom:1px dashed #e2e8f0; }
+  .kvrow span:first-child{ color:#64748b; }
+  .glyph-cv{ image-rendering:pixelated; border-radius:8px; border:1px solid #e2e8f0; background:#fff; }
+  .legend-sym{ display:inline-flex; width:20px; height:20px; border-radius:5px; align-items:center; justify-content:center; font-weight:800; color:#fff; font-size:13px; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 42</div>
+      <h1 class="text-xl font-bold">&#127922; Variational Autoencoder &mdash; a plain autoencoder (Day 16) squeezes each input to a single <em>point</em> in a latent code and decodes it back. That works for compression, but the latent space it learns is <strong>holey</strong>: training points sit on islands with dead gaps between them, so if you pick a random code &mdash; or a point <em>between</em> two examples &mdash; the decoder produces garbage. You cannot <em>sample</em> from it, so you cannot <em>generate</em>. A <strong>VAE</strong> fixes this by making the encoder output a <strong>distribution</strong> instead of a point: for every latent dimension it emits a mean <span class="mono">&mu;</span> and a log-variance <span class="mono">log&sigma;&sup2;</span>, defining a little Gaussian <span class="mono">N(&mu;,&sigma;&sup2;)</span>. You then <strong>sample</strong> a code <span class="mono">z ~ N(&mu;,&sigma;)</span> and decode <em>that</em> &mdash; forcing a whole neighbourhood to decode sensibly. Sampling is not differentiable, so the <strong>reparameterization trick</strong> rewrites it as <span class="mono">z = &mu; + &sigma;&odot;&epsilon;, &epsilon;~N(0,1)</span>, moving the randomness into <span class="mono">&epsilon;</span> so gradients still flow to <span class="mono">&mu;</span> and <span class="mono">&sigma;</span>. The loss adds a <strong>KL term</strong> &mdash; <span class="mono">recon + &beta;&middot;KL(N(&mu;,&sigma;)&#8214;N(0,1))</span> &mdash; that pulls every posterior toward a standard normal, gluing the islands into one continuous, samplable space you can draw new data from and interpolate smoothly across.</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== LOOK ===================== -->
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-6 lg:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">A real 2-D VAE latent space &mdash; the <span class="sk">reparameterization trick</span> and the <span class="sk">Gaussian KL</span> are computed live in your browser.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto text-center">Six little glyphs are encoded to Gaussian blobs <span class="mono">N(&mu;,&sigma;)</span> in a 2-D latent. Drag <span class="mono">&beta;</span> (the KL weight) and watch the blobs get pulled toward the unit-circle prior <span class="mono">N(0,1)</span> &mdash; the shaded islands merging into one continuous space. <strong>Sample</strong> a code with the reparam trick, click <em>anywhere</em> to decode that point, or <strong>interpolate</strong> between two glyphs. Every number below &mdash; <span class="mono">&epsilon;</span>, <span class="mono">z</span>, and the KL &mdash; is genuine math, not a canned animation.</p>
+
+      <!-- controls -->
+      <div class="bg-white rounded-xl border border-rose-200 p-4 mb-4">
+        <div class="grid md:grid-cols-3 gap-4 items-end">
+          <div class="ctrl md:col-span-1">
+            <label>KL weight <span class="mono">&beta;</span><span id="v_beta" class="sk stat">0.00</span></label>
+            <input type="range" id="s_beta" min="0" max="3" step="0.05" value="0">
+            <div class="flex gap-2 mt-1">
+              <button class="preset-btn" data-beta="0">&beta;=0 · plain AE</button>
+              <button class="preset-btn" data-beta="1">&beta;=1 · VAE</button>
+              <button class="preset-btn" data-beta="3">&beta;=3 · heavy</button>
+            </div>
+          </div>
+          <div class="ctrl">
+            <label>decoder sharpness <span class="mono">&tau;</span><span id="v_tau" class="sk stat">0.95</span></label>
+            <input type="range" id="s_tau" min="0.4" max="1.8" step="0.05" value="0.95">
+            <div class="text-[11px] text-slate-400">how tightly the decoder snaps a code to the nearest glyph</div>
+          </div>
+          <div class="ctrl">
+            <label>encode which glyph? <span id="v_src" class="sk">○ ring</span></label>
+            <div id="srcBtns" class="flex flex-wrap gap-1"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-[440px_1fr] gap-4 mb-4">
+        <!-- latent canvas -->
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">2-D latent space</div>
+          <canvas id="latent" width="440" height="440"></canvas>
+          <div class="text-[11px] text-slate-400 mt-2">Shading = how strongly a point maps to <em>one</em> glyph (dark = clear, pale = an ambiguous blend / gap). Dashed circle = the prior&rsquo;s 1&sigma;. Click the canvas to decode any point.</div>
+          <div id="legend" class="flex flex-wrap gap-3 mt-3"></div>
+        </div>
+
+        <!-- readouts + recon -->
+        <div class="space-y-4">
+          <div class="bg-white rounded-xl border border-slate-200 p-4">
+            <div class="flex items-center justify-between mb-3">
+              <div class="text-xs uppercase font-bold text-slate-500 tracking-wider">Reparameterize &amp; decode &mdash; <span class="mono">z = &mu; + &sigma;&odot;&epsilon;</span></div>
+              <div class="flex gap-2">
+                <button id="btnSample" class="bg-rose-600 text-white px-3 py-1.5 rounded-lg font-semibold text-xs">🎲 Sample z ~ N(μ,σ)</button>
+                <button id="btnPrior" class="bg-slate-800 text-white px-3 py-1.5 rounded-lg font-semibold text-xs">✨ Generate from prior N(0,1)</button>
+              </div>
+            </div>
+            <div class="grid sm:grid-cols-[1fr_140px] gap-4 items-center">
+              <div>
+                <div class="kvrow"><span>encoder mean &mu;</span><span id="r_mu" class="mono sk">—</span></div>
+                <div class="kvrow"><span>encoder std &sigma;</span><span id="r_sig" class="mono sk">—</span></div>
+                <div class="kvrow"><span>noise &epsilon; ~ N(0,1)</span><span id="r_eps" class="mono">—</span></div>
+                <div class="kvrow"><span>sampled code z</span><span id="r_z" class="mono" style="color:#7c3aed;font-weight:700">—</span></div>
+                <div class="kvrow" style="border:0"><span>decoder confidence</span><span id="r_conf" class="mono">—</span></div>
+              </div>
+              <div class="text-center">
+                <canvas id="recon" width="132" height="132" class="glyph-cv mx-auto" style="width:132px;height:132px"></canvas>
+                <div class="text-[11px] text-slate-400 mt-1">decode(z)</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-xl border border-slate-200 p-4">
+            <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">KL(N(&mu;,&sigma;&sup2;) &#8214; N(0,1)) &mdash; computed live, closed form</div>
+            <div id="klFormula" class="mono text-sm text-slate-800 mb-2"></div>
+            <div class="grid grid-cols-3 gap-2 text-center">
+              <div class="bg-slate-50 rounded-lg p-2"><div class="text-[11px] text-slate-500">mean term ½Σμ²</div><div id="k_mean" class="text-lg font-black metric text-rose-500">—</div></div>
+              <div class="bg-slate-50 rounded-lg p-2"><div class="text-[11px] text-slate-500">var term ½Σ(σ²−1−lnσ²)</div><div id="k_var" class="text-lg font-black metric text-rose-500">—</div></div>
+              <div class="bg-slate-900 rounded-lg p-2"><div class="text-[11px] text-rose-300">KL (this glyph)</div><div id="k_tot" class="text-lg font-black metric text-rose-400">—</div></div>
+            </div>
+            <div id="klNote" class="text-xs text-slate-500 mt-2"></div>
+            <div class="mt-2 text-xs"><span class="text-slate-500">average KL over all 6 glyphs:</span> <b id="k_avg" class="sk metric">—</b> nats <span class="text-slate-400">— lower ⇒ blobs closer to the prior ⇒ more continuous / samplable space</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- interpolation -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4">
+        <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Smooth latent interpolation &mdash; walk a straight line between two encodings and decode every step</div>
+        <div class="flex flex-wrap items-center gap-4 mb-3">
+          <div class="ctrl">
+            <label>from <span id="v_A" class="sk">○</span></label>
+            <div id="AButtons" class="flex flex-wrap gap-1"></div>
+          </div>
+          <div class="ctrl">
+            <label>to <span id="v_B" class="sk">△</span></label>
+            <div id="BButtons" class="flex flex-wrap gap-1"></div>
+          </div>
+          <div class="ctrl flex-1 min-w-[180px]">
+            <label>position t <span id="v_t" class="sk stat">0.50</span></label>
+            <input type="range" id="s_t" min="0" max="1" step="0.01" value="0.5">
+          </div>
+        </div>
+        <canvas id="interp" width="900" height="120" style="width:100%;height:auto;max-width:900px" class="glyph-cv"></canvas>
+        <div class="text-[11px] text-slate-400 mt-2">Left = glyph A, right = glyph B; the middle frames are decoded from codes that were never a training example &mdash; yet they morph smoothly, because the KL term filled the space between the two blobs. (In a plain AE those middle codes decode to noise.)</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== UNDERSTAND ===================== -->
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">From a point to a distribution</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BUILD ===================== -->
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">A VAE is a plain autoencoder plus three additions: the encoder emits a <strong>mean</strong> and a <strong>log-variance</strong> instead of a code; the <strong>reparameterization trick</strong> turns sampling into a differentiable expression; and the loss gains a closed-form <strong>Gaussian KL</strong> that pulls the posterior toward <span class="mono">N(0,1)</span>. We assemble it one line at a time &mdash; the two encoder heads, the reparam sampler, the decoder, the reconstruction loss, the KL one-liner, the combined <span class="mono">&beta;</span>-weighted loss (the negative ELBO), a training step, generation from the prior, and finally the real <code>nn.Module</code>.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">The encoder head &mdash; output &mu; and log&sigma;&sup2;, not a code</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A normal encoder ends in one linear layer &rarr; the code. A VAE encoder ends in <em>two</em> linear layers over the same hidden features: one produces the mean <code>&mu;</code>, the other the log-variance <code>log&sigma;&sup2;</code> (we predict the log so &sigma;&sup2; is always positive and unconstrained). Together they define a diagonal Gaussian posterior <code>q(z|x)=N(&mu;,&sigma;&sup2;)</code> for this input.</p>
+        <div class="relative"><pre>import torch, torch.nn as nn
+
+class Encoder(nn.Module):
+    def __init__(self, in_dim, hidden, zdim):
+        super().__init__()
+        self.body    = nn.Sequential(nn.Linear(in_dim, hidden), nn.ReLU())
+        self.fc_mu   = nn.Linear(hidden, zdim)   # mean  of q(z|x)
+        self.fc_logv = nn.Linear(hidden, zdim)   # LOG-variance (unconstrained)
+    def forward(self, x):
+        h = self.body(x)
+        return self.fc_mu(h), self.fc_logv(h)    # mu, logvar  (each [B, zdim])</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">The reparameterization trick &mdash; make sampling differentiable</h3></div>
+        <p class="text-sm text-slate-600 mb-3">We must sample <code>z ~ N(&mu;,&sigma;&sup2;)</code>, but drawing a random sample has no gradient w.r.t. <code>&mu;</code>/<code>&sigma;</code> &mdash; backprop would stop dead. The trick: sample the randomness <em>outside</em> the parameters as <code>&epsilon;~N(0,1)</code>, then form <code>z = &mu; + &sigma;&odot;&epsilon;</code>. Now <code>z</code> is a smooth, differentiable function of <code>&mu;</code> and <code>&sigma;</code> (with <code>&sigma;=exp(&frac12;log&sigma;&sup2;)</code>), and <code>&part;z/&part;&mu;=1</code>, <code>&part;z/&part;&sigma;=&epsilon;</code>, so gradients flow through.</p>
+        <div class="relative"><pre>def reparameterize(mu, logvar):
+    std = torch.exp(0.5 * logvar)      # sigma = exp(0.5 * log sigma^2)
+    eps = torch.randn_like(std)        # epsilon ~ N(0, 1), the randomness
+    return mu + std * eps              # z = mu + sigma (elementwise) eps
+# gradient still flows to mu (dz/dmu = 1) and std (dz/dstd = eps).</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">The decoder &mdash; a code back to data</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Identical in spirit to an autoencoder decoder: map the sampled <code>z</code> back to the input space. For binary/greyscale pixels end in a <code>sigmoid</code> so outputs are in <code>[0,1]</code> and can be read as Bernoulli probabilities per pixel.</p>
+        <div class="relative"><pre>class Decoder(nn.Module):
+    def __init__(self, zdim, hidden, out_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(zdim, hidden), nn.ReLU(),
+            nn.Linear(hidden, out_dim), nn.Sigmoid())  # -> [0,1] per pixel
+    def forward(self, z):
+        return self.net(z)             # x_hat, same shape as the input</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Reconstruction loss &mdash; did we get the input back?</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The first half of the loss is the usual autoencoder term: how far the reconstruction is from the input. For pixels in <code>[0,1]</code> use binary cross-entropy summed over pixels (the Bernoulli log-likelihood); for continuous data use MSE. Summed per sample, then averaged over the batch.</p>
+        <div class="relative"><pre>import torch.nn.functional as F
+def recon_loss(x_hat, x):
+    # BCE per pixel, summed over pixels (Bernoulli neg-log-likelihood)
+    return F.binary_cross_entropy(x_hat, x, reduction='sum') / x.size(0)
+# continuous data instead:  F.mse_loss(x_hat, x, reduction='sum')/B</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">The Gaussian KL &mdash; one closed-form line</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Because both the posterior <code>N(&mu;,&sigma;&sup2;)</code> and the prior <code>N(0,1)</code> are Gaussians, the KL divergence has an exact closed form &mdash; no sampling needed: <code>KL = &frac12; &Sigma;<sub>i</sub> (&mu;<sub>i</sub>&sup2; + &sigma;<sub>i</sub>&sup2; &minus; 1 &minus; log&sigma;<sub>i</sub>&sup2;)</code>. It is zero only when every <code>&mu;=0</code> and <code>&sigma;=1</code> (exactly the prior), and grows as the posterior drifts away &mdash; so minimizing it pulls each blob toward the origin with unit spread.</p>
+        <div class="relative"><pre>def kl_divergence(mu, logvar):
+    # KL( N(mu, sigma^2) || N(0,1) ), summed over latent dims, per sample
+    # = 0.5 * sum( mu^2 + sigma^2 - 1 - log sigma^2 )
+    return -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / mu.size(0)
+# note: 1 + logvar - mu^2 - e^logvar  ==  -(mu^2 + sigma^2 - 1 - log sigma^2)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">The full VAE loss &mdash; recon + &beta;&middot;KL (the negative ELBO)</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Add the two: <code>L = recon + &beta;&middot;KL</code>. This is exactly the <strong>negative ELBO</strong> (evidence lower bound) &mdash; minimizing it maximizes a lower bound on <code>log p(x)</code>. <code>&beta;=1</code> is the original VAE; <code>&beta;&gt;1</code> (a &beta;-VAE) weights the prior harder for a more continuous, disentangled space at some cost to sharpness; <code>&beta;=0</code> collapses back to a plain autoencoder.</p>
+        <div class="relative"><pre>def vae_loss(x, x_hat, mu, logvar, beta=1.0):
+    rec = recon_loss(x_hat, x)
+    kl  = kl_divergence(mu, logvar)
+    return rec + beta * kl,  rec, kl     # total = negative ELBO
+# beta = 1 -> standard VAE ;  beta > 1 -> beta-VAE ;  beta = 0 -> plain AE</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">A training step &mdash; and generating new data</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Forward: encode &rarr; reparameterize &rarr; decode &rarr; loss &rarr; backward. Because KL pushed the aggregate posterior toward <code>N(0,1)</code>, <em>generation</em> is trivial: sample <code>z~N(0,1)</code> from the prior and decode &mdash; no encoder, no input needed. That is the whole payoff over a plain autoencoder.</p>
+        <div class="relative"><pre>def train_step(x, enc, dec, opt, beta=1.0):
+    mu, logvar = enc(x)
+    z          = reparameterize(mu, logvar)
+    x_hat      = dec(z)
+    loss, rec, kl = vae_loss(x, x_hat, mu, logvar, beta)
+    opt.zero_grad(); loss.backward(); opt.step()
+    return loss.item()
+
+@torch.no_grad()                          # GENERATE brand-new samples:
+def generate(dec, n, zdim):
+    z = torch.randn(n, zdim)              # z ~ prior N(0,1)
+    return dec(z)                         # decode -> new data</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">8</div><h3 class="font-bold text-lg">The real thing &mdash; one module, and where it goes next</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Glue the pieces into one <code>nn.Module</code>. The VAE is the ancestor of a whole family: conditional VAEs (label-conditioned generation), <strong>VQ-VAE</strong> (a discrete codebook &mdash; the tokenizer behind modern image models), and latent-diffusion (Day 15 diffusion run <em>inside</em> a VAE&rsquo;s latent space, which is how Stable Diffusion works). The probabilistic-latent idea you built here is everywhere.</p>
+        <div class="relative"><pre>class VAE(nn.Module):
+    def __init__(self, in_dim=784, hidden=400, zdim=20):
+        super().__init__()
+        self.enc = Encoder(in_dim, hidden, zdim)
+        self.dec = Decoder(zdim, hidden, in_dim)
+    def forward(self, x):
+        mu, logvar = self.enc(x)
+        z = reparameterize(mu, logvar)
+        return self.dec(z), mu, logvar
+
+# lineage:  VAE -> beta-VAE -> conditional VAE -> VQ-VAE (discrete codes)
+#           -> latent diffusion (Stable Diffusion decodes in a VAE latent)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 42 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">A <strong>variational autoencoder</strong> turns the deterministic code of a plain autoencoder into a <strong>probabilistic</strong> one. The encoder outputs a mean <span class="mono">&mu;</span> and log-variance <span class="mono">log&sigma;&sup2;</span> per latent dim, defining a Gaussian posterior <span class="mono">q(z|x)=N(&mu;,&sigma;&sup2;)</span>; we draw <span class="mono">z</span> from it via the <strong>reparameterization trick</strong> <span class="mono">z=&mu;+&sigma;&odot;&epsilon;, &epsilon;~N(0,1)</span> so gradients still flow. The loss is <span class="mono">recon + &beta;&middot;KL(N(&mu;,&sigma;)&#8214;N(0,1))</span> &mdash; the negative ELBO &mdash; where the closed-form Gaussian <strong>KL</strong> <span class="mono">&frac12;&Sigma;(&mu;&sup2;+&sigma;&sup2;&minus;1&minus;log&sigma;&sup2;)</span> pulls every posterior toward the standard-normal prior, gluing the latent space into one <em>continuous, samplable</em> region. That is what lets you <strong>generate</strong> new data by decoding <span class="mono">z~N(0,1)</span> and <strong>interpolate</strong> smoothly between examples &mdash; things a plain autoencoder&rsquo;s holey latent simply cannot do. <strong>&#128073; Tomorrow, Day 43:</strong> VQ-VAE &mdash; swap the continuous Gaussian latent for a <em>discrete</em> learned codebook (vector quantization), the trick that turns images into tokens for autoregressive and diffusion generators.</p></div>
+  </div>
+</section>
+
+<script>
+// ---- tab switching ----
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+</script>
+
+<script>
+// ============================================================
+//  DAY 42 — VARIATIONAL AUTOENCODER, real math in the browser.
+//  * a small pre-baked encoder/decoder over 6 procedural glyphs
+//  * the REPARAMETERIZATION TRICK  z = mu + sigma * eps  (eps~N(0,1))
+//  * the closed-form GAUSSIAN KL   0.5 * sum(mu^2 + sig^2 - 1 - ln sig^2)
+//  are both computed genuinely below (not faked/animated).
+// ============================================================
+
+// ---------- procedural glyphs (12x12 vectors) ----------
+const GRID = 12, N2 = GRID * GRID;
+const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
+const cc = i => (i + 0.5) / GRID * 2 - 1;          // cell-center coordinate in [-1,1]
+function makeGlyph(fn){
+  const g = new Float32Array(N2);
+  for (let r = 0; r < GRID; r++) for (let c = 0; c < GRID; c++) g[r*GRID + c] = clamp01(fn(cc(c), cc(r)));
+  return g;
+}
+const AA = 0.16;
+const GLYPHS = [
+  { name:"ring",    sym:"○", g:makeGlyph((x,y)=> 1 - Math.abs(Math.hypot(x,y) - 0.62)/0.20 ) },
+  { name:"disk",    sym:"●", g:makeGlyph((x,y)=> (0.60 - Math.hypot(x,y))/0.16 ) },
+  { name:"plus",    sym:"＋", g:makeGlyph((x,y)=> Math.max(
+        Math.abs(y) < 0.82 ? (0.15 - Math.abs(x))/AA : -1,
+        Math.abs(x) < 0.82 ? (0.15 - Math.abs(y))/AA : -1) ) },
+  { name:"cross",   sym:"✕", g:makeGlyph((x,y)=> (Math.max(Math.abs(x),Math.abs(y)) < 0.82)
+        ? Math.max((0.16 - Math.abs(x-y))/AA, (0.16 - Math.abs(x+y))/AA) : -1 ) },
+  { name:"square",  sym:"□", g:makeGlyph((x,y)=> 1 - Math.abs(Math.max(Math.abs(x),Math.abs(y)) - 0.66)/0.14 ) },
+  { name:"diamond", sym:"◇", g:makeGlyph((x,y)=> 1 - Math.abs((Math.abs(x)+Math.abs(y)) - 0.70)/0.16 ) },
+];
+const K = GLYPHS.length;
+const CH = ["#f43f5e","#fb923c","#eab308","#22c55e","#38bdf8","#a855f7"];
+
+// ---------- latent anchors (raw, before KL shrink) ----------
+const RAWR = 2.3;
+const RAW = GLYPHS.map((_, k) => {
+  const a = Math.PI/2 - k * 2*Math.PI/K;
+  return [RAWR*Math.cos(a), RAWR*Math.sin(a)];
+});
+
+// ---------- the (pre-baked) encoder, as a function of beta ----------
+// Higher KL weight beta pushes the encoder toward the prior:
+//   means shrink toward 0, std grows toward 1  (posterior -> N(0,1)).
+const meanShrink = beta => 1 / (1 + 0.55*beta);
+const sigmaOf    = beta => 0.22 + (1 - 0.22) * (beta / (beta + 0.8));
+function muOf(k, beta){ const s = meanShrink(beta); return [RAW[k][0]*s, RAW[k][1]*s]; }
+
+// ---------- the closed-form Gaussian KL, computed for real ----------
+// KL( N(mu, sigma^2) || N(0,1) ) = 0.5 * sum_i ( mu_i^2 + sigma^2 - 1 - ln sigma^2 )
+function klGauss(muVec, sigma){
+  const lnv = Math.log(sigma*sigma);
+  let meanTerm = 0, varTerm = 0;
+  for (const m of muVec){
+    meanTerm += 0.5 * (m*m);
+    varTerm  += 0.5 * (sigma*sigma - 1 - lnv);
+  }
+  return { meanTerm, varTerm, total: meanTerm + varTerm };
+}
+
+// ---------- Box–Muller standard-normal sampler ----------
+let _spare = null;
+function randn(){
+  if (_spare !== null){ const s = _spare; _spare = null; return s; }
+  let u, v, s;
+  do { u = Math.random()*2 - 1; v = Math.random()*2 - 1; s = u*u + v*v; } while (s >= 1 || s === 0);
+  const f = Math.sqrt(-2*Math.log(s)/s);
+  _spare = v*f; return u*f;
+}
+
+// ---------- the REPARAMETERIZATION TRICK ----------
+//   z = mu + sigma * eps ,   eps ~ N(0,1)
+function reparameterize(muVec, sigma){
+  const eps = muVec.map(() => randn());
+  const z   = muVec.map((m, i) => m + sigma * eps[i]);
+  return { eps, z };
+}
+
+// ---------- the decoder: soft nearest-prototype (real forward math) ----------
+// weights_k(z) = softmax( -||z - mu_k||^2 / (2 tau^2) ) ;  decode = sum_k w_k * glyph_k
+function decodeWeights(z, beta, tau){
+  const logw = [];
+  for (let k = 0; k < K; k++){
+    const c = muOf(k, beta), dx = z[0]-c[0], dy = z[1]-c[1];
+    logw.push( -(dx*dx + dy*dy) / (2*tau*tau) );
+  }
+  const mx = Math.max(...logw);
+  const w  = logw.map(l => Math.exp(l - mx));
+  const sum = w.reduce((a,b)=>a+b, 0);
+  return w.map(x => x/sum);
+}
+function decode(z, beta, tau){
+  const w = decodeWeights(z, beta, tau);
+  const out = new Float32Array(N2);
+  for (let k = 0; k < K; k++){ const g = GLYPHS[k].g, wk = w[k]; for (let i = 0; i < N2; i++) out[i] += wk * g[i]; }
+  return { out, w };
+}
+
+// ---------- state ----------
+let beta = 0.0, tau = 0.95, srcK = 0;
+let sample = null;      // { eps, z, srcK|null }
+let interpA = 0, interpB = 5, tInterp = 0.5;
+
+// ---------- canvases ----------
+const latC = document.getElementById("latent"), lx = latC.getContext("2d");
+const recC = document.getElementById("recon"),  rx = recC.getContext("2d");
+const intC = document.getElementById("interp"), ix = intC.getContext("2d");
+const LW = latC.width, LH = latC.height, LR = 3.4;                 // latent view spans [-3.4, 3.4]
+const L2P = (x, y) => [ (x/LR*0.5 + 0.5)*LW, (0.5 - y/LR*0.5)*LH ]; // latent -> pixel
+const P2L = (px, py) => [ (px/LW - 0.5)*2*LR, -(py/LH - 0.5)*2*LR ];// pixel -> latent
+
+// ---------- draw a glyph vector into a canvas ----------
+function drawGlyph(ctx, vec, W, H){
+  const cw = W/GRID, ch = H/GRID;
+  ctx.clearRect(0,0,W,H); ctx.fillStyle = "#fff"; ctx.fillRect(0,0,W,H);
+  for (let r = 0; r < GRID; r++) for (let c = 0; c < GRID; c++){
+    const v = clamp01(vec[r*GRID + c]);
+    if (v <= 0.01) continue;
+    ctx.fillStyle = `rgba(15,23,42,${v})`;
+    ctx.fillRect(c*cw, r*ch, cw+0.5, ch+0.5);
+  }
+}
+
+// ---------- latent-space background field (decoder confidence) ----------
+function drawField(){
+  const S = 56, dp = LW/S;
+  for (let gy = 0; gy < S; gy++) for (let gx = 0; gx < S; gx++){
+    const [x, y] = P2L((gx+0.5)*dp, (gy+0.5)*dp);
+    const w = decodeWeights([x,y], beta, tau);
+    const mxw = Math.max(...w);                        // 1/K (ambiguous) .. 1 (clear)
+    const t = clamp01((mxw - 1/K) / (1 - 1/K));        // 0 pale .. 1 clear
+    lx.fillStyle = `rgba(190,18,60,${0.05 + 0.42*t})`;
+    lx.fillRect(gx*dp, gy*dp, dp+1, dp+1);
+  }
+}
+
+function drawLatent(){
+  lx.clearRect(0,0,LW,LH);
+  lx.fillStyle = "#fff"; lx.fillRect(0,0,LW,LH);
+  drawField();
+  // grid
+  lx.strokeStyle = "rgba(148,163,184,0.25)"; lx.lineWidth = 1;
+  for (let g = -3; g <= 3; g++){
+    const [px] = L2P(g, 0), [, py] = L2P(0, g);
+    lx.beginPath(); lx.moveTo(px, 0); lx.lineTo(px, LH); lx.stroke();
+    lx.beginPath(); lx.moveTo(0, py); lx.lineTo(LW, py); lx.stroke();
+  }
+  // axes
+  const [ox, oy] = L2P(0,0);
+  lx.strokeStyle = "#94a3b8"; lx.lineWidth = 1.4;
+  lx.beginPath(); lx.moveTo(0, oy); lx.lineTo(LW, oy); lx.stroke();
+  lx.beginPath(); lx.moveTo(ox, 0); lx.lineTo(ox, LH); lx.stroke();
+  lx.fillStyle = "#64748b"; lx.font = "600 11px SFMono-Regular,Consolas,monospace";
+  lx.fillText("z₁", LW-18, oy-6); lx.fillText("z₂", ox+6, 12);
+  // prior 1σ + 2σ (dashed circles at origin, radius 1 and 2 in latent units)
+  [[1,"#0f172a"],[2,"#94a3b8"]].forEach(([rad, col]) => {
+    lx.strokeStyle = col; lx.setLineDash([5,4]); lx.lineWidth = 1.2;
+    lx.beginPath(); lx.arc(ox, oy, rad/LR*0.5*LW, 0, 2*Math.PI); lx.stroke();
+  });
+  lx.setLineDash([]);
+  const sig = sigmaOf(beta);
+  // prototype blobs
+  for (let k = 0; k < K; k++){
+    const [mx, my] = muOf(k, beta), [px, py] = L2P(mx, my);
+    const rpx = sig/LR*0.5*LW;
+    lx.fillStyle = CH[k] + "33"; lx.strokeStyle = CH[k]; lx.lineWidth = 2;
+    lx.beginPath(); lx.arc(px, py, rpx, 0, 2*Math.PI); lx.fill(); lx.stroke();
+    lx.fillStyle = CH[k]; lx.beginPath(); lx.arc(px, py, 3, 0, 2*Math.PI); lx.fill();
+    lx.fillStyle = "#0f172a"; lx.font = "800 13px sans-serif"; lx.textAlign = "center";
+    lx.fillText(GLYPHS[k].sym, px, py - rpx - 4); lx.textAlign = "start";
+  }
+  // the sampled code z (reparam) + tether to its source mean
+  if (sample){
+    const [zx, zy] = L2P(sample.z[0], sample.z[1]);
+    if (sample.srcK !== null){
+      const [mx, my] = muOf(sample.srcK, beta), [px, py] = L2P(mx, my);
+      lx.strokeStyle = "#7c3aed"; lx.setLineDash([4,3]); lx.lineWidth = 1.6;
+      lx.beginPath(); lx.moveTo(px, py); lx.lineTo(zx, zy); lx.stroke(); lx.setLineDash([]);
+    }
+    lx.fillStyle = "#7c3aed"; lx.beginPath(); lx.arc(zx, zy, 6, 0, 2*Math.PI); lx.fill();
+    lx.strokeStyle = "#fff"; lx.lineWidth = 2; lx.stroke();
+    lx.fillStyle = "#7c3aed"; lx.font = "800 12px SFMono-Regular,Consolas,monospace";
+    lx.fillText("z", zx + 9, zy - 7);
+  }
+}
+
+// ---------- legend ----------
+function renderLegend(){
+  document.getElementById("legend").innerHTML = GLYPHS.map((gl,k) =>
+    `<div class="flex items-center gap-1.5 text-xs text-slate-600"><span class="legend-sym" style="background:${CH[k]}">${gl.sym}</span>${gl.name}</div>`).join("");
+}
+
+// ---------- source / interpolation buttons ----------
+function glyphBtns(containerId, activeIdx, onPick){
+  const el = document.getElementById(containerId);
+  el.innerHTML = GLYPHS.map((gl,k) =>
+    `<button class="preset-btn ${k===activeIdx?'on':''}" data-k="${k}" style="padding:5px 9px">${gl.sym}</button>`).join("");
+  el.querySelectorAll("button").forEach(b => b.onclick = () => onPick(+b.dataset.k));
+}
+
+// ---------- readouts ----------
+const f2 = v => (v>=0?" ":"") + v.toFixed(2);
+function renderReadouts(){
+  const sig = sigmaOf(beta), mu = muOf(srcK, beta);
+  document.getElementById("v_src").textContent = GLYPHS[srcK].sym + " " + GLYPHS[srcK].name;
+  document.getElementById("r_mu").textContent  = `(${f2(mu[0])}, ${f2(mu[1])})`;
+  document.getElementById("r_sig").textContent = sig.toFixed(3);
+  if (sample){
+    document.getElementById("r_eps").textContent = `(${f2(sample.eps[0])}, ${f2(sample.eps[1])})`;
+    document.getElementById("r_z").textContent   = `(${f2(sample.z[0])}, ${f2(sample.z[1])})`;
+    const w = decodeWeights(sample.z, beta, tau);
+    const bi = w.indexOf(Math.max(...w));
+    document.getElementById("r_conf").textContent = `${GLYPHS[bi].sym} ${(w[bi]*100).toFixed(0)}%`;
+    const rec = decode(sample.z, beta, tau);
+    drawGlyph(rx, rec.out, recC.width, recC.height);
+  } else {
+    document.getElementById("r_eps").textContent = "—";
+    document.getElementById("r_z").textContent   = "—";
+    document.getElementById("r_conf").textContent = "click 🎲 or the canvas";
+    drawGlyph(rx, GLYPHS[srcK].g, recC.width, recC.height);
+  }
+  // KL (live, closed form) for the selected glyph
+  const kl = klGauss(mu, sig), lnv = Math.log(sig*sig);
+  document.getElementById("k_mean").textContent = kl.meanTerm.toFixed(3);
+  document.getElementById("k_var").textContent  = kl.varTerm.toFixed(3);
+  document.getElementById("k_tot").textContent  = kl.total.toFixed(3);
+  document.getElementById("klFormula").innerHTML =
+    `KL = ½·Σ(μ²+σ²−1−lnσ²) = ½·[(${f2(mu[0])})²+(${f2(mu[1])})²] + ½·[2·(${(sig*sig).toFixed(3)}−1−${lnv.toFixed(3)})] = <b class="sk">${kl.total.toFixed(3)}</b> nats`;
+  document.getElementById("klNote").innerHTML = beta === 0
+    ? `At <span class="mono">β=0</span> the KL is <b>ignored</b> in the loss — this is a plain autoencoder. Means stay far out and σ stays small, so the blobs are tiny islands with dead space between them: <b>holey, not samplable</b>.`
+    : `The mean term punishes drift from the origin; the variance term punishes σ≠1. Raising <span class="mono">β</span> shrinks μ→0 and grows σ→1, so this KL falls toward <b>0</b> and the blobs merge into one continuous region.`;
+  // average KL across all 6 glyphs
+  let avg = 0; for (let k=0;k<K;k++) avg += klGauss(muOf(k,beta), sig).total; avg /= K;
+  document.getElementById("k_avg").textContent = avg.toFixed(3);
+}
+
+// ---------- interpolation strip ----------
+function renderInterp(){
+  document.getElementById("v_A").textContent = GLYPHS[interpA].sym;
+  document.getElementById("v_B").textContent = GLYPHS[interpB].sym;
+  document.getElementById("v_t").textContent = tInterp.toFixed(2);
+  const FR = 9, W = intC.width, H = intC.height, cell = W/FR;
+  ix.clearRect(0,0,W,H); ix.fillStyle = "#fff"; ix.fillRect(0,0,W,H);
+  const a = muOf(interpA, beta), b = muOf(interpB, beta);
+  const tmp = document.createElement("canvas"); tmp.width = tmp.height = GRID;
+  const tx = tmp.getContext("2d");
+  for (let f = 0; f < FR; f++){
+    const t = f/(FR-1);
+    const z = [ a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t ];
+    const rec = decode(z, beta, tau);
+    // draw glyph at low res then blit scaled
+    const img = tx.createImageData(GRID, GRID);
+    for (let i = 0; i < N2; i++){ const v = clamp01(rec.out[i]); const g = Math.round(255*(1-v));
+      img.data[i*4]=g; img.data[i*4+1]=g+(255-g)*0.03; img.data[i*4+2]=g; img.data[i*4+3]=255; }
+    tx.putImageData(img, 0, 0);
+    const pad = 6, side = Math.min(cell, H) - pad*2;
+    ix.imageSmoothingEnabled = false;
+    ix.drawImage(tmp, f*cell + (cell-side)/2, (H-side)/2, side, side);
+    // highlight the frame nearest the t slider
+    if (Math.abs(t - tInterp) < 0.5/(FR-1) + 1e-9){
+      ix.strokeStyle = "#7c3aed"; ix.lineWidth = 2.5;
+      ix.strokeRect(f*cell + (cell-side)/2 - 3, (H-side)/2 - 3, side+6, side+6);
+    }
+  }
+}
+
+// ---------- master render ----------
+function render(){
+  document.getElementById("v_beta").textContent = beta.toFixed(2);
+  document.getElementById("v_tau").textContent  = tau.toFixed(2);
+  drawLatent();
+  renderReadouts();
+  renderInterp();
+}
+
+// ---------- wire controls ----------
+document.getElementById("s_beta").addEventListener("input", e => { beta = +e.target.value; render(); });
+document.getElementById("s_tau").addEventListener("input",  e => { tau  = +e.target.value; render(); });
+document.getElementById("s_t").addEventListener("input",    e => { tInterp = +e.target.value; renderInterp(); });
+document.querySelectorAll("[data-beta]").forEach(b => b.onclick = () => {
+  beta = +b.dataset.beta; document.getElementById("s_beta").value = beta; render();
+});
+document.getElementById("btnSample").onclick = () => {
+  const sig = sigmaOf(beta), mu = muOf(srcK, beta);
+  const { eps, z } = reparameterize(mu, sig);        // <-- real reparam trick
+  sample = { eps, z, srcK }; render();
+};
+document.getElementById("btnPrior").onclick = () => {
+  const eps = [randn(), randn()];                    // z ~ prior N(0,1)  (mu=0, sigma=1)
+  sample = { eps, z: [eps[0], eps[1]], srcK: null }; render();
+};
+latC.addEventListener("pointerdown", e => {
+  const r = latC.getBoundingClientRect();
+  const px = (e.clientX - r.left) * (LW / r.width), py = (e.clientY - r.top) * (LH / r.height);
+  const z = P2L(px, py);
+  sample = { eps: [NaN, NaN], z, srcK: null }; render();
+  document.getElementById("r_eps").textContent = "(manual click)";
+});
+
+// build the little glyph pickers
+glyphBtns("srcBtns", srcK, k => { srcK = k; sample = null; render(); });
+function rebuildInterpBtns(){
+  glyphBtns("AButtons", interpA, k => { interpA = k; renderInterp(); rebuildInterpBtns(); });
+  glyphBtns("BButtons", interpB, k => { interpB = k; renderInterp(); rebuildInterpBtns(); });
+  document.getElementById("v_A").textContent = GLYPHS[interpA].sym;
+  document.getElementById("v_B").textContent = GLYPHS[interpB].sym;
+}
+rebuildInterpBtns();
+renderLegend();
+render();
+</script>
+
+<script>
+// ===================== UNDERSTAND — 11 steps =====================
+const STEPS = [
+ { title:"1. Recap — the plain autoencoder bottleneck",
+   why:"On Day 16 you built an autoencoder: an encoder squeezes an input x down to a small code z, and a decoder reconstructs x̂ from z, trained to make x̂≈x. The bottleneck forces the network to keep only what matters, and the code is a useful compressed representation. But note one thing carefully: the encoder maps each input to a SINGLE POINT in latent space. It is entirely deterministic — there is no notion of a spread, a neighbourhood, or a probability. That single detail is what a VAE changes, and everything else follows from it.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">x ──encoder──▶ z (one point) ──decoder──▶ x̂<br><br>trained so x̂ ≈ x  ·  z = compressed code<br>deterministic: one input → one exact point</div>`,
+   code:"# plain autoencoder (Day 16): code is ONE point\nz    = encoder(x)      # deterministic vector\nx_hat = decoder(z)\nloss  = mse(x_hat, x)  # reconstruction only" },
+ { title:"2. The problem — a holey, non-continuous latent",
+   why:"Because training only ever pins down the exact points where real examples land, the space BETWEEN and AROUND those points is never constrained. The encoder is free to scatter codes anywhere — leaving big gaps and clusters flung far apart. So if you pick a random z, or a point halfway between two training codes, the decoder has never seen that region and outputs garbage. There is also no distribution to sample from: 'draw a plausible z' is undefined. This is why a plain autoencoder is a compressor, not a generator — its latent space is holey and non-continuous.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">•        •<br>   ⟵ dead gap ⟶     (decode here = garbage)<br>       •     •<br><br>no way to SAMPLE a valid z → cannot GENERATE</div>`,
+   code:"z_rand = torch.randn(1, zdim)   # a random point\nx_hat  = decoder(z_rand)        # -> noise: never trained here\n# and midpoints between codes also decode to nonsense" },
+ { title:"3. The fix — encode a DISTRIBUTION, not a point",
+   why:"A VAE makes the encoder output, for every latent dimension, not one number but TWO: a mean μ and a log-variance log σ². Together they define a little Gaussian N(μ, σ²) — the 'approximate posterior' q(z|x) — describing a whole cloud of plausible codes for that input, instead of a single point. Predicting the LOG of the variance (rather than σ² directly) keeps it unconstrained and guarantees σ²>0 after exp. Now each input owns a region of latent space with a location AND a spread.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">x ─encoder─▶  μ  and  log σ²   (per latent dim)<br><br>q(z|x) = N(μ, σ²)   — a Gaussian blob, not a dot<br>predict log σ² so σ² = exp(log σ²) > 0 always</div>`,
+   code:"mu, logvar = encoder(x)     # TWO heads, each [B, zdim]\nsigma = torch.exp(0.5*logvar)\n# q(z|x) = N(mu, sigma^2): a distribution per input" },
+ { title:"4. Sample z from that Gaussian",
+   why:"With a distribution in hand, the code is now a DRAW from it: z ~ N(μ, σ²). This is the key behavioural change. During training the decoder must reconstruct x not from one fixed point but from any z sampled inside the blob — so it is forced to decode a whole neighbourhood sensibly, not just a single dot. That pressure is exactly what fills the holes: nearby codes must mean similar things. Different draws give slightly different z's, which also injects useful stochasticity.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">z ~ N(μ, σ²)   (a random draw inside the blob)<br>x̂ = decoder(z)<br><br>decoder must handle the WHOLE blob → neighbourhoods<br>of latent space become meaningful</div>`,
+   code:"sigma = torch.exp(0.5*logvar)\nz = mu + sigma * torch.randn_like(sigma)  # a sample\nx_hat = decoder(z)   # must reconstruct from ANY z in the blob" },
+ { title:"5. The reparameterization trick",
+   why:"There is a snag: 'sample z ~ N(μ,σ²)' is a random operation, and you cannot backpropagate through raw randomness — the gradient to μ and σ would be lost, and the encoder could never learn. The trick (Kingma & Welling, 2013) is to pull the randomness OUT: draw a fixed-distribution noise ε ~ N(0,1), then compute z = μ + σ⊙ε. Statistically z is still N(μ,σ²), but now it is a deterministic, differentiable function of μ and σ with the random part (ε) treated as a constant input. So ∂z/∂μ = 1 and ∂z/∂σ = ε, and gradients flow cleanly back into the encoder.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">✗ z ~ N(μ,σ²)          (random node — no gradient)<br>✓ ε ~ N(0,1);  z = μ + σ⊙ε   (ε is just an input)<br><br>same distribution, but ∂z/∂μ=1, ∂z/∂σ=ε → backprop works</div>`,
+   code:"def reparameterize(mu, logvar):\n    std = torch.exp(0.5*logvar)\n    eps = torch.randn_like(std)   # randomness lives HERE (constant)\n    return mu + std * eps         # differentiable in mu, std" },
+ { title:"6. The loss — reconstruction + β·KL",
+   why:"Reconstruction pressure alone would let the encoder cheat: push the blobs far apart with tiny σ, recreating the holey plain-autoencoder to get perfect reconstructions. So we add a second term that pulls every posterior q(z|x) toward a fixed prior p(z)=N(0,1): the KL divergence KL(q‖p). The full objective is L = reconstruction + β·KL. Two opposing forces: reconstruction spreads the blobs apart so they stay decodable and distinct; KL squeezes them back toward a shared standard-normal. Their balance produces a latent that is both informative and continuous.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">L = reconstruction( x̂, x )  +  β · KL( N(μ,σ²) ‖ N(0,1) )<br><br>recon → spread blobs apart (stay decodable)<br>KL    → pull blobs toward the origin (stay continuous)</div>`,
+   code:"rec = bce(x_hat, x)                # reconstruct the input\nkl  = kl_divergence(mu, logvar)    # pull toward N(0,1)\nloss = rec + beta * kl             # the two forces balanced" },
+ { title:"7. The closed-form Gaussian KL",
+   why:"Because BOTH distributions are Gaussian, the KL has an exact analytic form — no sampling, no approximation needed. For a diagonal posterior N(μ,σ²) against the standard normal N(0,1): KL = ½ Σᵢ (μᵢ² + σᵢ² − 1 − ln σᵢ²), summed over latent dims. Read the terms: μᵢ² penalizes any drift of the mean from 0; σᵢ² − 1 − ln σᵢ² penalizes any spread away from exactly 1 (it is zero at σ=1 and positive everywhere else). The whole thing is 0 only when μ=0 and σ=1 — i.e. when the posterior IS the prior. That is the single clean line the demo computes live.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">KL( N(μ,σ²) ‖ N(0,1) ) = ½ Σᵢ ( μᵢ² + σᵢ² − 1 − ln σᵢ² )<br><br>μ² term → mean must go to 0<br>σ²−1−lnσ² → spread must go to 1  (=0 only at σ=1)<br>KL = 0  ⇔  μ=0, σ=1  (exactly the prior)</div>`,
+   code:"def kl_divergence(mu, logvar):\n    # 0.5 * sum( mu^2 + sigma^2 - 1 - log sigma^2 )\n    return -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())\n# closed form — exact, because both are Gaussian" },
+ { title:"8. β and the trade-off (β-VAE)",
+   why:"The weight β sets how hard the KL pulls. β=1 is the original VAE. Turn β UP (a β-VAE) and the prior dominates: blobs cluster tightly at the origin with σ near 1 — the space becomes very continuous and often more 'disentangled' (single latent axes control single factors), but reconstructions blur because each code carries less information. Push β too far and you get posterior collapse: the encoder gives up and outputs the prior for everything. Turn β DOWN toward 0 and you drift back to a plain autoencoder — sharp reconstructions, holey space. The demo's β slider walks this whole spectrum.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">β = 0     → plain AE   (sharp recon, holey, not samplable)<br>β = 1     → standard VAE (balanced)<br>β &gt; 1     → continuous / disentangled, blurrier<br>β ≫ 1     → posterior collapse (q ≈ prior for all x)</div>`,
+   code:"loss = rec + beta * kl\n# beta=0 -> autoencoder ; beta=1 -> VAE\n# beta>1 -> beta-VAE: smoother, more disentangled latent\n# beta too high -> posterior collapse (kl -> 0, ignores x)" },
+ { title:"9. Generating new data from the prior",
+   why:"Here is the payoff. Because KL trained the aggregate posterior to look like N(0,1), the prior is now a VALID place to sample from — the decoder has effectively been trained to handle codes drawn from a standard normal. So to generate brand-new data you skip the encoder entirely: draw z ~ N(0,1) and decode it. Out comes a fresh, plausible sample that was never in the training set. A plain autoencoder cannot do this — there is no distribution its decoder was taught to expect. This is what makes a VAE a generative model.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">no input needed:<br>z ~ N(0,1)  ──decoder──▶  brand-new sample<br><br>works because KL made the prior a valid sampling region</div>`,
+   code:"@torch.no_grad()\ndef generate(decoder, n, zdim):\n    z = torch.randn(n, zdim)   # straight from the prior N(0,1)\n    return decoder(z)          # new data, no encoder involved" },
+ { title:"10. Smooth latent interpolation",
+   why:"Continuity has a visible signature: pick two inputs, encode them to their means z_A and z_B, then decode points along the straight line z(t)=(1−t)·z_A + t·z_B for t from 0 to 1. In a VAE the reconstruction morphs SMOOTHLY from one to the other — every intermediate code decodes to something sensible, a genuine blend — because the KL term filled the space between the blobs. In a plain autoencoder the same walk crosses dead gaps and the middle frames dissolve into noise. The demo's interpolation strip is exactly this test.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">z(t) = (1−t)·z_A + t·z_B ,   t: 0 → 1<br><br>VAE:  A ▸ ▸ ▸ ▸ ▸ B   (smooth morph, all valid)<br>AE :  A ▸ ✶✶✶ ▸ B     (noise in the gap)</div>`,
+   code:"zA, _ = encoder(xA);  zB, _ = encoder(xB)\nfor t in torch.linspace(0, 1, 9):\n    z = (1-t)*zA + t*zB\n    show(decoder(z))     # smooth morph across the latent" },
+ { title:"11. Why 'variational' — the ELBO in one line",
+   why:"The name comes from variational inference. We would like to maximize the data likelihood log p(x), but it is intractable, so we optimize a tractable lower bound instead — the Evidence Lower BOund (ELBO): log p(x) ≥ E_q[log p(x|z)] − KL(q(z|x) ‖ p(z)). The first term is the expected reconstruction log-likelihood; the second is our KL. Minimizing 'reconstruction + KL' is precisely maximizing the ELBO, i.e. pushing up a lower bound on how well the model explains the data. So the VAE loss is not an ad-hoc sum of two nice-looking terms — it is a principled objective from probability theory, which is why it generalizes so cleanly to β-VAE, conditional VAE, VQ-VAE and latent diffusion.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">log p(x) ≥ E_q[ log p(x|z) ] − KL( q(z|x) ‖ p(z) )<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└ reconstruction ┘&nbsp;&nbsp;└──── our KL ────┘<br><br>minimize (recon + KL)  ⇔  maximize the ELBO</div>`,
+   code:"# VAE loss = negative ELBO\n#   maximize   E_q[log p(x|z)] - KL(q||p)\n# equals minimize  reconstruction + KL\nloss = rec + beta * kl   # a principled bound, not an ad-hoc sum" },
+];
+</script>
+
+<script>
+// ---- UNDERSTAND engine (shared pattern) ----
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s,i) => { const bn = document.createElement("button");
+  bn.className = "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm";
+  bn.innerHTML = `<div class="font-semibold">${s.title}</div>`; bn.onclick = () => show(i); stepsEl.appendChild(bn); });
+function show(i){ curS = i; const s = STEPS[i];
+  document.getElementById("concept").innerHTML = `<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML = `<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent = s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx) => { bn.className = idx===i
+    ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold"
+    : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick = () => show(Math.max(0, curS-1));
+nextB.onclick = () => show(Math.min(STEPS.length-1, curS+1));
+let tm = null;
+autoB.onclick = () => { if (tm){ clearInterval(tm); tm=null; autoB.textContent="▶ Auto-play"; return; }
+  autoB.textContent = "⏸ Pause"; show(0);
+  tm = setInterval(() => { if (curS >= STEPS.length-1){ clearInterval(tm); tm=null; autoB.textContent="▶ Replay"; return; } show(curS+1); }, 5200); };
+show(0);
+
+function copy(btn){ const pre = btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500); }
+</script>
+</body>
+</html>
