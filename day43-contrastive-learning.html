@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 43 — Contrastive Learning (SimCLR / InfoNCE)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .preset-btn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:7px 12px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; transition:.12s; }
+  .preset-btn:hover{ border-color:#fda4af; }
+  .preset-btn.on{ background:#f43f5e; border-color:#f43f5e; color:#fff; }
+  .metric{ font-variant-numeric:tabular-nums; }
+  canvas{ display:block; }
+  #inputC, #embC { width:100%; height:auto; max-width:340px; border-radius:12px; background:#fff; }
+  .kvrow{ display:flex; justify-content:space-between; gap:10px; font-size:12px; padding:3px 0; border-bottom:1px dashed #e2e8f0; }
+  .kvrow span:first-child{ color:#64748b; }
+  .legend-sym{ display:inline-flex; width:16px; height:16px; border-radius:5px; }
+  .btn-solid{ background:#f43f5e; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-dark{ background:#0f172a; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-ghost{ background:#fff; border:1.5px solid #e2e8f0; color:#475569; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .bar-track{ height:8px; border-radius:999px; background:#f1f5f9; overflow:hidden; }
+  .bar-fill{ height:100%; border-radius:999px; transition:width .15s; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 43</div>
+      <h1 class="text-xl font-bold">&#129522; Contrastive Learning &mdash; every day 43 taught a net to classify by showing it <em>labels</em>. But labels are expensive, and the internet is a bottomless well of <em>un</em>labelled images. <strong>Contrastive learning</strong> (the heart of <strong>SimCLR</strong>) learns a useful representation with <strong>no labels at all</strong>, from one deceptively simple idea: take an image, make two random <strong>augmentations</strong> of it (crop, flip, colour-jitter) &mdash; these two views are a <strong>positive pair</strong> that <em>must</em> mean the same thing &mdash; and treat every <em>other</em> image in the batch as a <strong>negative</strong>. Train an encoder so the two views of one item land <strong>close together</strong> in embedding space while the negatives are pushed <strong>apart</strong>. The loss that does this is <strong>InfoNCE</strong> (a.k.a. NT-Xent): for an anchor, form the cosine similarity to every other embedding, divide by a <strong>temperature</strong> <span class="mono">&tau;</span>, and take a <strong>softmax</strong> &mdash; then maximise the weight on the true positive: <span class="mono">L = &minus;log( e<sup>sim(z,z&#8314;)/&tau;</sup> / &Sigma;<sub>k</sub> e<sup>sim(z,z<sub>k</sub>)/&tau;</sup> )</span>. It is literally a classification loss where the &ldquo;class&rdquo; is <em>which sample is my positive</em>. The magic: because augmentations of a cat still look catlike, the encoder is forced to keep whatever is invariant to the augmentation &mdash; the <em>content</em> &mdash; so genuinely similar items cluster together <strong>even though it never saw a single label</strong>. Drop the negatives and the whole thing <strong>collapses</strong> to a single point; the temperature <span class="mono">&tau;</span> is the knob that decides how hard the negatives are fought.</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== LOOK ===================== -->
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-6 lg:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">A real SimCLR encoder, trained live in your browser &mdash; <span class="sk">no labels</span>, genuine <span class="sk">InfoNCE</span> gradients.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto text-center">32 items sit in a 2-D <em>input</em> space (left). A tiny encoder maps them onto the unit circle (the <em>embedding</em>, right). Each step it makes two jittered <strong>augmentations</strong> of every item, pulls each item&rsquo;s two views together and pushes all other views apart with the real <strong>InfoNCE</strong> loss. Press <b>Train</b> and watch the circle self-organise into class arcs &mdash; <strong>the colours are only for your eyes; the loss never sees them.</strong> Turn the negatives off to watch it <strong>collapse</strong>; drag <span class="mono">&tau;</span> to change how sharply negatives are fought.</p>
+
+      <!-- controls -->
+      <div class="bg-white rounded-xl border border-rose-200 p-4 mb-4">
+        <div class="grid md:grid-cols-3 gap-4 items-end">
+          <div class="ctrl">
+            <label>objective</label>
+            <div class="flex gap-2 flex-wrap">
+              <button class="preset-btn on" data-neg="1">InfoNCE &middot; with negatives</button>
+              <button class="preset-btn" data-neg="0">positives only &middot; collapses</button>
+            </div>
+            <div class="text-[11px] text-slate-400 mt-1">Negatives supply the <em>repulsion</em>. Remove them and there is nothing to stop every embedding piling onto one point.</div>
+          </div>
+          <div class="ctrl">
+            <label>temperature <span class="mono">&tau;</span><span id="v_tau" class="sk stat">0.20</span></label>
+            <input type="range" id="s_tau" min="0.05" max="1" step="0.01" value="0.20">
+            <div class="text-[11px] text-slate-400">low = sharp, fights the <em>hardest</em> (nearest) negative · high = soft, spreads the penalty over all negatives</div>
+          </div>
+          <div class="ctrl">
+            <label>augmentation strength<span id="v_aug" class="sk stat">0.12</span></label>
+            <input type="range" id="s_aug" min="0" max="0.6" step="0.01" value="0.12">
+            <div class="text-[11px] text-slate-400">how far the two views of an item are jittered apart &mdash; the <em>only</em> supervision there is</div>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-2 mt-4 items-center">
+          <button id="btnTrain" class="btn-solid">▶ Train</button>
+          <button id="btnStep"  class="btn-ghost">Step ×1</button>
+          <button id="btnReset" class="btn-ghost">↺ Reset</button>
+          <span class="text-xs text-slate-400 ml-2">step <b id="r_step" class="sk metric">0</b></span>
+          <span class="ml-auto text-xs text-slate-500">gradient descent on a real 2&rarr;16&rarr;2 <span class="mono">tanh</span> encoder, cosine similarity, grad-clipped SGD</span>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-[1fr_1fr_320px] gap-4 mb-4">
+        <!-- input space -->
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Input space <span class="text-slate-300">(the raw data)</span></div>
+          <canvas id="inputC" width="340" height="340" class="mx-auto"></canvas>
+          <div class="text-[11px] text-slate-400 mt-2">32 items in 4 clusters. Small <span style="color:#94a3b8">×</span> marks show the two augmented views of one highlighted item &mdash; the positive pair.</div>
+        </div>
+        <!-- embedding circle -->
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Learned embedding <span class="text-slate-300">(on the unit circle)</span></div>
+          <canvas id="embC" width="340" height="340" class="mx-auto"></canvas>
+          <div class="text-[11px] text-slate-400 mt-2">Every embedding is L2-normalised, so it lands on the circle. Train &rarr; same-content items gather into tight <em>arcs</em>, pushed apart from the rest.</div>
+          <div id="legend" class="flex flex-wrap gap-3 mt-3"></div>
+        </div>
+        <!-- readouts -->
+        <div class="space-y-4">
+          <div class="bg-slate-900 rounded-xl p-4 text-center">
+            <div class="text-[11px] text-rose-300 uppercase font-bold tracking-wider">InfoNCE loss (live)</div>
+            <div id="r_loss" class="text-4xl font-black metric text-rose-400 mt-1">—</div>
+            <canvas id="lossC" width="280" height="70" class="mt-2 rounded" style="width:100%;height:auto;background:#0b1220"></canvas>
+            <div class="text-[11px] text-slate-400 mt-1">mean over all views &mdash; watch it fall as the encoder learns</div>
+          </div>
+          <div class="bg-white rounded-xl border border-slate-200 p-4">
+            <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">clustering (cosine sim)</div>
+            <div class="flex justify-between text-xs mb-1"><span class="text-slate-500">same class &uarr;</span><b id="r_intra" class="sk metric">—</b></div>
+            <div class="bar-track mb-3"><div id="bar_intra" class="bar-fill" style="width:0%;background:#22c55e"></div></div>
+            <div class="flex justify-between text-xs mb-1"><span class="text-slate-500">different class &darr;</span><b id="r_inter" class="metric" style="color:#64748b">—</b></div>
+            <div class="bar-track"><div id="bar_inter" class="bar-fill" style="width:0%;background:#94a3b8"></div></div>
+          </div>
+          <div class="bg-white rounded-xl border border-slate-200 p-4">
+            <div class="kvrow"><span>hardest-negative share</span><span id="r_hard" class="mono sk">—</span></div>
+            <div class="kvrow" style="border:0"><span>collapse check (spread)</span><span id="r_coll" class="mono">—</span></div>
+            <div id="collNote" class="text-[11px] text-slate-400 mt-2"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-sm text-slate-600">
+        <b class="text-slate-800">What to try:</b> (1) Reset, then <b>Train</b> with negatives on &mdash; the loss drops and the circle splits into 4 arcs though no label was ever used. (2) Switch to <b>positives only</b> and Train &mdash; the same-class points pile onto each other (same-class sim &rarr; 1.00) and, with any real augmentation, everything crushes toward a single point: <b>collapse</b>. (3) Push <span class="mono">&tau;</span> down to 0.05 &mdash; the <em>hardest-negative share</em> shoots up (one negative dominates the softmax). (4) Set augmentation to 0 &mdash; the two views become identical, the positive term is trivially satisfied, and the signal weakens.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== UNDERSTAND ===================== -->
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Learning to represent, without labels</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BUILD ===================== -->
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">SimCLR is remarkably small: an <strong>augmentation</strong> that turns one image into two views, an <strong>encoder</strong> + <strong>projection head</strong> that maps a view to a normalised embedding, and the <strong>NT-Xent / InfoNCE</strong> loss that pulls the two views of an item together while pushing every other view away. We assemble it one line at a time &mdash; the augmentation, the encoder, L2-normalisation, the similarity matrix, the temperature-scaled cross-entropy, a full training step, and finally how you actually <em>use</em> the frozen encoder afterward.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Augment &mdash; one image becomes two views (the positive pair)</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The only &ldquo;supervision&rdquo; is a strong stochastic augmentation. Apply it <em>twice</em> to the same image to get two views that we <em>define</em> as a positive pair &mdash; they should mean the same thing. SimCLR found the mix matters enormously: random resized crop + colour jitter + grayscale + blur. Without colour jitter the net cheats by matching colour histograms instead of content.</p>
+        <div class="relative"><pre>import torch, torch.nn as nn, torch.nn.functional as F
+from torchvision import transforms as T
+
+aug = T.Compose([
+    T.RandomResizedCrop(96, scale=(0.2, 1.0)),
+    T.RandomHorizontalFlip(),
+    T.RandomApply([T.ColorJitter(0.4,0.4,0.4,0.1)], p=0.8),
+    T.RandomGrayscale(p=0.2),
+    T.GaussianBlur(9),
+    T.ToTensor(),
+])
+def two_views(img):
+    return aug(img), aug(img)     # v1, v2 : the positive pair</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Encoder + projection head</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A backbone <code>f</code> (e.g. a ResNet) maps a view to a feature <code>h</code>; a small MLP projection head <code>g</code> maps <code>h</code> to the space where the loss lives. Crucially, the contrastive loss is applied on <code>g(h)</code>, but the representation you keep for downstream tasks is <code>h</code> &mdash; the head is thrown away. This detail measurably improves the learned features.</p>
+        <div class="relative"><pre>class SimCLR(nn.Module):
+    def __init__(self, backbone, feat_dim, proj_dim=128):
+        super().__init__()
+        self.f = backbone                       # e.g. ResNet, no classifier
+        self.g = nn.Sequential(                 # projection head (MLP)
+            nn.Linear(feat_dim, feat_dim), nn.ReLU(),
+            nn.Linear(feat_dim, proj_dim))
+    def forward(self, x):
+        h = self.f(x)                           # representation (KEEP this)
+        z = self.g(h)                           # projection (loss lives here)
+        return h, z</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">L2-normalise &mdash; work on the unit hypersphere</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Normalise every projection to unit length. Now the dot product <em>is</em> the cosine similarity, in <code>[-1, 1]</code>, so only the <em>direction</em> of an embedding matters, not its magnitude. This is why our demo can draw the embeddings on a circle: after normalisation that is exactly where they live.</p>
+        <div class="relative"><pre>z = F.normalize(z, dim=1)          # ||z|| = 1  ->  z·z' = cos angle
+# similarity of two embeddings is now just their dot product</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">The similarity matrix over the batch</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Stack both views of all <code>N</code> images into <code>2N</code> embeddings and compute all pairwise cosine similarities in one matmul. For row <code>i</code>, its positive is its sibling view; the other <code>2N&minus;2</code> rows are negatives. Mask the diagonal so an embedding is never its own negative.</p>
+        <div class="relative"><pre>z = torch.cat([z1, z2], dim=0)          # [2N, d]  (z1,z2 each [N,d])
+sim = z @ z.t()                          # [2N, 2N] cosine similarities
+mask = torch.eye(2*N, dtype=torch.bool, device=z.device)
+sim.masked_fill_(mask, float('-inf'))    # drop self-similarity
+# positive of row i:  (i+N) % 2N   -> the other view of the same image</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">InfoNCE / NT-Xent &mdash; a softmax that picks the positive</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Divide the similarities by the temperature <code>&tau;</code> and treat each row as classification logits whose correct &ldquo;class&rdquo; is the index of its positive. Cross-entropy then maximises the softmax weight on the true positive and, by normalisation, suppresses the negatives. That is the whole loss: <code>L = &minus;log( e<sup>s&#8314;/&tau;</sup> / &Sigma;<sub>k</sub> e<sup>s<sub>k</sub>/&tau;</sup> )</code>.</p>
+        <div class="relative"><pre>def info_nce(sim, N, tau=0.5):
+    logits = sim / tau                      # temperature-scaled
+    targets = torch.arange(2*N, device=sim.device)
+    targets = (targets + N) % (2*N)         # index of each row's positive
+    return F.cross_entropy(logits, targets) # softmax + pick the positive</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Temperature &tau; &mdash; and why you need negatives</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A <em>small</em> <code>&tau;</code> sharpens the softmax so the nearest (hardest) negative dominates the gradient &mdash; strong, sharp separation, but sensitive and prone to breaking apart semantically-close samples. A <em>large</em> <code>&tau;</code> softens it, spreading the penalty gently. And the negatives are not optional: with positives alone the trivial optimum is to map <em>every</em> input to the same vector &mdash; <strong>collapse</strong>. The denominator&rsquo;s negatives are the &ldquo;uniformity&rdquo; force that keeps the sphere populated.</p>
+        <div class="relative"><pre># tau: SimCLR default ~0.1-0.5.  smaller = harder contrast.
+# NO negatives  ->  L = -sim(z1, z2)/tau   (alignment only)
+#   optimum is f(x) = const for all x  ->  representations COLLAPSE.
+# negatives in the denominator add repulsion (uniformity) -> no collapse.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">One training step</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Put it together: two views &rarr; encode both &rarr; normalise &rarr; similarity matrix &rarr; InfoNCE &rarr; backward. Big batches help &mdash; more negatives per step is a stronger signal &mdash; which is why SimCLR is hungry for batch size (later methods like MoCo use a memory queue to fake a large negative set on a small batch).</p>
+        <div class="relative"><pre>def train_step(x1, x2, model, opt, tau=0.5):
+    _, z1 = model(x1); _, z2 = model(x2)     # two views through the net
+    z1, z2 = F.normalize(z1,1), F.normalize(z2,1)
+    z = torch.cat([z1, z2], 0)
+    sim = z @ z.t()
+    sim.masked_fill_(torch.eye(len(z),dtype=bool,device=z.device), -9e15)
+    loss = info_nce(sim, x1.size(0), tau)
+    opt.zero_grad(); loss.backward(); opt.step()
+    return loss.item()</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">8</div><h3 class="font-bold text-lg">Use it &mdash; the linear probe, and the family it spawned</h3></div>
+        <p class="text-sm text-slate-600 mb-3">After pretraining, <em>freeze</em> the encoder and train a single linear layer on top with the few labels you do have &mdash; the <strong>linear probe</strong>. SimCLR&rsquo;s frozen features rival fully-supervised training. The idea generalises: <strong>MoCo</strong> (momentum encoder + queue), <strong>BYOL/SimSiam</strong> (no negatives, avoid collapse with a predictor + stop-gradient), and <strong>CLIP</strong> (the positive pair is an image and its <em>caption</em> &mdash; InfoNCE across modalities, the backbone of modern multimodal models).</p>
+        <div class="relative"><pre>backbone.eval()                              # freeze the pretrained encoder
+for p in backbone.parameters(): p.requires_grad = False
+clf = nn.Linear(feat_dim, num_classes)       # a single layer, few labels
+# train only clf on (h = backbone(x), label)  -> the "linear probe"
+
+# lineage:  SimCLR -> MoCo (queue) -> BYOL/SimSiam (no negatives)
+#           -> CLIP (image<->text InfoNCE)  the multimodal workhorse</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 43 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2"><strong>Contrastive learning</strong> turns unlabelled data into a training signal by inventing its own labels: two <strong>augmentations</strong> of one item are a <strong>positive pair</strong> that must agree, and every other item in the batch is a <strong>negative</strong> to push away. The <strong>InfoNCE / NT-Xent</strong> loss <span class="mono">&minus;log( e<sup>sim/&tau;</sup> / &Sigma; e<sup>sim/&tau;</sup> )</span> is just a temperature-scaled softmax that asks &ldquo;which of these is my positive?&rdquo; &mdash; pulling positives together (<em>alignment</em>) while the negatives in the denominator keep the space spread out (<em>uniformity</em>). Because augmentations preserve content but not nuisance detail, the encoder is forced to keep <em>meaning</em>, so semantically similar items cluster with <strong>no labels ever seen</strong> &mdash; exactly what you watched happen on the circle. Remove the negatives and it <strong>collapses</strong>; <span class="mono">&tau;</span> tunes how hard the contrast is fought. <strong>&#128073; Tomorrow, Day 44:</strong> CLIP &mdash; the same InfoNCE loss, but the positive pair is an <em>image and its caption</em>, learning a shared image&ndash;text space you can search and prompt in words.</p></div>
+  </div>
+</section>
+
+<script>
+// ---- tab switching ----
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+</script>
+
+<script>
+// ==================================================================
+//  DAY 43 — CONTRASTIVE LEARNING (SimCLR / InfoNCE), real in-browser.
+//  A genuine 2->16->2 tanh encoder is trained by gradient descent on
+//  the real NT-Xent / InfoNCE loss over cosine similarities. Labels are
+//  used ONLY to draw + measure — never in the loss. Everything below
+//  (forward, backprop, softmax, grad-clipped SGD) is computed for real.
+// ==================================================================
+
+// ---------- config ----------
+const C = 4, M = 8, N = C * M, H = 16;   // 4 classes x 8 items = 32; hidden 16
+const LR = 0.08, CLIP = 3.0, SPREAD = 0.28;
+const CH = ["#f43f5e", "#fb923c", "#22c55e", "#38bdf8"];   // class colours
+const CNAME = ["red", "orange", "green", "blue"];
+const CENTERS = [[-1,-1],[1,-1],[-1,1],[1,1]];
+
+// ---------- Box–Muller normal ----------
+let _spare = null;
+function randn(){
+  if (_spare !== null){ const s = _spare; _spare = null; return s; }
+  let u, v, s;
+  do { u = Math.random()*2-1; v = Math.random()*2-1; s = u*u+v*v; } while (s >= 1 || s === 0);
+  const f = Math.sqrt(-2*Math.log(s)/s); _spare = v*f; return u*f;
+}
+
+// ---------- data + params ----------
+let X = [], cls = [];
+function makeData(){
+  X = []; cls = [];
+  for (let c = 0; c < C; c++) for (let m = 0; m < M; m++){
+    X.push([ CENTERS[c][0] + SPREAD*randn(), CENTERS[c][1] + SPREAD*randn() ]);
+    cls.push(c);
+  }
+}
+let A, b, W2;                                   // encoder: h=tanh(Ax+b), o=W2 h, z=o/|o|
+function initParams(){
+  A  = Array.from({length:H}, () => [0.6*randn(), 0.6*randn()]);
+  b  = Array.from({length:H}, () => 0);
+  W2 = Array.from({length:2}, () => Array.from({length:H}, () => 0.6*randn()));
+}
+
+// ---------- forward one input ----------
+function fwd(x){
+  const h = new Array(H);
+  for (let j = 0; j < H; j++) h[j] = Math.tanh(A[j][0]*x[0] + A[j][1]*x[1] + b[j]);
+  const o = [0,0];
+  for (let d = 0; d < 2; d++){ let s = 0; for (let j = 0; j < H; j++) s += W2[d][j]*h[j]; o[d] = s; }
+  const n = Math.hypot(o[0], o[1]) + 1e-9;
+  return { x, h, o, n, z: [o[0]/n, o[1]/n] };
+}
+
+// ---------- state ----------
+let tau = 0.20, aug = 0.12, useNeg = true, stepN = 0, running = false, raf = null;
+let lossHist = [], lastLoss = null, hi = 0;     // hi = highlighted item (for aug ×'s)
+
+// ---------- ONE real InfoNCE training step ----------
+// returns the loss BEFORE the update (standard); updates params in place.
+function trainStep(apply = true){
+  // two augmented views of every item -> 2N views
+  const views = [], vitem = [];
+  for (let i = 0; i < N; i++) for (let k = 0; k < 2; k++){
+    views.push(fwd([ X[i][0] + aug*randn(), X[i][1] + aug*randn() ]));
+    vitem.push(i);
+  }
+  const V = views.length;
+  // cosine similarity matrix (embeddings already unit-length)
+  const S = Array.from({length:V}, () => new Array(V).fill(0));
+  for (let a = 0; a < V; a++) for (let bb = 0; bb < V; bb++)
+    S[a][bb] = views[a].z[0]*views[bb].z[0] + views[a].z[1]*views[bb].z[1];
+  const posOf = a => (a % 2 === 0) ? a+1 : a-1;   // sibling view = positive
+
+  const gz = Array.from({length:V}, () => [0,0]);
+  let loss = 0, hardShare = 0, hardCnt = 0;
+
+  for (let a = 0; a < V; a++){
+    const p = posOf(a);
+    if (!useNeg){
+      // positives only -> alignment only -> collapses
+      loss += -S[a][p] / tau;
+      const cf = -1/tau;
+      gz[a][0] += cf*views[p].z[0]; gz[a][1] += cf*views[p].z[1];
+      gz[p][0] += cf*views[a].z[0]; gz[p][1] += cf*views[a].z[1];
+      continue;
+    }
+    // softmax over all k != a
+    let mx = -Infinity;
+    for (let bb = 0; bb < V; bb++){ if (bb === a) continue; const l = S[a][bb]/tau; if (l > mx) mx = l; }
+    let Z = 0; const e = new Array(V).fill(0);
+    for (let bb = 0; bb < V; bb++){ if (bb === a) continue; e[bb] = Math.exp(S[a][bb]/tau - mx); Z += e[bb]; }
+    loss += -S[a][p]/tau + (Math.log(Z) + mx);      // = -log softmax(positive)
+    // hardest-negative share (τ sharpness readout): max weight among true negatives
+    let hmax = 0;
+    for (let bb = 0; bb < V; bb++){ if (bb === a || bb === p) continue; const w = e[bb]/Z; if (w > hmax) hmax = w; }
+    hardShare += hmax; hardCnt++;
+    // gradients dL_a/ds -> dz
+    for (let bb = 0; bb < V; bb++){ if (bb === a) continue;
+      const cf = (e[bb]/Z - (bb === p ? 1 : 0)) / tau;
+      gz[a][0] += cf*views[bb].z[0]; gz[a][1] += cf*views[bb].z[1];
+      gz[bb][0] += cf*views[a].z[0]; gz[bb][1] += cf*views[a].z[1];
+    }
+  }
+  loss /= V;
+
+  // backprop each view: z -> o (normalisation jacobian) -> h -> params
+  const gA = Array.from({length:H}, () => [0,0]), gb = new Array(H).fill(0);
+  const gW2 = Array.from({length:2}, () => new Array(H).fill(0));
+  for (let a = 0; a < V; a++){
+    const vw = views[a], z = vw.z, n = vw.n;
+    const dot = gz[a][0]*z[0] + gz[a][1]*z[1];
+    const go = [ (gz[a][0] - dot*z[0]) / n, (gz[a][1] - dot*z[1]) / n ];   // d/do of normalize
+    const gh = new Array(H).fill(0);
+    for (let d = 0; d < 2; d++) for (let j = 0; j < H; j++){ gW2[d][j] += go[d]*vw.h[j]; gh[j] += W2[d][j]*go[d]; }
+    for (let j = 0; j < H; j++){ const gp = gh[j]*(1 - vw.h[j]*vw.h[j]); gA[j][0] += gp*vw.x[0]; gA[j][1] += gp*vw.x[1]; gb[j] += gp; }
+  }
+  if (apply){
+    // global grad-norm clip (keeps every τ stable) then SGD
+    let gn = 0;
+    for (let j = 0; j < H; j++) gn += gA[j][0]**2 + gA[j][1]**2 + gb[j]**2;
+    for (let d = 0; d < 2; d++) for (let j = 0; j < H; j++) gn += gW2[d][j]**2;
+    gn = Math.sqrt(gn);
+    const eff = LR * (gn > CLIP ? CLIP/gn : 1);
+    for (let j = 0; j < H; j++){ A[j][0] -= eff*gA[j][0]; A[j][1] -= eff*gA[j][1]; b[j] -= eff*gb[j]; }
+    for (let d = 0; d < 2; d++) for (let j = 0; j < H; j++) W2[d][j] -= eff*gW2[d][j];
+    stepN++;
+  }
+  return { loss, hardShare: hardCnt ? hardShare/hardCnt : 0 };
+}
+
+// ---------- metrics on the CLEAN embeddings ----------
+function metrics(){
+  const Z = X.map(x => fwd(x).z);
+  let intra = 0, ni = 0, inter = 0, no = 0, cx = 0, cy = 0;
+  for (let i = 0; i < N; i++){
+    const t = Math.atan2(Z[i][1], Z[i][0]); cx += Math.cos(t); cy += Math.sin(t);
+    for (let k = i+1; k < N; k++){
+      const s = Z[i][0]*Z[k][0] + Z[i][1]*Z[k][1];
+      if (cls[i] === cls[k]){ intra += s; ni++; } else { inter += s; no++; }
+    }
+  }
+  return { Z, intra: intra/ni, inter: inter/no, R: Math.hypot(cx/N, cy/N) };
+}
+
+// ---------- canvases ----------
+const inC = document.getElementById("inputC"), ic = inC.getContext("2d");
+const emC = document.getElementById("embC"),   ec = emC.getContext("2d");
+const loC = document.getElementById("lossC"),  lc = loC.getContext("2d");
+
+function drawInput(){
+  const W = inC.width, Hh = inC.height, R = 2.2;
+  const P = (x,y) => [ (x/R*0.5+0.5)*W, (0.5-y/R*0.5)*Hh ];
+  ic.clearRect(0,0,W,Hh); ic.fillStyle = "#fff"; ic.fillRect(0,0,W,Hh);
+  // grid + axes
+  ic.strokeStyle = "rgba(148,163,184,0.20)"; ic.lineWidth = 1;
+  for (let g = -2; g <= 2; g++){ const [px] = P(g,0), [,py] = P(0,g);
+    ic.beginPath(); ic.moveTo(px,0); ic.lineTo(px,Hh); ic.stroke();
+    ic.beginPath(); ic.moveTo(0,py); ic.lineTo(W,py); ic.stroke(); }
+  // the highlighted item's two augmented views (× marks) — the positive pair
+  const hx = X[hi];
+  for (let k = 0; k < 2; k++){
+    const [px,py] = P(hx[0] + aug*_augView[hi*2+k][0], hx[1] + aug*_augView[hi*2+k][1]);
+    ic.strokeStyle = "#64748b"; ic.lineWidth = 2;
+    ic.beginPath(); ic.moveTo(px-5,py-5); ic.lineTo(px+5,py+5); ic.moveTo(px+5,py-5); ic.lineTo(px-5,py+5); ic.stroke();
+  }
+  // data points
+  for (let i = 0; i < N; i++){
+    const [px,py] = P(X[i][0], X[i][1]);
+    ic.fillStyle = CH[cls[i]];
+    ic.beginPath(); ic.arc(px,py, i === hi ? 6 : 4, 0, 2*Math.PI); ic.fill();
+    if (i === hi){ ic.strokeStyle = "#0f172a"; ic.lineWidth = 2; ic.stroke(); }
+  }
+}
+
+function drawEmb(Z){
+  const W = emC.width, Hh = emC.height, ox = W/2, oy = Hh/2, rad = W*0.40;
+  ec.clearRect(0,0,W,Hh); ec.fillStyle = "#fff"; ec.fillRect(0,0,W,Hh);
+  // axes
+  ec.strokeStyle = "rgba(148,163,184,0.25)"; ec.lineWidth = 1;
+  ec.beginPath(); ec.moveTo(0,oy); ec.lineTo(W,oy); ec.stroke();
+  ec.beginPath(); ec.moveTo(ox,0); ec.lineTo(ox,Hh); ec.stroke();
+  // unit circle
+  ec.strokeStyle = "#cbd5e1"; ec.setLineDash([5,4]); ec.lineWidth = 1.4;
+  ec.beginPath(); ec.arc(ox,oy,rad,0,2*Math.PI); ec.stroke(); ec.setLineDash([]);
+  // embeddings (already unit-length) on the circle
+  for (let i = 0; i < N; i++){
+    const px = ox + Z[i][0]*rad, py = oy - Z[i][1]*rad;
+    ec.strokeStyle = "rgba(148,163,184,0.35)"; ec.lineWidth = 1;
+    ec.beginPath(); ec.moveTo(ox,oy); ec.lineTo(px,py); ec.stroke();
+    ec.fillStyle = CH[cls[i]];
+    ec.beginPath(); ec.arc(px,py, i === hi ? 6 : 4.5, 0, 2*Math.PI); ec.fill();
+    if (i === hi){ ec.strokeStyle = "#0f172a"; ec.lineWidth = 2; ec.stroke(); }
+  }
+}
+
+function drawLoss(){
+  const W = loC.width, Hh = loC.height;
+  lc.clearRect(0,0,W,Hh);
+  if (lossHist.length < 2) return;
+  let lo = Infinity, hiv = -Infinity;
+  for (const v of lossHist){ if (v < lo) lo = v; if (v > hiv) hiv = v; }
+  const pad = 4, span = (hiv - lo) || 1;
+  lc.strokeStyle = "#f43f5e"; lc.lineWidth = 2; lc.beginPath();
+  lossHist.forEach((v,i) => {
+    const px = pad + (W-2*pad) * i/(lossHist.length-1);
+    const py = pad + (Hh-2*pad) * (1 - (v-lo)/span);
+    i ? lc.lineTo(px,py) : lc.moveTo(px,py);
+  });
+  lc.stroke();
+}
+
+// per-item fixed augmentation offsets for the × display (regenerated each redraw of live view)
+let _augView = Array.from({length:N*2}, () => [randn(), randn()]);
+
+// ---------- readouts ----------
+function refresh(hardShare){
+  const m = metrics();
+  drawInput(); drawEmb(m.Z); drawLoss();
+  document.getElementById("r_step").textContent = stepN;
+  document.getElementById("r_loss").textContent = lastLoss === null ? "—" : lastLoss.toFixed(3);
+  document.getElementById("r_intra").textContent = m.intra.toFixed(3);
+  document.getElementById("r_inter").textContent = m.inter.toFixed(3);
+  document.getElementById("bar_intra").style.width = `${Math.max(0, m.intra)*100}%`;
+  document.getElementById("bar_inter").style.width = `${Math.max(0, m.inter)*100}%`;
+  document.getElementById("r_hard").textContent = useNeg && hardShare != null ? (hardShare*100).toFixed(0)+"%" : (useNeg ? "—" : "n/a (no negatives)");
+  const collapsed = m.R > 0.6;
+  document.getElementById("r_coll").textContent = m.R.toFixed(2) + (collapsed ? "  ⚠ collapsed" : "  ok");
+  document.getElementById("r_coll").style.color = collapsed ? "#be123c" : "#334155";
+  document.getElementById("collNote").innerHTML = useNeg
+    ? `spread near 0 = embeddings fill the circle (healthy). Negatives keep it that way.`
+    : (m.intra > 0.9
+        ? `<b class="sk">Collapse.</b> With no negatives, same-item views pile onto each other (same-class sim → 1); the trivial optimum maps everything to one point.`
+        : `no repulsion — nothing is stopping the collapse now under way.`);
+}
+
+// ---------- run loop ----------
+function loop(){
+  if (!running) return;
+  let last = null;
+  for (let s = 0; s < 3; s++){ const r = trainStep(true); last = r; }
+  lastLoss = last.loss; lossHist.push(last.loss); if (lossHist.length > 240) lossHist.shift();
+  _augView = Array.from({length:N*2}, () => [randn(), randn()]);
+  refresh(last.hardShare);
+  raf = requestAnimationFrame(loop);
+}
+function setRunning(on){
+  running = on;
+  document.getElementById("btnTrain").textContent = on ? "⏸ Pause" : "▶ Train";
+  document.getElementById("btnTrain").className = on ? "btn-dark" : "btn-solid";
+  if (on) loop(); else if (raf) cancelAnimationFrame(raf);
+}
+
+// ---------- reset ----------
+function reset(){
+  setRunning(false);
+  makeData(); initParams();
+  stepN = 0; lossHist = []; lastLoss = null;
+  const probe = trainStep(false);           // measure initial loss without updating
+  lastLoss = probe.loss; lossHist.push(probe.loss);
+  refresh(probe.hardShare);
+}
+
+// ---------- legend ----------
+document.getElementById("legend").innerHTML = CNAME.map((nm,k) =>
+  `<div class="flex items-center gap-1.5 text-xs text-slate-600"><span class="legend-sym" style="background:${CH[k]}"></span>class ${k+1}</div>`).join("");
+
+// ---------- wire controls ----------
+document.getElementById("s_tau").addEventListener("input", e => {
+  tau = +e.target.value; document.getElementById("v_tau").textContent = tau.toFixed(2);
+  const probe = trainStep(false); refresh(probe.hardShare);
+});
+document.getElementById("s_aug").addEventListener("input", e => {
+  aug = +e.target.value; document.getElementById("v_aug").textContent = aug.toFixed(2);
+  const probe = trainStep(false); refresh(probe.hardShare);
+});
+document.querySelectorAll("[data-neg]").forEach(btn => btn.onclick = () => {
+  document.querySelectorAll("[data-neg]").forEach(x => x.classList.remove("on"));
+  btn.classList.add("on"); useNeg = btn.dataset.neg === "1";
+  const probe = trainStep(false); refresh(probe.hardShare);
+});
+document.getElementById("btnTrain").onclick = () => setRunning(!running);
+document.getElementById("btnStep").onclick = () => {
+  setRunning(false); const r = trainStep(true);
+  lastLoss = r.loss; lossHist.push(r.loss); if (lossHist.length > 240) lossHist.shift();
+  _augView = Array.from({length:N*2}, () => [randn(), randn()]);
+  refresh(r.hardShare);
+};
+document.getElementById("btnReset").onclick = reset;
+// cycle highlighted item on input-canvas click
+inC.addEventListener("pointerdown", () => { hi = (hi + 1) % N; refresh(); });
+
+reset();
+</script>
+
+<script>
+// ===================== UNDERSTAND — 11 steps =====================
+const STEPS = [
+ { title:"1. The problem — labels are the bottleneck",
+   why:"Supervised learning is spectacular, but it runs on labelled data, and labels are slow, costly and scarce — millions of hand-tagged images to learn what a cat is. Meanwhile the internet has effectively unlimited images with NO labels. Representation learning asks: can we learn a good, reusable feature space from the raw, unlabelled data alone, so that later a tiny amount of labelling finishes the job? Contrastive learning is the answer that finally made self-supervised vision rival supervised vision.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">labelled data:  expensive, scarce  😩<br>unlabelled data:  endless, free  🌊<br><br>goal → learn useful features from unlabelled data<br>then finish with a tiny labelled probe</div>`,
+   code:"# supervised: needs (x, label) for every example\n# contrastive: needs only x  -> invents its own signal\n#   'two views of the same image should agree'" },
+ { title:"2. Augmentations invent the labels",
+   why:"The trick to get a signal for free: take one image and apply a strong RANDOM augmentation twice — random crop, flip, colour jitter, blur — producing two different views. We DECLARE these two views a positive pair: whatever they have in common is the CONTENT, and the encoder should map them close together. Everything the augmentation changed (exact crop, colours, orientation) is nuisance the encoder is encouraged to discard. The choice of augmentations literally defines what 'similar' means — it is the whole inductive bias.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">image ──aug──▶ view 1 ┐<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─aug──▶ view 2 ┘ = POSITIVE pair<br><br>same content, different nuisance → encoder keeps content</div>`,
+   code:"v1 = augment(x)   # random crop+jitter+flip+blur\nv2 = augment(x)   # a DIFFERENT random draw\n# (v1, v2) is a positive pair — no human label needed" },
+ { title:"3. Positives vs negatives",
+   why:"Within a batch of images, each image contributes a positive pair (its two views). For a given anchor view, its positive is the sibling view of the SAME image; every other view in the batch — all from different images — is a NEGATIVE. So a batch of N images gives 2N views, and each anchor faces 1 positive and 2N−2 negatives. The learning objective is simply: make the anchor more similar to its positive than to any negative. That comparison is where the name 'contrastive' comes from.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">batch of N images → 2N views<br>anchor a:  positive = sibling view of a<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;negatives = the other 2N−2 views<br><br>want:  sim(a, positive)  ≫  sim(a, negative)</div>`,
+   code:"z = cat([z1, z2])          # 2N embeddings\n# row i's positive = its sibling view (i+N) % 2N\n# every other row = a negative for row i" },
+ { title:"4. The encoder maps a view to an embedding",
+   why:"An encoder f (a CNN like ResNet, or in our demo a tiny 2→16→2 tanh net) turns each view into a feature vector. A small MLP 'projection head' g then maps that to the space where the contrastive loss is applied. A subtle but important SimCLR finding: apply the loss on g's output, but KEEP f's output as your representation for downstream tasks — the projection head is discarded afterward, and doing so gives measurably better features.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">view ──f (encoder)──▶ h  (KEEP for downstream)<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└──g (head)──▶ z  (loss lives here)<br><br>loss on z ;  representation you reuse is h</div>`,
+   code:"h = f(view)      # backbone feature — the representation\nz = g(h)         # projection — where the loss is computed\n# after training: throw away g, use h" },
+ { title:"5. L2-normalise → cosine similarity on a sphere",
+   why:"Each embedding is normalised to unit length, so it lives on the surface of a hypersphere (a circle in our 2-D demo). Now the dot product of two embeddings IS their cosine similarity, in [−1, 1] — only direction matters, magnitude is thrown away. This makes 'similar' mean 'pointing the same way', which is stable and scale-free, and it is exactly why the demo can draw every embedding as a point on one circle.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">ẑ = z / ‖z‖   →   ‖ẑ‖ = 1<br>sim(ẑ_i, ẑ_j) = ẑ_i · ẑ_j = cos(angle)  ∈ [−1, 1]<br><br>only the DIRECTION carries meaning</div>`,
+   code:"z = F.normalize(z, dim=1)      # unit vectors\nsim = z @ z.t()                # all pairwise cosine sims\n# +1 = identical direction, −1 = opposite" },
+ { title:"6. InfoNCE — a softmax that must pick the positive",
+   why:"Here is the loss. For an anchor, collect its similarity to every other view, divide by the temperature τ, and take a softmax — turning the similarities into a probability distribution over 'which view is my match'. The loss is the negative log-probability assigned to the TRUE positive. Minimising it forces the positive's similarity up and, because softmax normalises, the negatives' similarities down. It is literally cross-entropy for a classification problem whose classes are 'which sample is my positive'.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">L = −log &nbsp; e^{sim(a, a⁺)/τ}<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;──────────────────────<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Σ_{k≠a} e^{sim(a, k)/τ}<br><br>= cross-entropy: 'classify which one is my positive'</div>`,
+   code:"logits  = sim / tau\ntargets = (arange(2N) + N) % (2N)   # each row's positive\nloss    = F.cross_entropy(logits, targets)  # InfoNCE / NT-Xent" },
+ { title:"7. Alignment and uniformity — the two forces",
+   why:"InfoNCE quietly optimises two things at once. The numerator pulls each anchor toward its positive: ALIGNMENT — positive pairs end up close. The denominator pushes the anchor away from all negatives: UNIFORMITY — embeddings spread out to cover the sphere evenly. Good representations need both: alignment alone collapses everything together; uniformity alone scatters without structure. Their tension is what produces tight, well-separated clusters — exactly the arcs you see forming on the demo circle.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">numerator  → ALIGN   (pull positives together)<br>denominator→ UNIFORM (push negatives apart)<br><br>align only → collapse · uniform only → no structure<br>both → tight, separated clusters</div>`,
+   code:"# numerator: e^{sim(a, a+)/tau}   -> alignment\n# denominator sum over negatives  -> uniformity\n# InfoNCE balances the two automatically" },
+ { title:"8. Temperature τ — how hard to fight the negatives",
+   why:"τ scales the logits before the softmax and controls its sharpness. A SMALL τ (say 0.05) makes the softmax peaky, so the nearest — hardest — negative dominates the gradient: strong, sharp separation, but it can be unstable and can tear apart samples that genuinely are similar. A LARGE τ softens the distribution, spreading the penalty gently over all negatives — more tolerant, less aggressive. SimCLR typically uses τ ≈ 0.1–0.5. The demo's 'hardest-negative share' readout shows this directly: drop τ and watch one negative swallow the softmax weight.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">logits = sim / τ<br>small τ → sharp softmax → focus on the HARDEST negative<br>large τ → soft softmax  → all negatives share the penalty<br><br>typical τ ≈ 0.1 – 0.5</div>`,
+   code:"logits = sim / tau\n# tau small  -> hard negatives dominate (sharp, sensitive)\n# tau large  -> gentle, spread penalty (soft)\n# it is a real hyperparameter you tune" },
+ { title:"9. Collapse — and why negatives prevent it",
+   why:"What stops the encoder from cheating? Without negatives, the objective is just 'make the two views agree', and the trivial global optimum is to map EVERY input to the same constant vector — perfect agreement, zero information: representational COLLAPSE. The negatives in the denominator are the repulsion that forbids this — they force the embeddings to stay spread out. Turn the negatives off in the demo and watch same-content points pile up and the whole cloud crush toward a point. (Later methods like BYOL/SimSiam avoid collapse WITHOUT negatives, using a predictor and a stop-gradient — a different trick for the same disease.)",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">no negatives → optimum is f(x) = constant<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ every embedding identical = COLLAPSE<br><br>negatives = repulsion = the cure</div>`,
+   code:"# positives only:  L = -sim(z1, z2)/tau\n#   minimised by f(x)=const for all x  -> COLLAPSE\n# add negatives (denominator) -> repulsion -> no collapse" },
+ { title:"10. Why classes emerge with no labels",
+   why:"Here is the payoff, and it is subtle. The loss only ever ties together the two augmentations of a SINGLE image — it never compares different images as 'same class'. Yet clusters by class appear. Why? Because the encoder is a smooth function and augmentations of an image span a chunk of input space; forcing all of that chunk to one embedding, for every image, forces nearby inputs to map to nearby embeddings. Since different images of the same class ALSO look alike (they overlap in input space), they inherit nearby embeddings too. Class structure falls out as a by-product of demanding augmentation-invariance — no label required. That is exactly what you watch self-organise on the circle.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">loss ties: view1(img) ≈ view2(img)   (per image)<br>encoder is smooth → nearby inputs → nearby embeddings<br>same-class images are nearby → cluster together<br><br>class structure emerges FOR FREE</div>`,
+   code:"# the loss NEVER sees a class label.\n# augmentation-invariance + a smooth encoder\n# => semantically similar inputs get similar embeddings\n# => classes cluster as a side effect" },
+ { title:"11. Using it — the linear probe and the family tree",
+   why:"After self-supervised pretraining, you FREEZE the encoder and train a single linear layer on top using whatever few labels you have — the 'linear probe'. SimCLR's frozen features get within a couple of points of fully-supervised ImageNet, from labels it never used during pretraining. The idea exploded into a family: MoCo (a momentum encoder + a queue of negatives, so you don't need giant batches), BYOL & SimSiam (no negatives at all — a predictor + stop-gradient dodge collapse), and CLIP — the same InfoNCE loss, but the positive pair is an image and its text caption, giving the shared image–text space behind modern multimodal models. Tomorrow's day.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">pretrain (no labels) → FREEZE encoder → linear probe (few labels)<br><br>SimCLR → MoCo (queue) → BYOL/SimSiam (no negatives)<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ CLIP (image ↔ text InfoNCE)</div>`,
+   code:"backbone.eval()                      # freeze pretrained encoder\nclf = nn.Linear(feat_dim, n_classes) # one layer, few labels\n# train only clf on (backbone(x), label) = linear probe" },
+];
+</script>
+
+<script>
+// ---- UNDERSTAND engine (shared pattern) ----
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s,i) => { const bn = document.createElement("button");
+  bn.className = "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm";
+  bn.innerHTML = `<div class="font-semibold">${s.title}</div>`; bn.onclick = () => show(i); stepsEl.appendChild(bn); });
+function show(i){ curS = i; const s = STEPS[i];
+  document.getElementById("concept").innerHTML = `<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML = `<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent = s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx) => { bn.className = idx===i
+    ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold"
+    : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick = () => show(Math.max(0, curS-1));
+nextB.onclick = () => show(Math.min(STEPS.length-1, curS+1));
+let tm = null;
+autoB.onclick = () => { if (tm){ clearInterval(tm); tm=null; autoB.textContent="▶ Auto-play"; return; }
+  autoB.textContent = "⏸ Pause"; show(0);
+  tm = setInterval(() => { if (curS >= STEPS.length-1){ clearInterval(tm); tm=null; autoB.textContent="▶ Replay"; return; } show(curS+1); }, 5200); };
+show(0);
+
+function copy(btn){ const pre = btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500); }
+</script>
+</body>
+</html>
