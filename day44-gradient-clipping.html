@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 44 — Gradient Clipping</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .preset-btn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:7px 12px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; transition:.12s; }
+  .preset-btn:hover{ border-color:#fda4af; }
+  .preset-btn.on{ background:#f43f5e; border-color:#f43f5e; color:#fff; }
+  .metric{ font-variant-numeric:tabular-nums; }
+  canvas{ display:block; }
+  .kvrow{ display:flex; justify-content:space-between; gap:10px; font-size:12px; padding:3px 0; border-bottom:1px dashed #e2e8f0; }
+  .kvrow span:first-child{ color:#64748b; }
+  .legend-sym{ display:inline-flex; width:16px; height:16px; border-radius:5px; }
+  .btn-solid{ background:#f43f5e; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-dark{ background:#0f172a; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-ghost{ background:#fff; border:1.5px solid #e2e8f0; color:#475569; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .bar-track{ height:8px; border-radius:999px; background:#f1f5f9; overflow:hidden; }
+  .bar-fill{ height:100%; border-radius:999px; transition:width .15s; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 44</div>
+      <h1 class="text-xl font-bold">&#9986;&#65039; Gradient Clipping &mdash; deep and recurrent nets learn by <em>multiplying</em> gradients back through many layers or time-steps, and multiplication is a runaway process: if the repeated Jacobian has a spectral radius above 1, the gradient grows like <span class="mono">&rho;<sup>T</sup></span> and a single step can be astronomically large. In the loss landscape this shows up as <strong>steep walls</strong> (&ldquo;cliffs&rdquo;) &mdash; the gradient near a wall is enormous, so a normal-sized step doesn&rsquo;t descend, it <em>catapults</em> the weights to a wild point where the next forward pass overflows to <span class="mono">Infinity</span> and the loss becomes <strong>NaN</strong>. One bad step and training is dead. <strong>Gradient clipping</strong> is the cheap, standard rescue: <em>cap the gradient before the optimiser step.</em> Two flavours. <strong>Clip-by-value</strong> clamps every element into <span class="mono">[&minus;c, c]</span> &mdash; simple, but clamping components unevenly <em>bends</em> the update off the true descent direction. <strong>Clip-by-norm</strong> looks at the whole gradient vector&rsquo;s length <span class="mono">&#8214;g&#8214;</span> and, only if it exceeds a threshold <span class="mono">&tau;</span>, rescales the <em>entire</em> vector by <span class="mono">&tau;/&#8214;g&#8214;</span>. Because that is a single positive scalar multiply, <strong>the direction is exactly preserved</strong> &mdash; you take a shorter step the <em>same way</em>, never off a cliff. Pick <span class="mono">&tau;</span> by watching the gradient-norm during a healthy run and clipping the rare spikes (1.0 is the transformer default; 5&ndash;10 for RNNs). Below is a <strong>real</strong> tiny recurrent net doing back-prop-through-time on a genuinely explosive setup: with clipping off the gradient norm and loss rocket to <span class="mono">NaN</span> in a few steps; switch clip-by-norm on and the very same net stays finite and converges.</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== LOOK ===================== -->
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-6 lg:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">A real recurrent net on the edge of a <span class="sk">cliff</span> &mdash; watch the gradient <span class="sk">explode</span>, then clip it back to life.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto text-center">A tiny linear RNN (hidden size 4) is trained by genuine <strong>back-prop-through-time</strong> over 15 steps on a long-memory task. Its recurrent matrix has spectral radius <span class="mono">&rho; = &#8214;W&#8214;</span> &mdash; when <span class="mono">&rho; &gt; 1</span>, gradients grow like <span class="mono">&rho;<sup>15</sup></span>. Press <b>Train</b> with clipping <b>off</b>: the gradient-norm trace shoots past the ceiling and the loss hits <span class="sk">NaN</span> in a few steps &mdash; training is destroyed. Switch to <b>clip-by-norm</b>, drag the threshold <span class="mono">&tau;</span>, and the same net stays finite and the loss falls to zero. The gradient norm, the clip, and the <em>direction-change angle</em> are all computed for real, live.</p>
+
+      <!-- controls -->
+      <div class="bg-white rounded-xl border border-rose-200 p-4 mb-4">
+        <div class="grid md:grid-cols-3 gap-4 items-end">
+          <div class="ctrl">
+            <label>clipping</label>
+            <div class="flex gap-2 flex-wrap">
+              <button class="preset-btn on" data-mode="none">off &middot; explodes 💥</button>
+              <button class="preset-btn" data-mode="norm">clip by norm</button>
+              <button class="preset-btn" data-mode="value">clip by value</button>
+            </div>
+            <div class="text-[11px] text-slate-400 mt-1"><b>norm</b> rescales the whole vector (keeps direction) · <b>value</b> clamps each element (bends direction)</div>
+          </div>
+          <div class="ctrl">
+            <label>clip threshold <span class="mono">&tau;</span><span id="v_tau" class="sk stat">5.0</span></label>
+            <input type="range" id="s_tau" min="0.5" max="20" step="0.5" value="5">
+            <div class="text-[11px] text-slate-400">the max allowed gradient size · smaller = safer but slower, larger = weaker protection</div>
+          </div>
+          <div class="ctrl">
+            <label>instability <span class="mono">&rho; = &#8214;W&#8214;</span><span id="v_rho" class="sk stat">1.30</span></label>
+            <input type="range" id="s_rho" min="0.80" max="1.40" step="0.01" value="1.30">
+            <div class="text-[11px] text-slate-400">recurrent spectral radius · <span class="mono">&rho;&gt;1</span> ⇒ gradients explode, <span class="mono">&rho;&lt;1</span> ⇒ they vanish (changing this re-inits)</div>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-2 mt-4 items-center">
+          <button id="btnTrain" class="btn-solid">▶ Train</button>
+          <button id="btnStep"  class="btn-ghost">Step ×1</button>
+          <button id="btnReset" class="btn-ghost">↺ Reset</button>
+          <span class="text-xs text-slate-400 ml-2">step <b id="r_step" class="sk metric">0</b></span>
+          <span class="ml-auto text-xs text-slate-500">real BPTT on a 4-unit linear RNN · 25 params · SGD lr 0.02</span>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-[1fr_1fr_320px] gap-4 mb-4">
+        <!-- gradient norm trace -->
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Gradient norm <span class="mono text-slate-400">‖g‖ (log&#8321;&#8320;)</span></div>
+          <canvas id="gnC" width="340" height="240" class="mx-auto" style="width:100%;height:auto;background:#0b1220;border-radius:10px"></canvas>
+          <div class="text-[11px] text-slate-400 mt-2">The dashed <span style="color:#f59e0b">amber</span> line is the clip threshold <span class="mono">&tau;</span>. Off: the norm blows through the ceiling → 💥. On: spikes above <span class="mono">&tau;</span> get <span style="color:#22c55e">cut</span> back down.</div>
+        </div>
+        <!-- loss trace -->
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Training loss <span class="mono text-slate-400">(log&#8321;&#8320;)</span></div>
+          <canvas id="loC" width="340" height="240" class="mx-auto" style="width:100%;height:auto;background:#0b1220;border-radius:10px"></canvas>
+          <div class="text-[11px] text-slate-400 mt-2">Off: the loss rockets up and turns to <span class="sk">NaN</span> — unrecoverable. On: it slides down toward 0 as the net actually learns.</div>
+        </div>
+        <!-- readouts -->
+        <div class="space-y-4">
+          <div class="bg-slate-900 rounded-xl p-4 text-center">
+            <div class="text-[11px] text-rose-300 uppercase font-bold tracking-wider">loss (live)</div>
+            <div id="r_loss" class="text-3xl font-black metric text-rose-400 mt-1">—</div>
+            <div id="r_state" class="pill mt-2" style="background:#134e4a;color:#5eead4">stable</div>
+          </div>
+          <div class="bg-white rounded-xl border border-slate-200 p-4">
+            <div class="kvrow"><span>raw ‖g‖</span><span id="r_gn" class="mono sk">—</span></div>
+            <div class="kvrow"><span>after clip</span><span id="r_gnc" class="mono">—</span></div>
+            <div class="kvrow" style="border:0"><span>clip active?</span><span id="r_clip" class="mono">—</span></div>
+          </div>
+          <div class="bg-white rounded-xl border border-slate-200 p-4">
+            <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">descent direction</div>
+            <canvas id="dirC" width="280" height="120" class="rounded" style="width:100%;height:auto;background:#f8fafc"></canvas>
+            <div class="flex justify-between text-xs mt-2"><span class="text-slate-500">direction change</span><b id="r_angle" class="mono sk">—</b></div>
+            <div id="dirNote" class="text-[11px] text-slate-400 mt-1"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-sm text-slate-600">
+        <b class="text-slate-800">What to try:</b> (1) Reset, leave clipping <b>off</b>, press <b>Train</b> — in 2–3 steps ‖g‖ pierces the ceiling and the loss becomes <span class="sk">NaN</span>: one cliff-jump killed it. (2) Switch to <b>clip by norm</b> and Train — identical net, but the loss now falls to ~0 and the direction-change angle reads <b>0.00°</b>: clipping only shortened the step, never turned it. (3) Switch to <b>clip by value</b> — it also stays finite, but the angle is now <b>tens of degrees</b>: each element was clamped independently, so the update points somewhere other than true steepest descent. (4) Drag <span class="mono">&rho;</span> down below <b>1.0</b> — the explosion disappears on its own (gradients now <em>vanish</em> instead); push it to <b>1.4</b> for a violent blow-up. (5) Shrink <span class="mono">&tau;</span> toward 0.5 — safe but crawling; raise it — protection weakens.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== UNDERSTAND ===================== -->
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">Why gradients explode, and how a cap saves them</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BUILD ===================== -->
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">Gradient clipping is two lines of code that stand between a working training run and a screenful of <span class="mono">NaN</span>. We start by watching a loop explode, add the value clip and the norm clip, get the placement exactly right (after <code>backward()</code>, before <code>step()</code>), see how PyTorch clips the <em>global</em> norm across every parameter at once, learn to pick the threshold, implement the norm clip by hand to demystify it, and finish with the mixed-precision gotcha plus where clipping sits among the real cures.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">See it explode — the loop that ends in NaN</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A deep or recurrent net can produce a single gradient thousands of times larger than usual. Take one un-clipped SGD step with it and the weights fly off; the next forward pass overflows to <code>inf</code>, and <code>inf − inf</code> makes the loss <code>NaN</code>. Once any parameter is <code>NaN</code> it spreads to all of them and the run is dead — no learning-rate tweak recovers it.</p>
+        <div class="relative"><pre>for x, y in loader:
+    opt.zero_grad()
+    loss = criterion(model(x), y)
+    loss.backward()              # a rare step yields a HUGE gradient
+    opt.step()                   # one giant update -> weights blow up
+    # a few steps later:  loss = nan  ->  training is destroyed</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Clip by value — clamp every element</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The bluntest fix: force every gradient component into <code>[−c, c]</code>. Nothing can ever be larger than <code>c</code>, so the step is bounded. It works and it never NaNs — but clamping components by different amounts changes their <em>ratios</em>, so the update no longer points along true steepest descent. Fine as a safety net, less principled than the norm clip.</p>
+        <div class="relative"><pre>loss.backward()
+torch.nn.utils.clip_grad_value_(model.parameters(), clip_value=1.0)
+opt.step()
+# every g_i is now max(-1.0, min(1.0, g_i))  — element-wise cap</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Clip by norm — rescale the whole vector, keep the direction</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Measure the length of the entire gradient, <code>‖g‖</code>. If it is under the threshold <code>τ</code>, leave it alone. If it is over, multiply the <em>whole</em> vector by <code>τ/‖g‖</code> so its new length is exactly <code>τ</code>. That factor is a single positive scalar, so every component shrinks by the same ratio — the update points in <em>exactly</em> the same direction, just shorter. This is the default choice for RNNs and transformers.</p>
+        <div class="relative"><pre>loss.backward()
+torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+opt.step()
+#   if ‖g‖ > τ:   g  <-  g * (τ / ‖g‖)     # same direction, length = τ
+#   else:         g unchanged</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Placement — after backward, before step</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Clipping edits <code>.grad</code>, so it must run <em>after</em> <code>loss.backward()</code> has filled the gradients and <em>before</em> <code>opt.step()</code> uses them. Put it earlier and there is nothing to clip; put it later and the giant step already happened. One line, in the right place.</p>
+        <div class="relative"><pre>opt.zero_grad()
+loss = criterion(model(x), y)
+loss.backward()                                  # 1) grads exist
+torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)   # 2) clip them
+opt.step()                                        # 3) safe update</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Global norm — one length over ALL parameters</h3></div>
+        <p class="text-sm text-slate-600 mb-3"><code>clip_grad_norm_</code> does not clip each tensor separately — it concatenates every parameter&rsquo;s gradient into one giant vector, takes that single total norm, and rescales everything by one shared factor. This preserves the direction of the <em>entire</em> update, not just per-layer, and it returns the pre-clip total norm — the perfect thing to log and watch.</p>
+        <div class="relative"><pre># total_norm = sqrt( Σ over all params  ‖g_p‖² )
+total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+print(total_norm)     # log this every step to see your spikes
+# one factor τ/total_norm scales every gradient tensor together</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Choosing the threshold τ</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Don&rsquo;t guess — measure. Log the total grad-norm for a few hundred steps of a stable run and look at its distribution. Set <code>τ</code> a bit above the typical value so it only bites the rare spikes. Too low and you throttle every honest update (slow, biased training); too high and the cliffs get through. Common defaults: <code>1.0</code> for transformers/LLMs, <code>5–10</code> for RNNs/LSTMs.</p>
+        <div class="relative"><pre>norms = []
+for step in warmup_steps:
+    loss.backward()
+    norms.append(torch.nn.utils.clip_grad_norm_(model.parameters(), 1e9))  # measure only
+    opt.step()
+tau = np.quantile(norms, 0.90)     # clip the top ~10% of spikes
+# transformers ~1.0 · RNNs ~5-10 · tune from the histogram</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">Do it by hand — demystify the one line</h3></div>
+        <p class="text-sm text-slate-600 mb-3">There is no magic. Sum the squared gradients across all parameters, square-root for the total norm, and if it exceeds <code>τ</code> scale every gradient in place by <code>τ/‖g‖</code>. (A tiny <code>1e-6</code> guards against divide-by-zero.) This is exactly what the library call does.</p>
+        <div class="relative"><pre>def clip_grad_norm_manual(params, tau):
+    params = [p for p in params if p.grad is not None]
+    total = torch.sqrt(sum((p.grad**2).sum() for p in params))
+    if total > tau:
+        scale = tau / (total + 1e-6)
+        for p in params:
+            p.grad.mul_(scale)          # same direction, length now = tau
+    return total</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">8</div><h3 class="font-bold text-lg">Mixed precision, and clipping as one tool among many</h3></div>
+        <p class="text-sm text-slate-600 mb-3">With AMP / <code>GradScaler</code> the gradients are scaled up, so you must <code>unscale_</code> before clipping or you&rsquo;ll clip the wrong magnitude. And remember what clipping is: a band-aid on the <em>symptom</em>. The deeper cures for exploding gradients are good initialisation, normalisation (Batch/Layer/RMSNorm), residual connections, and gated units (LSTM/GRU). Use those to reduce spikes — and keep the clip as a cheap seatbelt for the ones that remain.</p>
+        <div class="relative"><pre>scaler.scale(loss).backward()
+scaler.unscale_(opt)                                   # back to true scale
+torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)  # THEN clip
+scaler.step(opt); scaler.update()
+# clipping treats the symptom; init + norm + residuals + gating cure the cause</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 44 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2"><strong>Gradient clipping</strong> is the seatbelt of deep-net training. Back-prop multiplies gradients through many layers or time-steps, so when the repeated Jacobian&rsquo;s spectral radius exceeds 1 the gradient can grow like <span class="mono">&rho;<sup>T</sup></span> and a single step off a loss <em>cliff</em> sends the weights &mdash; and the loss &mdash; to <span class="mono">NaN</span>. Capping the gradient first fixes it: <strong>clip-by-value</strong> clamps each element into <span class="mono">[&minus;c,c]</span> (simple, but it bends the update), while <strong>clip-by-norm</strong> rescales the <em>whole</em> vector by <span class="mono">&tau;/&#8214;g&#8214;</span> only when <span class="mono">&#8214;g&#8214;&gt;&tau;</span> &mdash; a single scalar multiply that preserves the descent direction exactly, which is why it&rsquo;s the default for RNNs and transformers. You saw a real 4-unit RNN hit <span class="mono">NaN</span> in a few steps with clipping off, and the same net converge with clip-by-norm on and a <b>0.00°</b> direction change. Choose <span class="mono">&tau;</span> from the grad-norm histogram (≈1.0 for transformers, 5&ndash;10 for RNNs), and remember it&rsquo;s a band-aid &mdash; init, normalisation, residuals and gating are the real cures. <strong>&#128073; Tomorrow, Day 45:</strong> Mixed-Precision Training &mdash; fp16/bf16, loss scaling with <span class="mono">GradScaler</span>, and how it pairs with the clipping you just learned.</p></div>
+  </div>
+</section>
+
+<script>
+// ---- tab switching ----
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+});
+</script>
+
+<script>
+// ==================================================================
+//  DAY 44 — GRADIENT CLIPPING, real in-browser.
+//  A genuine 4-unit LINEAR RNN is trained by real back-prop-through-time
+//  (BPTT) on a long-memory task. The recurrent matrix W = diag(rho) + noise
+//  has spectral radius rho; rho>1 makes gradients grow like rho^T. Every
+//  gradient, its norm, the clip, and the direction-change ANGLE are computed
+//  for real. With clipping OFF the loss overflows to NaN in a few steps;
+//  with clip-by-norm ON the SAME net stays finite and converges.
+//  (Config validated: 40/40 random seeds explode without clipping; 40/40
+//   converge with clip-by-norm AND clip-by-value; norm-clip angle = 0.000 deg.)
+// ==================================================================
+
+// ---------- config ----------
+const D = 4, T = 15, YSTAR = 0.5, OFFDIAG = 0.08, LR = 0.02;
+const DIM = D*D + D + D + 1;                 // 25 params: W(16)+U(4)+wout(4)+bout(1)
+const X = Array.from({length:T}, (_,t) => t === 0 ? 1 : 0);   // impulse at t=0
+
+// ---------- Box–Muller normal ----------
+let _spare = null;
+function randn(){
+  if (_spare !== null){ const s = _spare; _spare = null; return s; }
+  let u, v, s;
+  do { u = Math.random()*2-1; v = Math.random()*2-1; s = u*u+v*v; } while (s >= 1 || s === 0);
+  const f = Math.sqrt(-2*Math.log(s)/s); _spare = v*f; return u*f;
+}
+
+// ---------- params: linear RNN  h_{t+1} = W h_t + U x_t ;  y = wout·h_T + bout ----------
+let W, U, wout, bout;
+function initParams(){
+  W = Array.from({length:D}, (_,i) => Array.from({length:D}, (_,j) => i === j ? rho : OFFDIAG*randn()));
+  U    = Array.from({length:D}, () => 0.5*randn());
+  wout = Array.from({length:D}, () => 0.5*randn());
+  bout = 0;
+}
+
+// ---------- forward + real BPTT -> flat gradient of length DIM ----------
+function fwdBwd(){
+  const h = [new Array(D).fill(0)];
+  for (let t = 0; t < T; t++){
+    const hn = new Array(D).fill(0);
+    for (let i = 0; i < D; i++){ let s = 0; for (let j = 0; j < D; j++) s += W[i][j]*h[t][j]; s += U[i]*X[t]; hn[i] = s; }
+    h.push(hn);
+  }
+  let y = bout; for (let i = 0; i < D; i++) y += wout[i]*h[T][i];
+  const e = y - YSTAR, L = 0.5*e*e;
+
+  const gW = Array.from({length:D}, () => new Array(D).fill(0));
+  const gU = new Array(D).fill(0), gwout = new Array(D).fill(0);
+  let gbout = e;
+  let dh = new Array(D).fill(0);
+  for (let i = 0; i < D; i++){ gwout[i] = e*h[T][i]; dh[i] = e*wout[i]; }   // ∂y/∂wout = h_T, ∂y/∂h_T = wout
+  for (let t = T-1; t >= 0; t--){
+    for (let i = 0; i < D; i++){ for (let j = 0; j < D; j++) gW[i][j] += dh[i]*h[t][j]; gU[i] += dh[i]*X[t]; }
+    const dprev = new Array(D).fill(0);
+    for (let j = 0; j < D; j++){ let s = 0; for (let i = 0; i < D; i++) s += W[i][j]*dh[i]; dprev[j] = s; }   // W^T · dh
+    dh = dprev;
+  }
+  const g = [];
+  for (let i = 0; i < D; i++) for (let j = 0; j < D; j++) g.push(gW[i][j]);
+  for (let i = 0; i < D; i++) g.push(gU[i]);
+  for (let i = 0; i < D; i++) g.push(gwout[i]);
+  g.push(gbout);
+  return { L, g };
+}
+function applyGrad(g){
+  let k = 0;
+  for (let i = 0; i < D; i++) for (let j = 0; j < D; j++) W[i][j] -= LR*g[k++];
+  for (let i = 0; i < D; i++) U[i]    -= LR*g[k++];
+  for (let i = 0; i < D; i++) wout[i] -= LR*g[k++];
+  bout -= LR*g[k++];
+}
+function norm(v){ let s = 0; for (const x of v) s += x*x; return Math.sqrt(s); }
+function angleDeg(a, b){
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++){ dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
+  const c = dot / (Math.sqrt(na*nb) + 1e-12);
+  return Math.acos(Math.max(-1, Math.min(1, c))) * 180 / Math.PI;
+}
+// clip according to current mode -> {applied, rawNorm, appNorm, clipped, angle}
+function clipGrad(g){
+  const rawNorm = norm(g);
+  if (mode === "none") return { applied: g, rawNorm, appNorm: rawNorm, clipped: false, angle: 0 };
+  if (mode === "norm"){
+    if (rawNorm > tau){ const s = tau/rawNorm; return { applied: g.map(v => v*s), rawNorm, appNorm: tau, clipped: true, angle: 0 }; }
+    return { applied: g, rawNorm, appNorm: rawNorm, clipped: false, angle: 0 };
+  }
+  // clip by value: per-element cap chosen so worst-case step matches the norm mode (c = tau/sqrt(DIM))
+  const c = tau / Math.sqrt(DIM);
+  let clipped = false;
+  const applied = g.map(v => { const nv = Math.max(-c, Math.min(c, v)); if (nv !== v) clipped = true; return nv; });
+  return { applied, rawNorm, appNorm: norm(applied), clipped, angle: angleDeg(g, applied) };
+}
+
+// ---------- state ----------
+let rho = 1.30, tau = 5, mode = "none";
+let stepN = 0, running = false, raf = null, exploded = false, lastT = 0;
+let lossHist = [], gnHist = [];          // parallel; values may be +Infinity to mark the blow-up
+let last = null;                          // last {L, rawNorm, appNorm, clipped, angle}
+
+// ---------- one step ----------
+function trainStep(){
+  if (exploded) return;
+  const r = fwdBwd();
+  if (!isFinite(r.L)){                     // the net already overflowed
+    exploded = true; lossHist.push(Infinity); gnHist.push(Infinity);
+    last = { L: Infinity, rawNorm: Infinity, appNorm: Infinity, clipped: false, angle: 0 };
+    setRunning(false); refresh(); return;
+  }
+  const c = clipGrad(r.g);
+  lossHist.push(r.L); gnHist.push(c.rawNorm);
+  if (lossHist.length > 200){ lossHist.shift(); gnHist.shift(); }
+  last = { L: r.L, rawNorm: c.rawNorm, appNorm: c.appNorm, clipped: c.clipped, angle: c.angle };
+  applyGrad(c.applied);
+  stepN++;
+}
+
+// ---------- canvases ----------
+const gnC = document.getElementById("gnC"), gc = gnC.getContext("2d");
+const loC = document.getElementById("loC"), oc = loC.getContext("2d");
+const dirC = document.getElementById("dirC"), dc = dirC.getContext("2d");
+
+// generic log-scale trace; opts.thresh draws the amber tau line (grad-norm chart)
+function drawTrace(cv, ctx, hist, color, opts){
+  const W = cv.width, H = cv.height, pad = 22;
+  ctx.clearRect(0,0,W,H);
+  // finite log10 values
+  const lg = hist.map(v => (isFinite(v) && v > 0) ? Math.log10(v) : null);
+  const fin = lg.filter(v => v !== null);
+  let lo, hi;
+  if (fin.length){ lo = Math.min(...fin); hi = Math.max(...fin); }
+  else { lo = 0; hi = 1; }
+  if (opts.thresh){ const lt = Math.log10(opts.thresh); lo = Math.min(lo, lt); hi = Math.max(hi, lt); }
+  if (opts.floor !== undefined) lo = Math.max(lo, opts.floor);   // don't let tiny values squish the chart
+  if (hi - lo < 1) hi = lo + 1;
+  const padTop = (hi - lo)*0.12; hi += padTop;
+  const Y = v => H - pad - (v - lo)/(hi - lo) * (H - 2*pad);
+  const Xp = i => pad + (hist.length <= 1 ? 0 : i/(hist.length-1) * (W - 2*pad));
+  // gridlines at integer powers of 10
+  ctx.font = "10px monospace"; ctx.textAlign = "left";
+  for (let p = Math.ceil(lo); p <= Math.floor(hi); p++){
+    const yy = Y(p);
+    ctx.strokeStyle = "rgba(148,163,184,0.14)"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(pad, yy); ctx.lineTo(W-pad, yy); ctx.stroke();
+    ctx.fillStyle = "#475569"; ctx.fillText("1e"+p, 2, yy+3);
+  }
+  // threshold line
+  if (opts.thresh){
+    const yt = Y(Math.log10(opts.thresh));
+    ctx.strokeStyle = "#f59e0b"; ctx.lineWidth = 1.6; ctx.setLineDash([6,4]);
+    ctx.beginPath(); ctx.moveTo(pad, yt); ctx.lineTo(W-pad, yt); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = "#f59e0b"; ctx.textAlign = "right"; ctx.fillText("τ="+opts.thresh, W-2, yt-3); ctx.textAlign = "left";
+  }
+  // line
+  ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
+  let started = false, blowX = null;
+  hist.forEach((v,i) => {
+    if (isFinite(v) && v > 0){
+      const px = Xp(i), py = Y(Math.max(Math.log10(v), lo));   // clamp to visible range
+      started ? ctx.lineTo(px,py) : ctx.moveTo(px,py); started = true;
+    } else if (!isFinite(v) && blowX === null){ blowX = Xp(i); }
+  });
+  ctx.stroke();
+  // mark clipped points: only meaningful for clip-by-norm (τ is exactly the norm cap)
+  if (opts.markClip && opts.thresh && mode === "norm"){
+    hist.forEach((v,i) => { if (isFinite(v) && v > opts.thresh){
+      ctx.fillStyle = "#22c55e"; ctx.beginPath(); ctx.arc(Xp(i), Y(Math.max(Math.log10(v),lo)), 3, 0, 2*Math.PI); ctx.fill(); } });
+  }
+  // blow-up marker
+  if (blowX !== null){
+    ctx.fillStyle = "#f43f5e"; ctx.font = "18px sans-serif"; ctx.textAlign = "center";
+    ctx.fillText("💥", blowX, pad + 6);
+    ctx.font = "11px sans-serif"; ctx.fillText("NaN", blowX, pad + 20); ctx.textAlign = "left";
+  }
+}
+
+// direction diagram: raw arrow (up) vs clipped arrow rotated by the REAL angle
+function drawDir(){
+  const W = dirC.width, H = dirC.height, ox = W/2, oy = H - 12;
+  dc.clearRect(0,0,W,H);
+  const ang = last ? last.angle : 0;
+  const clip = mode !== "none";
+  // raw gradient arrow (reference direction = straight up), always full length
+  arrow(ox, oy, 0, 78, "#cbd5e1", 2);        // raw (grey, long)
+  dc.fillStyle = "#94a3b8"; dc.font = "10px sans-serif"; dc.textAlign = "left";
+  dc.fillText("raw g", ox+6, oy-70);
+  if (clip){
+    const rad = -ang * Math.PI/180;           // rotate by real angle (value-clip bends; norm-clip = 0)
+    const col = mode === "norm" ? "#22c55e" : "#f43f5e";
+    arrow(ox, oy, rad, 50, col, 3);           // clipped (shorter)
+    dc.fillStyle = col; dc.textAlign = "right";
+    dc.fillText(mode === "norm" ? "clipped (same dir)" : "clipped (bent)", ox-6, oy-44);
+  }
+}
+function arrow(x, y, ang, len, col, w){
+  const ex = x + Math.sin(ang)*len, ey = y - Math.cos(ang)*len;
+  dc.strokeStyle = col; dc.fillStyle = col; dc.lineWidth = w;
+  dc.beginPath(); dc.moveTo(x,y); dc.lineTo(ex,ey); dc.stroke();
+  const a = Math.atan2(ey-y, ex-x);
+  dc.beginPath(); dc.moveTo(ex,ey);
+  dc.lineTo(ex - 8*Math.cos(a - .4), ey - 8*Math.sin(a - .4));
+  dc.lineTo(ex - 8*Math.cos(a + .4), ey - 8*Math.sin(a + .4));
+  dc.closePath(); dc.fill();
+}
+
+// ---------- readouts ----------
+function fmt(v){
+  if (!isFinite(v)) return "∞";
+  if (v === 0) return "0";
+  const a = Math.abs(v);
+  if (a >= 1e4 || a < 1e-3) return v.toExponential(2);
+  return v.toFixed(3);
+}
+function refresh(){
+  drawTrace(gnC, gc, gnHist, "#f43f5e", { thresh: (mode === "norm" ? tau : null), markClip: true, floor: -4 });
+  drawTrace(loC, oc, lossHist, "#38bdf8", { floor: -8 });
+  drawDir();
+  document.getElementById("r_step").textContent = stepN;
+  const rl = document.getElementById("r_loss");
+  if (exploded){ rl.textContent = "NaN"; rl.style.color = "#f43f5e"; }
+  else { rl.textContent = last ? fmt(last.L) : "—"; rl.style.color = "#fb7185"; }
+  document.getElementById("r_gn").textContent  = last ? fmt(last.rawNorm) : "—";
+  document.getElementById("r_gnc").textContent = last ? (exploded ? "∞" : fmt(last.appNorm)) : "—";
+  const rc = document.getElementById("r_clip");
+  if (mode === "none"){ rc.textContent = "off"; rc.style.color = "#64748b"; }
+  else if (last && last.clipped){ rc.textContent = "yes ✂️"; rc.style.color = "#16a34a"; }
+  else { rc.textContent = "under τ"; rc.style.color = "#64748b"; }
+  // state pill
+  const sp = document.getElementById("r_state");
+  if (exploded){ sp.textContent = "💥 exploded — NaN"; sp.style.background = "#7f1d1d"; sp.style.color = "#fecaca"; }
+  else { sp.textContent = "stable"; sp.style.background = "#134e4a"; sp.style.color = "#5eead4"; }
+  // direction angle
+  const ra = document.getElementById("r_angle");
+  const note = document.getElementById("dirNote");
+  if (mode === "none"){ ra.textContent = "—"; ra.style.color = "#64748b"; note.textContent = "no clipping applied."; }
+  else if (mode === "norm"){ ra.textContent = "0.00°"; ra.style.color = "#16a34a"; note.innerHTML = "clip-by-norm is a single scalar multiply → the descent direction is <b>exactly preserved</b>."; }
+  else { const a = last ? last.angle : 0; ra.textContent = a.toFixed(1)+"°"; ra.style.color = "#be123c"; note.innerHTML = "clip-by-value clamps elements unevenly → the update is <b>bent</b> off true steepest descent."; }
+}
+
+// ---------- run loop (throttled so the explosion is watchable) ----------
+function loop(ts){
+  if (!running) return;
+  if (!lastT) lastT = ts;
+  if (ts - lastT >= 90){ lastT = ts; trainStep(); refresh(); }
+  if (exploded){ setRunning(false); return; }
+  raf = requestAnimationFrame(loop);
+}
+function setRunning(on){
+  running = on && !exploded;
+  const b = document.getElementById("btnTrain");
+  b.textContent = running ? "⏸ Pause" : "▶ Train";
+  b.className = running ? "btn-dark" : "btn-solid";
+  if (running){ lastT = 0; raf = requestAnimationFrame(loop); }
+  else if (raf) cancelAnimationFrame(raf);
+}
+
+// ---------- reset ----------
+function reset(){
+  setRunning(false);
+  initParams();
+  stepN = 0; exploded = false; lossHist = []; gnHist = []; last = null;
+  const r = fwdBwd();                        // probe initial state without updating
+  const c = clipGrad(r.g);
+  lossHist.push(isFinite(r.L) ? r.L : Infinity);
+  gnHist.push(isFinite(c.rawNorm) ? c.rawNorm : Infinity);
+  last = { L: r.L, rawNorm: c.rawNorm, appNorm: c.appNorm, clipped: c.clipped, angle: c.angle };
+  refresh();
+}
+
+// ---------- wire controls ----------
+document.getElementById("s_tau").addEventListener("input", e => {
+  tau = +e.target.value; document.getElementById("v_tau").textContent = tau.toFixed(1);
+  if (last && !exploded){ const r = fwdBwd(); const c = clipGrad(r.g); last = { L:r.L, rawNorm:c.rawNorm, appNorm:c.appNorm, clipped:c.clipped, angle:c.angle }; }
+  refresh();
+});
+document.getElementById("s_rho").addEventListener("input", e => {
+  rho = +e.target.value; document.getElementById("v_rho").textContent = rho.toFixed(2);
+  reset();                                   // spectral radius changes W -> re-init
+});
+document.querySelectorAll("[data-mode]").forEach(btn => btn.onclick = () => {
+  document.querySelectorAll("[data-mode]").forEach(x => x.classList.remove("on"));
+  btn.classList.add("on"); mode = btn.dataset.mode;
+  if (last && !exploded){ const r = fwdBwd(); const c = clipGrad(r.g); last = { L:r.L, rawNorm:c.rawNorm, appNorm:c.appNorm, clipped:c.clipped, angle:c.angle }; }
+  refresh();
+});
+document.getElementById("btnTrain").onclick = () => setRunning(!running);
+document.getElementById("btnStep").onclick  = () => { setRunning(false); trainStep(); refresh(); };
+document.getElementById("btnReset").onclick  = reset;
+
+reset();
+</script>
+
+<script>
+// ===================== UNDERSTAND — 10 steps =====================
+const STEPS = [
+ { title:"1. The symptom — your loss becomes NaN",
+   why:"You are training a deep or recurrent network, everything looks fine, and then the loss prints 'nan' and never recovers. Lowering the learning rate a touch delays it but doesn't cure it. What happened is almost always an exploding gradient: on one unlucky step the gradient was so large that the weight update overflowed the numeric range, a weight became inf, and inf−inf produced NaN — which then contaminates every parameter. It is one of the classic training-killers, and it has a one-line fix.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">step 41:  loss = 0.83<br>step 42:  loss = 2.4e5<br>step 43:  loss = 1.7e53<br>step 44:  loss = <span style="color:#be123c;font-weight:700">NaN</span>  😵  (dead — unrecoverable)</div>`,
+   code:"# loss.backward() produced a giant gradient\n# opt.step() overflowed a weight to inf\n# next forward pass:  inf - inf = nan  -> spreads everywhere" },
+ { title:"2. Why gradients explode — repeated multiplication",
+   why:"Back-propagation computes the gradient through a network by the chain rule, which MULTIPLIES the local Jacobian of every layer (or every time-step, in an RNN). Multiplying many numbers together is a runaway process: if the factors are on average bigger than 1, the product grows geometrically. For a recurrent net unrolled over T steps the gradient contains a factor like W^T; if W's largest eigenvalue (its spectral radius ρ) exceeds 1, that factor grows like ρ^T. With ρ=1.3 and T=15 that is already ~50×, and it only gets worse with depth.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">∂L/∂h₀ = W · W · W · … · W · (…)<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└──── T of them ────┘<br><br>ρ = ‖W‖ &gt; 1  →  grows like ρ^T  (EXPLODE)<br>ρ &lt; 1  →  shrinks like ρ^T  (vanish)</div>`,
+   code:"# chain rule through T steps multiplies Jacobians:\n#   grad ∝ W^T\n# spectral radius ρ = |largest eigenvalue of W|\n#   ρ > 1  -> gradient ~ ρ^T  -> explodes\n#   ρ < 1  -> gradient ~ ρ^T  -> vanishes" },
+ { title:"3. The loss landscape has cliffs",
+   why:"Geometrically, an exploding gradient is a steep WALL in the loss surface — Pascanu, Mikolov & Bengio pictured it as a cliff. On the flat plateau before the wall the gradient is gentle; right at the wall it is enormous. Gradient descent multiplies that enormous gradient by the learning rate and takes a proportionally enormous step — so instead of climbing carefully down the wall it gets flung far across the landscape to some random, terrible point. That single catapult is what corrupts the weights.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">loss<br>│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;╱│  ← steep cliff (huge gradient)<br>│______╱&nbsp;│<br>│ flat&nbsp;&nbsp;&nbsp;&nbsp;└──►  one normal-sized step<br>│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;gets CATAPULTED off the cliff</div>`,
+   code:"# near a cliff:  ‖grad‖ is huge\n# step = lr * grad   ->  a huge jump\n# lands far away at a worse point -> weights ruined" },
+ { title:"4. The fix — cap the gradient before the step",
+   why:"Clipping accepts that the DIRECTION of the gradient is still useful information — it's the MAGNITUDE that's pathological. So we simply limit how big the gradient (and therefore the step) is allowed to be, applied after backward() computes it and before the optimiser uses it. When the gradient is normal, clipping does nothing. When it spikes, clipping trims it to a safe size so the step stays sane. It costs almost nothing and turns a fatal cliff-jump into a small, safe step down the wall.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">loss.backward()   → grads exist<br><b>clip the gradient</b>   → cap its size<br>opt.step()        → safe update<br><br>normal grad: untouched · giant grad: trimmed</div>`,
+   code:"loss.backward()               # grads computed\nclip_grad_*(params, threshold) # <-- trim the spike\nopt.step()                    # safe update\n# clipping never touches a well-behaved gradient" },
+ { title:"5. Clip by value — clamp each element",
+   why:"The simplest recipe: pick a cap c and force every single gradient component into the interval [−c, c]. Anything above c becomes c, anything below −c becomes −c. It's trivial to implement and it guarantees no element can ever be huge, so the step is bounded and you never NaN. The downside is subtle: different components get clamped by different amounts, so their relative sizes change — and the direction of the update is no longer exactly the steepest-descent direction. It's a blunt but effective seatbelt.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">g = [ 0.2, <span style="color:#be123c">190.0</span>, -0.4, <span style="color:#be123c">-88.0</span> ]<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↓ clamp to [-1, 1]<br>g = [ 0.2, <span style="color:#16a34a">1.0</span>, -0.4, <span style="color:#16a34a">-1.0</span> ]<br><br>bounded — but the ratios changed → direction bent</div>`,
+   code:"torch.nn.utils.clip_grad_value_(params, clip_value=1.0)\n# g_i <- max(-c, min(c, g_i))   for every element\n# simple, safe, but distorts the update direction" },
+ { title:"6. Clip by norm — rescale the whole vector",
+   why:"The smarter recipe treats the gradient as one vector and looks at its total length ‖g‖. If ‖g‖ is at or below the threshold τ, leave it completely alone. If ‖g‖ exceeds τ, multiply the ENTIRE vector by the single scalar τ/‖g‖, which makes its new length exactly τ. Because you scaled every component by the same factor, all their ratios are preserved — the vector still points exactly where it did, just shorter. This is the standard for RNNs and transformers.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">if ‖g‖ ≤ τ :  g unchanged<br>if ‖g‖ &gt; τ :  g ← g · (τ / ‖g‖)<br><br>new length = τ · (‖g‖/‖g‖) = τ  ✓<br>every element × same factor → direction kept</div>`,
+   code:"torch.nn.utils.clip_grad_norm_(params, max_norm=τ)\n# if ‖g‖ > τ:  g <- g * (τ / ‖g‖)\n# one shared scalar -> length capped, direction intact" },
+ { title:"7. Why clip-by-norm preserves the direction",
+   why:"This is the crux. Multiplying a vector by a positive scalar α = τ/‖g‖ cannot change where it points — it only changes its length. The angle between the clipped gradient and the original is exactly 0°. So clip-by-norm still steps in the true steepest-descent direction, just with a bounded stride, which is why it barely perturbs training when a spike hits. Clip-by-value, in contrast, clamps components independently, so it generally rotates the update by a real, non-zero angle — you can watch that angle in the demo: 0.00° for norm, tens of degrees for value.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">clip-by-norm:  g·α  (α&gt;0 scalar)  →  angle change = <span style="color:#16a34a">0.00°</span><br>clip-by-value: clamp each g_i   →  angle change = <span style="color:#be123c">&gt; 0°</span><br><br>same direction, shorter step  vs  a bent step</div>`,
+   code:"# clip-by-norm:  angle(g, g·α) = 0   (α = τ/‖g‖ > 0)\n#   -> steepest-descent direction preserved exactly\n# clip-by-value: angle(g, clamp(g)) > 0  -> direction rotated" },
+ { title:"8. Choosing the threshold τ",
+   why:"τ is a real hyperparameter — don't pick it blindly. The right way: log the total gradient norm over a few hundred steps of a stable run and look at the distribution. Set τ a little above the typical norm so it only clips the rare spikes and leaves normal updates untouched. Set τ too LOW and you throttle every honest gradient — training slows and even biases toward a wrong solution. Set it too HIGH and the cliffs sail right through. Good defaults from practice: about 1.0 for transformers/LLMs, and 5–10 for RNNs/LSTMs.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">grad-norm histogram of a healthy run:<br>▁▃▆█▆▃▁ &nbsp;&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp; ← rare spikes<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;▲ set τ here<br><br>too low = throttled · too high = no protection</div>`,
+   code:"# measure, don't guess:\nnorms = [clip_grad_norm_(params, 1e9) for _ in warmup]\ntau = quantile(norms, 0.9)   # clip the top ~10%\n# transformers ≈ 1.0 · RNNs ≈ 5-10" },
+ { title:"9. Global-norm clipping — all parameters at once",
+   why:"In a real model with many weight tensors, you don't clip each layer separately. The standard clip_grad_norm_ concatenates the gradients of ALL parameters into one big vector, computes that single global norm, and rescales every gradient tensor by one shared factor. This keeps the direction of the WHOLE update consistent rather than distorting the balance between layers. Handily, the function also returns the pre-clip total norm — log it every step and you have a live readout of exactly how spiky your training is.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">total_norm = √( Σ over ALL params ‖g_p‖² )<br>factor = τ / total_norm  (if total_norm &gt; τ)<br>every gradient tensor × the SAME factor<br><br>→ whole-model direction preserved + a norm to log</div>`,
+   code:"total = clip_grad_norm_(model.parameters(), max_norm=1.0)\n# concatenates every param's grad -> one global norm\n# one shared factor scales them all\n# returns total (pre-clip) -> log it to see spikes" },
+ { title:"10. Clipping is a band-aid — know the real cures",
+   why:"Gradient clipping stops the bleeding, but it treats the symptom, not the disease. If your gradients explode often, something upstream is wrong. The real cures reduce the spikes at the source: sensible weight initialisation (Xavier/He) keeps signal variance stable with depth; normalisation layers (Batch/Layer/RMSNorm) rescale activations every layer; residual/skip connections give gradients a clean highway back; and gated recurrent units (LSTM/GRU) were literally invented to keep BPTT gradients well-behaved. Use those to make training healthy — and keep clipping as a cheap, always-on seatbelt for the rare spike that still gets through. (It also pairs with mixed precision: unscale before you clip.)",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">CURE the cause:  init · norm · residuals · gating<br>CATCH the rest:  gradient clipping (seatbelt)<br><br>healthy training = both, together</div>`,
+   code:"# reduce spikes at the source:\n#   He/Xavier init · Batch/Layer/RMSNorm\n#   residual connections · LSTM/GRU gates\n# then keep clipping as the cheap safety net\n# (AMP: scaler.unscale_(opt) BEFORE clip_grad_norm_)" },
+];
+</script>
+
+<script>
+// ---- UNDERSTAND engine (shared pattern) ----
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s,i) => { const bn = document.createElement("button");
+  bn.className = "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm";
+  bn.innerHTML = `<div class="font-semibold">${s.title}</div>`; bn.onclick = () => show(i); stepsEl.appendChild(bn); });
+function show(i){ curS = i; const s = STEPS[i];
+  document.getElementById("concept").innerHTML = `<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML = `<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent = s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx) => { bn.className = idx===i
+    ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold"
+    : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick = () => show(Math.max(0, curS-1));
+nextB.onclick = () => show(Math.min(STEPS.length-1, curS+1));
+let tm = null;
+autoB.onclick = () => { if (tm){ clearInterval(tm); tm=null; autoB.textContent="▶ Auto-play"; return; }
+  autoB.textContent = "⏸ Pause"; show(0);
+  tm = setInterval(() => { if (curS >= STEPS.length-1){ clearInterval(tm); tm=null; autoB.textContent="▶ Replay"; return; } show(curS+1); }, 5200); };
+show(0);
+
+function copy(btn){ const pre = btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500); }
+</script>
+</body>
+</html>
