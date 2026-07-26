@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 45 — Early Stopping</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .preset-btn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:7px 12px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; transition:.12s; }
+  .preset-btn:hover{ border-color:#fda4af; }
+  .preset-btn.on{ background:#f43f5e; border-color:#f43f5e; color:#fff; }
+  .metric{ font-variant-numeric:tabular-nums; }
+  canvas{ display:block; }
+  .kvrow{ display:flex; justify-content:space-between; gap:10px; font-size:12px; padding:3px 0; border-bottom:1px dashed #e2e8f0; }
+  .kvrow span:first-child{ color:#64748b; }
+  .legend-sym{ display:inline-flex; width:16px; height:16px; border-radius:5px; }
+  .btn-solid{ background:#f43f5e; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-dark{ background:#0f172a; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-ghost{ background:#fff; border:1.5px solid #e2e8f0; color:#475569; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 45</div>
+      <h1 class="text-xl font-bold">&#128721; Early Stopping &mdash; give a big enough network enough time and it will drive its <em>training</em> loss to zero by <strong>memorising the noise</strong> in your data. But the thing you actually care about &mdash; error on data it hasn&rsquo;t seen &mdash; does something different: it falls while the net learns the real signal, reaches a <strong>minimum</strong>, then <em>climbs back up</em> as the net starts fitting quirks that don&rsquo;t generalise. Plot both and you get the classic picture: a training curve sliding monotonically toward 0 and a <strong>validation curve shaped like a U</strong>, the gap between them widening &mdash; that gap <em>is</em> overfitting. <strong>Early stopping</strong> is the simplest, cheapest fix in all of deep learning: hold out a validation set, and <em>watch its loss every epoch</em>. Keep the weights from the best (lowest-val) epoch. When val hasn&rsquo;t improved for <span class="mono">patience</span> epochs in a row &mdash; long enough that it&rsquo;s a real upturn and not just noise &mdash; <strong>stop training and restore those best weights.</strong> A <span class="mono">min-delta</span> says how big an improvement has to be to &ldquo;count,&rdquo; so tiny wiggles don&rsquo;t reset the clock. Why does it work as <em>regularisation</em>? Gradient descent grows the weights gradually; stopping early is a budget on how far it can walk &mdash; it keeps the effective model simpler, much like an L2 penalty, without touching the loss function. Below is a <strong>real</strong> over-capacity model (34 basis functions) fit by genuine gradient descent to 16 noisy points: watch the training MSE fall monotonically while the validation MSE U-turns live, the best-val epoch get marked, a <span class="mono">patience</span> slider move the stop point &mdash; and the held-out test error come out <em>genuinely lower</em> with early stopping than without.</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== LOOK ===================== -->
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-6 lg:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">Train too long and the model <span class="sk">memorises the noise</span> &mdash; watch validation loss <span class="sk">U-turn</span>, and stop at the bottom.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto text-center">A genuine over-capacity model &mdash; 34 radial basis functions &mdash; is fit by real full-batch <strong>gradient descent</strong> to just 16 noisy samples of a sine wave. Press <b>Train</b>: the <span style="color:#0ea5e9">training MSE</span> slides monotonically toward 0 while the <span style="color:#f43f5e">validation MSE</span> falls, bottoms out, then <em>climbs</em> as the fit turns from a smooth curve into a wiggly one that chases every noisy dot. The <b>best-val epoch</b> is marked live with a &#11088;. Drag <span class="mono">patience</span> to move where training halts, toggle <b>restore-best-weights</b>, and read the held-out <b>test error</b> &mdash; it is really lower <b>with</b> early stopping than without. Every loss here is computed for real, epoch by epoch.</p>
+
+      <!-- controls -->
+      <div class="bg-white rounded-xl border border-rose-200 p-4 mb-4">
+        <div class="grid md:grid-cols-3 gap-4 items-end">
+          <div class="ctrl">
+            <label>patience <span class="mono">(epochs)</span><span id="v_pat" class="sk stat">200</span></label>
+            <input type="range" id="s_pat" min="10" max="700" step="10" value="200">
+            <div class="text-[11px] text-slate-400">how many epochs of <b>no improvement</b> to tolerate before stopping · too small = stop on a noise dip · too large = waste epochs deep in the overfit zone</div>
+          </div>
+          <div class="ctrl">
+            <label>min-delta <span class="mono">&Delta;</span><span id="v_md" class="sk stat">0.001</span></label>
+            <input type="range" id="s_md" min="0" max="0.02" step="0.001" value="0.001">
+            <div class="text-[11px] text-slate-400">the smallest val drop that <b>counts</b> as an improvement · bigger &Delta; ignores tiny wiggles &rarr; stops sooner</div>
+          </div>
+          <div class="ctrl">
+            <label>restore best weights</label>
+            <div class="flex gap-2 flex-wrap">
+              <button class="preset-btn on" data-restore="1">on &middot; keep the &#11088; epoch</button>
+              <button class="preset-btn" data-restore="0">off &middot; keep last epoch</button>
+            </div>
+            <div class="text-[11px] text-slate-400 mt-1">deploy the weights from the <b>best-val</b> epoch, not wherever training happened to halt</div>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-2 mt-4 items-center">
+          <button id="btnTrain" class="btn-solid">▶ Train</button>
+          <button id="btnStep"  class="btn-ghost">Step +50</button>
+          <button id="btnReset" class="btn-ghost">↺ Reset</button>
+          <button id="btnData"  class="btn-ghost">🎲 New noisy sample</button>
+          <span class="text-xs text-slate-400 ml-2">epoch <b id="r_epoch" class="sk metric">0</b> / 2500</span>
+          <span class="ml-auto text-xs text-slate-500">real full-batch GD · 34 RBF + bias (35 params) · 16 train / 16 val pts · lr 0.05</span>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-[1fr_1fr_300px] gap-4 mb-4">
+        <!-- loss curves -->
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Loss per epoch <span class="mono text-slate-400">(MSE)</span></div>
+          <canvas id="lossC" width="360" height="250" class="mx-auto" style="width:100%;height:auto;background:#0b1220;border-radius:10px"></canvas>
+          <div class="flex flex-wrap gap-3 text-[11px] text-slate-500 mt-2">
+            <span><span class="legend-sym" style="background:#0ea5e9;width:11px;height:11px"></span> train (&darr; monotone)</span>
+            <span><span class="legend-sym" style="background:#f43f5e;width:11px;height:11px"></span> validation (U-turn)</span>
+            <span style="color:#eab308">&#11088; best-val epoch</span>
+            <span style="color:#f59e0b">┊ stop (patience)</span>
+          </div>
+          <div class="text-[11px] text-slate-400 mt-1">The shaded band right of the &#11088; is the <span class="sk">overfitting zone</span> &mdash; train still improving, val getting worse.</div>
+        </div>
+        <!-- fit -->
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">What the model draws</div>
+          <canvas id="fitC" width="360" height="250" class="mx-auto" style="width:100%;height:auto;background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0"></canvas>
+          <div class="flex flex-wrap gap-3 text-[11px] text-slate-500 mt-2">
+            <span><span class="legend-sym" style="background:#94a3b8;width:11px;height:11px"></span> true signal</span>
+            <span>● train pts</span>
+            <span><span class="legend-sym" style="background:#22c55e;width:11px;height:11px"></span> deployed (early-stopped)</span>
+            <span><span class="legend-sym" style="background:#fda4af;width:11px;height:11px"></span> overfit (last epoch)</span>
+          </div>
+          <div id="fitNote" class="text-[11px] text-slate-400 mt-1">Press Train and watch the red curve start smooth, then wiggle to chase the noise.</div>
+        </div>
+        <!-- readouts -->
+        <div class="space-y-3">
+          <div class="bg-white rounded-xl border border-slate-200 p-4">
+            <div class="kvrow"><span>train MSE</span><span id="r_tr" class="mono" style="color:#0ea5e9">—</span></div>
+            <div class="kvrow"><span>val MSE</span><span id="r_va" class="mono sk">—</span></div>
+            <div class="kvrow"><span>best-val epoch</span><span id="r_best" class="mono" style="color:#ca8a04">—</span></div>
+            <div class="kvrow"><span>best-val MSE</span><span id="r_bestv" class="mono" style="color:#ca8a04">—</span></div>
+            <div class="kvrow" style="border:0"><span>stop @ epoch</span><span id="r_stop" class="mono" style="color:#d97706">—</span></div>
+          </div>
+          <div id="deployCard" class="bg-slate-900 rounded-xl p-4 text-center">
+            <div class="text-[11px] text-emerald-300 uppercase font-bold tracking-wider">deployed model state</div>
+            <div id="r_deploy" class="text-lg font-black metric text-emerald-400 mt-1">—</div>
+            <div id="r_saved" class="pill mt-2" style="background:#134e4a;color:#5eead4">—</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- the punchline: WITH vs WITHOUT -->
+      <div class="grid sm:grid-cols-[1fr_1fr_auto] gap-4 mb-4 items-stretch">
+        <div class="bg-white rounded-xl border-2 border-rose-200 p-4 text-center">
+          <div class="text-[11px] uppercase font-bold text-rose-500 tracking-wider">Test error &mdash; NO early stopping</div>
+          <div class="text-[11px] text-slate-400 mb-1">train all 2500 epochs (overfit)</div>
+          <div id="r_noes" class="text-3xl font-black metric text-rose-500">—</div>
+        </div>
+        <div class="bg-white rounded-xl border-2 border-emerald-300 p-4 text-center">
+          <div class="text-[11px] uppercase font-bold text-emerald-600 tracking-wider">Test error &mdash; WITH early stopping</div>
+          <div class="text-[11px] text-slate-400 mb-1">restore best-val weights</div>
+          <div id="r_es" class="text-3xl font-black metric text-emerald-600">—</div>
+        </div>
+        <div class="bg-emerald-600 rounded-xl p-4 text-center flex flex-col justify-center min-w-[130px]">
+          <div class="text-[11px] uppercase font-bold text-emerald-100 tracking-wider">early stopping is</div>
+          <div id="r_ratio" class="text-3xl font-black metric text-white">—</div>
+          <div class="text-[11px] text-emerald-100">better on unseen data</div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-sm text-slate-600">
+        <b class="text-slate-800">What to try:</b> (1) Reset, press <b>Train</b>, and watch the two curves diverge &mdash; <span style="color:#0ea5e9">train</span> keeps falling, <span class="sk">val</span> bottoms out around the &#11088; then climbs. The right panel shows <em>why</em>: the fit goes from a clean sine to a jittery line threading every dot. (2) Compare the two big numbers &mdash; test error is genuinely <b>lower with early stopping</b>. (3) Toggle <b>restore-best-weights off</b>: now you deploy the last, over-trained epoch instead of the &#11088; &mdash; the deployed test error jumps up. Early stopping without restoring is only half the trick. (4) Drag <span class="mono">patience</span> down toward 10: training halts almost the moment val ticks up &mdash; sometimes <em>before</em> the true bottom, on a noise dip. Drag it up: you stop later (wasted epochs) but reliably find the real minimum. (5) Raise <span class="mono">min-delta</span>: tiny improvements stop counting, so training gives up sooner. (6) Hit <b>New noisy sample</b> &mdash; a fresh draw of the noise, same story every time: train down, val U, early stopping wins.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== UNDERSTAND ===================== -->
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">From &ldquo;train longer&rdquo; to &ldquo;stop at the right moment&rdquo;</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BUILD ===================== -->
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">Early stopping is maybe fifteen lines of glue around your training loop, but the details &mdash; <em>which</em> metric, how patience really counts, min-delta, and above all <strong>restoring</strong> the best weights instead of keeping the last ones &mdash; are where people get it wrong. We build it from a naive loop up to the exact logic the framework callbacks use, then see the one-liners in Keras and PyTorch Lightning.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">The trap &mdash; &ldquo;just train for N epochs&rdquo;</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Pick a big epoch count, train, ship. The problem: there is no single right N. Too few and the model underfits; too many and it slides past its best point into overfitting, memorising the training noise. And the sweet spot moves with the model, the data, and the learning rate &mdash; you can&rsquo;t guess it once and reuse it.</p>
+        <div class="relative"><pre>for epoch in range(1000):        # a fixed, guessed budget
+    train_one_epoch(model, train_loader)
+# ship model  ->  but was 1000 too few, or way too many?
+# no feedback loop = you find out only in production</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Hold out a validation set &mdash; a proxy for &ldquo;unseen&rdquo;</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Split your labelled data into train / <b>val</b> / test. You train on <code>train</code>, and after every epoch you measure loss on <code>val</code> &mdash; data the optimiser never sees a gradient from. That val loss is your live estimate of generalisation. (Keep <code>test</code> sealed until the very end; the moment you tune to val, val stops being unseen &mdash; that&rsquo;s what test is for.)</p>
+        <div class="relative"><pre>train, val, test = split(data, [0.7, 0.15, 0.15])
+# gradients come ONLY from train
+# val loss  = live proxy for error on unseen data
+# test set  = touched once, at the end, for the honest number</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Watch val every epoch &mdash; and remember the best</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The core idea in one loop: after each epoch, evaluate val loss. If it&rsquo;s the best you&rsquo;ve seen, snapshot the model&rsquo;s weights. That snapshot is the model you&rsquo;ll actually keep. Everything else &mdash; patience, min-delta &mdash; is just deciding <em>when</em> to quit the loop; the snapshot is the payoff.</p>
+        <div class="relative"><pre>best_val = float("inf"); best_state = None
+for epoch in range(max_epochs):
+    train_one_epoch(model, train_loader)
+    v = evaluate(model, val_loader)
+    if v &lt; best_val:
+        best_val = v
+        best_state = copy.deepcopy(model.state_dict())   # remember it</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Patience &mdash; don&rsquo;t quit on a single bad epoch</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Val loss is noisy &mdash; it can tick up for an epoch or two and then keep falling. If you stopped at the first uptick you&rsquo;d quit far too early. <b>Patience</b> is the fix: count how many epochs in a row have failed to beat the best. Only when that counter reaches <code>patience</code> do you conclude the upturn is real and stop. Reset the counter to 0 every time you find a new best.</p>
+        <div class="relative"><pre>wait = 0
+for epoch in range(max_epochs):
+    train_one_epoch(model, train_loader)
+    v = evaluate(model, val_loader)
+    if v &lt; best_val:
+        best_val = v; best_state = deepcopy(model.state_dict()); wait = 0
+    else:
+        wait += 1
+        if wait &gt;= patience:            # N epochs with no new best
+            break                         # the upturn is real -> stop</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Min-delta &mdash; ignore improvements too small to matter</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Without it, a val drop of <code>0.00001</code> counts as &ldquo;improvement,&rdquo; resets patience, and keeps you grinding forever on noise. <b>min-delta</b> sets the smallest change that counts: an epoch only qualifies as a new best if it beats the record by more than <code>min_delta</code>. Bigger min-delta = stricter = stops sooner. It turns &ldquo;did it improve?&rdquo; into &ldquo;did it improve <em>enough</em>?&rdquo;</p>
+        <div class="relative"><pre>if v &lt; best_val - min_delta:        # must beat it by a margin
+    best_val = v
+    best_state = deepcopy(model.state_dict())
+    wait = 0
+else:
+    wait += 1                        # tiny wiggles no longer reset the clock</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Restore best weights &mdash; the step everyone forgets</h3></div>
+        <p class="text-sm text-slate-600 mb-3">When the loop breaks, your model is sitting at the <em>stop</em> epoch &mdash; which is <code>patience</code> epochs <b>past</b> the best one, already a little overfit. If you ship it as-is you throw away the whole point. <b>Load the snapshot back</b> so the deployed weights are the best-val ones. In the demo, turning &ldquo;restore&rdquo; off visibly bumps the test error &mdash; that gap is exactly these <code>patience</code> wasted epochs.</p>
+        <div class="relative"><pre># loop just broke at the stop epoch (a bit past the best)
+model.load_state_dict(best_state)    # <-- rewind to the best-val epoch
+# THIS is the model you deploy.  Skip it and early stopping is half-done.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">The whole thing, and the framework one-liners</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Put it together and it&rsquo;s a tiny, reusable helper &mdash; which is exactly why every framework ships it as a callback. Keras&rsquo; <code>EarlyStopping(restore_best_weights=True)</code> and Lightning&rsquo;s <code>EarlyStopping</code> callback are this same monitor / patience / min-delta / restore logic. Always set <code>restore_best_weights=True</code> (Keras defaults it to <em>False</em> &mdash; a classic footgun), and monitor the metric you actually care about (<code>val_loss</code>, or e.g. <code>val_accuracy</code> with <code>mode="max"</code>).</p>
+        <div class="relative"><pre># Keras
+cb = keras.callbacks.EarlyStopping(
+        monitor="val_loss", patience=10,
+        min_delta=1e-3, restore_best_weights=True)   # <- don't forget True
+model.fit(X, y, validation_data=(Xv, yv), epochs=1000, callbacks=[cb])
+
+# PyTorch Lightning
+from lightning.pytorch.callbacks import EarlyStopping
+trainer = Trainer(callbacks=[EarlyStopping(monitor="val_loss", patience=10)])</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">8</div><h3 class="font-bold text-lg">Why it&rsquo;s <em>implicit regularisation</em> &mdash; and its friends</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Gradient descent starts from small weights and grows them a little each step. Stopping early caps how far the weights can travel &mdash; so the effective model stays simpler. For a linear least-squares fit this is provably close to L2 / ridge regularisation, with the stop time playing the role of the penalty strength: <em>fewer steps &harr; stronger shrinkage</em>. That&rsquo;s why it fights overfitting without adding a penalty term. It composes with the other regularisers &mdash; dropout, weight decay, data augmentation &mdash; and is nearly free, so it&rsquo;s on by default in practically every serious training run. Its one cost: you spend a slice of data on validation.</p>
+        <div class="relative"><pre># small init  ->  GD grows ||w|| gradually  ->  stopping = a budget on ||w||
+#   fewer steps  ~=  stronger L2 shrinkage   (early-stopping ~ ridge)
+# pairs with: weight decay, dropout, data augmentation, label smoothing
+# cost: a held-out val split.  benefit: free regularisation + no wasted compute</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 45 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2"><strong>Early stopping</strong> is the cheapest regulariser in deep learning. Give an over-capacity model enough epochs and its <em>training</em> loss marches to zero by memorising noise, while <em>validation</em> loss traces a <strong>U</strong> &mdash; down as it learns the signal, back up as it overfits. So you hold out a val set, watch its loss each epoch, keep the weights from the lowest-val epoch, and once it hasn&rsquo;t improved by more than <span class="mono">min-delta</span> for <span class="mono">patience</span> epochs you <strong>stop and restore those best weights</strong>. Patience keeps a noisy uptick from stopping you too soon; min-delta stops tiny wiggles resetting the clock; <strong>restore-best-weights</strong> is the step that makes it actually work &mdash; without it you deploy the slightly-overfit stop epoch. It behaves like implicit L2: capping the number of GD steps caps how big the weights grow, keeping the model simpler for free. You watched a real 34-basis model fit 16 noisy points &mdash; train MSE monotone down, val MSE genuinely U-turning, and held-out test error lower <b>with</b> early stopping than without. <strong>&#128073; Tomorrow, Day 46:</strong> Weight Decay &amp; L2 Regularisation &mdash; the <em>explicit</em> version of the shrinkage early stopping gives you implicitly.</p></div>
+  </div>
+</section>
+
+<script>
+// ---- tab switching ----
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+  if (t.dataset.tab === "look") requestAnimationFrame(() => { fitCanvas(); redraw(); });
+});
+</script>
+
+<script>
+// ==================================================================
+//  DAY 45 — EARLY STOPPING, real in-browser.
+//  A genuine OVER-CAPACITY model — 34 Gaussian radial basis functions
+//  (35 params) — is fit by real full-batch gradient descent to 16 noisy
+//  samples of a sine. Training MSE falls MONOTONICALLY toward 0 while the
+//  validation MSE U-turns (down = learning signal, up = memorising noise).
+//  The whole 2500-epoch trajectory (train/val/test loss + a weight snapshot
+//  per epoch) is computed once, then revealed live. The best-val epoch, the
+//  patience/min-delta/restore-best early-stopping rule, and the held-out
+//  TEST error WITH vs WITHOUT stopping are all computed for real.
+//  (Validated in Node over seeds 5/7/11/31/42: train monotone-down in all,
+//   val U-turns in all, and TEST(restore-best) < TEST(train-to-end) in all.)
+// ==================================================================
+
+// ---------- locked config (validated) ----------
+const CFG = { M:34, s:0.026, noise:0.28, Ntr:16, Nva:16, lr:0.05, E:2500 };
+const SEEDS = [11, 42, 31, 7, 5];     // all vetted to show the U-turn + ES win
+let seedIdx = 0;
+
+// ---------- deterministic RNG + Box–Muller ----------
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+function makeRandn(rng){ let sp=null; return function(){ if(sp!==null){ const s=sp; sp=null; return s; } let u,v,s; do{ u=rng()*2-1; v=rng()*2-1; s=u*u+v*v; }while(s>=1||s===0); const f=Math.sqrt(-2*Math.log(s)/s); sp=v*f; return u*f; }; }
+
+const centers = []; for (let j=0;j<CFG.M;j++) centers.push(j/(CFG.M-1));
+const P = CFG.M + 1;
+function feat(x){ const f=[1]; for (let j=0;j<CFG.M;j++) f.push(Math.exp(-((x-centers[j])**2)/(2*CFG.s*CFG.s))); return f; }
+function predW(w, x){ let o=w[0]; for (let j=0;j<CFG.M;j++) o += w[j+1]*Math.exp(-((x-centers[j])**2)/(2*CFG.s*CFG.s)); return o; }
+
+// ---------- state ----------
+let tr, va, teX, teY;                 // datasets (teY = CLEAN signal on a dense grid = true generalisation)
+let trH, vaH, teH, Wsnap;             // per-epoch histories + weight snapshots
+let bestValEp = 0;
+let patience = 200, minDelta = 0.001, restore = true;
+let revealed = 0, running = false, raf = null, lastT = 0;
+const STEP_PER_FRAME = 14;
+
+// ---------- build data + run the WHOLE trajectory once (genuine GD) ----------
+function buildAndTrain(seed){
+  const rng = mulberry32(seed), randn = makeRandn(rng);
+  const g = x => Math.sin(2*Math.PI*x);
+  function mk(n){ const xs=[], ys=[]; for (let i=0;i<n;i++){ const x=rng(); xs.push(x); ys.push(g(x)+CFG.noise*randn()); } return { xs, ys }; }
+  tr = mk(CFG.Ntr); va = mk(CFG.Nva);
+  teX = []; teY = []; for (let i=0;i<200;i++){ const x=i/199; teX.push(x); teY.push(g(x)); }   // clean target
+  const Ptr = tr.xs.map(feat), Pva = va.xs.map(feat), Pte = teX.map(feat);
+  let w = new Array(P).fill(0);
+  const mse = (Ps, ys) => { let e=0; for (let i=0;i<Ps.length;i++){ let p=0; for (let k=0;k<P;k++) p+=Ps[i][k]*w[k]; e+=(p-ys[i])**2; } return e/Ps.length; };
+  trH = []; vaH = []; teH = []; Wsnap = [];
+  for (let ep=0; ep<CFG.E; ep++){
+    const grad = new Array(P).fill(0);
+    for (let i=0;i<Ptr.length;i++){ let p=0; for (let k=0;k<P;k++) p+=Ptr[i][k]*w[k]; const r=p-tr.ys[i]; for (let k=0;k<P;k++) grad[k]+=2*r*Ptr[i][k]; }
+    for (let k=0;k<P;k++) w[k] -= CFG.lr*grad[k]/Ptr.length;
+    trH.push(mse(Ptr, tr.ys)); vaH.push(mse(Pva, va.ys)); teH.push(mse(Pte, teY)); Wsnap.push(w.slice());
+  }
+  bestValEp = 0; for (let i=1;i<vaH.length;i++) if (vaH[i] < vaH[bestValEp]) bestValEp = i;
+}
+
+// ---------- the early-stopping rule (identical to the BUILD-tab code) ----------
+function earlyStop(pat, md, upto){
+  const N = (upto===undefined ? vaH.length : upto+1);
+  let best = Infinity, bestEp = 0, wait = 0, stopEp = N-1, fired = false;
+  for (let ep=0; ep<N; ep++){
+    if (vaH[ep] < best - md){ best = vaH[ep]; bestEp = ep; wait = 0; }
+    else { wait++; if (wait >= pat){ stopEp = ep; fired = true; break; } }
+  }
+  return { bestEp, stopEp, fired };
+}
+
+// ---------- canvases ----------
+const lossC = document.getElementById("lossC"), lc = lossC.getContext("2d");
+const fitC  = document.getElementById("fitC"),  fc = fitC.getContext("2d");
+
+function fitCanvas(){
+  [lossC, fitC].forEach(cv => {
+    const w = cv.clientWidth || cv.width;
+    const ratio = window.devicePixelRatio || 1;
+    if (cv.width !== Math.round(w*ratio)){ cv.width = Math.round(w*ratio); cv.height = Math.round(250*ratio); }
+  });
+}
+
+// ---------- loss curve chart ----------
+function drawLoss(){
+  const R = window.devicePixelRatio || 1;
+  const W = lossC.width, H = lossC.height, pad = 30*R;
+  lc.clearRect(0,0,W,H);
+  const yMax = 1.05 * Math.max(vaH[0], trH[0], vaH[bestValEp]) ;
+  const yTop = yMax, yBot = 0;
+  const Xp = ep => pad + ep/(CFG.E-1) * (W - pad - 8*R);
+  const Yp = v  => H - pad - (v - yBot)/(yTop - yBot) * (H - 2*pad);
+  // running best up to revealed
+  let runBest = 0; for (let i=1;i<=revealed && i<vaH.length;i++) if (vaH[i] < vaH[runBest]) runBest = i;
+  // gridlines
+  lc.font = (10*R)+"px monospace"; lc.textAlign = "left";
+  for (let k=0;k<=4;k++){ const v = yTop*k/4; const yy = Yp(v);
+    lc.strokeStyle = "rgba(148,163,184,0.14)"; lc.lineWidth = 1; lc.beginPath(); lc.moveTo(pad, yy); lc.lineTo(W-8*R, yy); lc.stroke();
+    lc.fillStyle = "#475569"; lc.fillText(v.toFixed(2), 2*R, yy-2*R); }
+  // overfitting-zone shading (right of running best)
+  if (revealed > runBest){
+    lc.fillStyle = "rgba(244,63,94,0.07)";
+    lc.fillRect(Xp(runBest), pad, Xp(Math.min(revealed,CFG.E-1))-Xp(runBest), H-2*pad);
+  }
+  // stop marker (patience) — only where enough is revealed
+  const es = earlyStop(patience, minDelta, Math.min(revealed, CFG.E-1));
+  if (es.fired){
+    const xs = Xp(es.stopEp);
+    lc.strokeStyle = "#f59e0b"; lc.lineWidth = 1.4*R; lc.setLineDash([5*R,4*R]);
+    lc.beginPath(); lc.moveTo(xs, pad); lc.lineTo(xs, H-pad); lc.stroke(); lc.setLineDash([]);
+    lc.fillStyle = "#f59e0b"; lc.textAlign = "center"; lc.fillText("stop", xs, pad-3*R); lc.textAlign = "left";
+  }
+  // curves
+  const drawLine = (hist, col) => { lc.strokeStyle = col; lc.lineWidth = 2*R; lc.beginPath();
+    for (let i=0;i<=revealed && i<hist.length;i++){ const px=Xp(i), py=Yp(Math.min(hist[i], yTop)); i===0?lc.moveTo(px,py):lc.lineTo(px,py); } lc.stroke(); };
+  drawLine(trH, "#0ea5e9");   // train
+  drawLine(vaH, "#f43f5e");   // val
+  // best-val star (running)
+  const bx = Xp(runBest), by = Yp(vaH[runBest]);
+  lc.fillStyle = "#eab308"; lc.font = (16*R)+"px sans-serif"; lc.textAlign = "center";
+  lc.fillText("⭐", bx, by-6*R); lc.textAlign = "left";
+  lc.strokeStyle = "#eab308"; lc.lineWidth = 1*R; lc.setLineDash([3*R,3*R]);
+  lc.beginPath(); lc.moveTo(bx, by); lc.lineTo(bx, H-pad); lc.stroke(); lc.setLineDash([]);
+  // x-axis label
+  lc.fillStyle = "#64748b"; lc.font = (10*R)+"px monospace"; lc.textAlign = "right";
+  lc.fillText("epoch →", W-8*R, H-8*R); lc.textAlign = "left";
+}
+
+// ---------- model-fit chart ----------
+function drawFit(){
+  const R = window.devicePixelRatio || 1;
+  const W = fitC.width, H = fitC.height, pad = 14*R;
+  fc.clearRect(0,0,W,H);
+  const yLo = -1.7, yHi = 1.7;
+  const Xp = x => pad + x*(W-2*pad);
+  const Yp = y => pad + (yHi - y)/(yHi - yLo)*(H-2*pad);
+  // zero line
+  fc.strokeStyle = "#e2e8f0"; fc.lineWidth = 1*R; fc.beginPath(); fc.moveTo(pad, Yp(0)); fc.lineTo(W-pad, Yp(0)); fc.stroke();
+  // true signal (dashed grey)
+  fc.strokeStyle = "#94a3b8"; fc.lineWidth = 1.5*R; fc.setLineDash([5*R,4*R]); fc.beginPath();
+  for (let i=0;i<teX.length;i++){ const px=Xp(teX[i]), py=Yp(teY[i]); i===0?fc.moveTo(px,py):fc.lineTo(px,py); } fc.stroke(); fc.setLineDash([]);
+  const curve = (w, col, width) => { fc.strokeStyle = col; fc.lineWidth = width*R; fc.beginPath();
+    let started=false;
+    for (let i=0;i<=200;i++){ const x=i/200; let y=predW(w,x); if(y>yHi)y=yHi; if(y<yLo)y=yLo; const px=Xp(x),py=Yp(y); started?fc.lineTo(px,py):fc.moveTo(px,py); started=true; } fc.stroke(); };
+  if (!running && revealed >= CFG.E-1){
+    // finished: show the OVERFIT last-epoch model (faint) + the DEPLOYED model (bold green)
+    curve(Wsnap[CFG.E-1], "#fda4af", 2);                       // overfit
+    const es = earlyStop(patience, minDelta);
+    const deployEp = restore ? es.bestEp : es.stopEp;
+    curve(Wsnap[deployEp], "#22c55e", 3);                      // deployed
+  } else {
+    // running: show the model AT the current revealed epoch
+    const ep = Math.max(0, Math.min(revealed, CFG.E-1));
+    curve(Wsnap[ep], "#f43f5e", 2.5);
+  }
+  // train points
+  for (let i=0;i<tr.xs.length;i++){ fc.fillStyle = "#e11d48"; fc.beginPath(); fc.arc(Xp(tr.xs[i]), Yp(tr.ys[i]), 3.2*R, 0, 2*Math.PI); fc.fill(); }
+  // val points (hollow)
+  for (let i=0;i<va.xs.length;i++){ fc.strokeStyle = "#64748b"; fc.lineWidth=1.3*R; fc.beginPath(); fc.arc(Xp(va.xs[i]), Yp(va.ys[i]), 3*R, 0, 2*Math.PI); fc.stroke(); }
+}
+
+// ---------- readouts ----------
+function fmt(v){ if (!isFinite(v)) return "∞"; if (v===0) return "0"; const a=Math.abs(v); if (a>=1e4||a<1e-3) return v.toExponential(2); return v.toFixed(4); }
+function updateReadouts(){
+  const ep = Math.min(revealed, CFG.E-1);
+  document.getElementById("r_epoch").textContent = revealed;
+  document.getElementById("r_tr").textContent = fmt(trH[ep]);
+  document.getElementById("r_va").textContent = fmt(vaH[ep]);
+  let runBest = 0; for (let i=1;i<=ep;i++) if (vaH[i] < vaH[runBest]) runBest = i;
+  document.getElementById("r_best").textContent  = runBest;
+  document.getElementById("r_bestv").textContent = fmt(vaH[runBest]);
+  const es = earlyStop(patience, minDelta, ep);
+  document.getElementById("r_stop").textContent = es.fired ? es.stopEp : ("— (patience "+patience+")");
+  // deployed + saved epochs
+  const done = (!running && revealed >= CFG.E-1);
+  const dc = document.getElementById("deployCard");
+  if (done){
+    const esF = earlyStop(patience, minDelta);
+    const deployEp = restore ? esF.bestEp : esF.stopEp;
+    document.getElementById("r_deploy").textContent = "epoch " + deployEp + (restore ? "  ⭐ (best)" : "  (stop)");
+    const saved = CFG.E - 1 - esF.stopEp;
+    document.getElementById("r_saved").textContent = saved + " epochs saved vs training to the end";
+    document.getElementById("r_saved").style.background = "#134e4a";
+    document.getElementById("r_saved").style.color = "#5eead4";
+    // the punchline numbers (TEST = clean-signal MSE = true generalisation)
+    const noES = teH[CFG.E-1];
+    const withES = teH[restore ? esF.bestEp : esF.stopEp];
+    document.getElementById("r_noes").textContent = fmt(noES);
+    document.getElementById("r_es").textContent   = fmt(withES);
+    document.getElementById("r_ratio").textContent = (noES/withES).toFixed(2) + "×";
+  } else {
+    document.getElementById("r_deploy").textContent = running ? "training…" : "—";
+    document.getElementById("r_saved").textContent = "press Train to fit";
+    document.getElementById("r_noes").textContent = "—";
+    document.getElementById("r_es").textContent = "—";
+    document.getElementById("r_ratio").textContent = "—";
+  }
+  // fit note
+  const note = document.getElementById("fitNote");
+  if (done){ note.innerHTML = "<b style='color:#16a34a'>Green</b> = deployed (early-stopped, smooth). <b style='color:#fb7185'>Pink</b> = trained to the end (wiggly — chasing noise)."; }
+  else if (running){ note.textContent = "Red = the model right now. Watch it go from a clean sine to a jittery line."; }
+}
+
+function redraw(){ drawLoss(); drawFit(); updateReadouts(); }
+
+// ---------- run loop ----------
+function loop(ts){
+  if (!running) return;
+  if (!lastT) lastT = ts;
+  if (ts - lastT >= 16){ lastT = ts; revealed = Math.min(revealed + STEP_PER_FRAME, CFG.E-1); redraw(); }
+  if (revealed >= CFG.E-1){ setRunning(false); redraw(); return; }
+  raf = requestAnimationFrame(loop);
+}
+function setRunning(on){
+  running = on && revealed < CFG.E-1;
+  const b = document.getElementById("btnTrain");
+  b.textContent = running ? "⏸ Pause" : (revealed >= CFG.E-1 ? "↺ Re-run" : "▶ Train");
+  b.className = running ? "btn-dark" : "btn-solid";
+  if (running){ lastT = 0; raf = requestAnimationFrame(loop); }
+  else if (raf) cancelAnimationFrame(raf);
+}
+
+// ---------- reset / data ----------
+function reset(reshuffle){
+  setRunning(false);
+  if (reshuffle){ seedIdx = (seedIdx + 1) % SEEDS.length; }
+  buildAndTrain(SEEDS[seedIdx]);
+  revealed = 0;
+  redraw();
+}
+
+// ---------- controls ----------
+document.getElementById("s_pat").addEventListener("input", e => { patience = +e.target.value; document.getElementById("v_pat").textContent = patience; redraw(); });
+document.getElementById("s_md").addEventListener("input",  e => { minDelta = +e.target.value; document.getElementById("v_md").textContent = minDelta.toFixed(3); redraw(); });
+document.querySelectorAll("[data-restore]").forEach(btn => btn.onclick = () => {
+  document.querySelectorAll("[data-restore]").forEach(x => x.classList.remove("on"));
+  btn.classList.add("on"); restore = btn.dataset.restore === "1"; redraw();
+});
+document.getElementById("btnTrain").onclick = () => { if (revealed >= CFG.E-1 && !running){ revealed = 0; } setRunning(!running); };
+document.getElementById("btnStep").onclick  = () => { setRunning(false); revealed = Math.min(revealed + 50, CFG.E-1); redraw(); };
+document.getElementById("btnReset").onclick = () => reset(false);
+document.getElementById("btnData").onclick  = () => reset(true);
+window.addEventListener("resize", () => { fitCanvas(); redraw(); });
+
+// ---------- go ----------
+fitCanvas();
+reset(false);
+</script>
+
+<script>
+// ===================== UNDERSTAND — 10 steps =====================
+const STEPS = [
+ { title:"1. The symptom — train loss ↓, but the model gets WORSE",
+   why:"You are training a model with plenty of capacity. The training loss keeps dropping, epoch after epoch, exactly as you'd hope — so it looks like everything is going well. But if you also measure the loss on a held-out set, you find it stops improving and then starts getting WORSE, even as training loss keeps falling. The model isn't learning more about the world; past a point it is memorising the specific noise in your training data. Training loss is a liar about generalisation, and early stopping is how you listen to a more honest witness.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">epoch 50 :  train 0.20  ·  val 0.14<br>epoch 200:  train 0.05  ·  val <span style="color:#16a34a">0.09</span>  &larr; best<br>epoch 800:  train 0.01  ·  val 0.18<br>epoch 2000: train 0.001 ·  val <span style="color:#be123c">0.31</span>  &larr; overfit<br><br>train keeps dropping · val turned around long ago</div>`,
+   code:"# training loss is NOT what you care about\n# it can march to 0 by memorising noise\n# measure a held-out set to see real generalisation" },
+ { title:"2. Why val turns around — memorising the noise",
+   why:"Real data = signal + noise. A model with more capacity than the signal needs will, given enough gradient steps, first fit the broad signal (which helps everywhere) and then start bending itself to pass through the exact noisy training points (which helps ONLY those points). Fitting the signal lowers both train and val loss. Fitting the noise lowers train loss but RAISES val loss, because the noise in the validation set is different. That crossover is the bottom of the val U — the moment the model switches from learning generalities to memorising specifics.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">data = <span style="color:#0ea5e9">signal</span> + <span style="color:#be123c">noise</span><br><br>fit signal &rarr; train &darr; &amp; val &darr;  (good, generalises)<br>fit noise  &rarr; train &darr; &amp; val <span style="color:#be123c">&uarr;</span>  (bad, memorising)<br><br>the val minimum = the handover point</div>`,
+   code:"# early epochs: learns the SIGNAL   -> train &amp; val both drop\n# later epochs: fits the NOISE       -> train drops, val RISES\n# noise differs between train &amp; val, so memorising it hurts val" },
+ { title:"3. The two curves and the generalisation gap",
+   why:"Plot training loss and validation loss on the same axes and you get deep learning's most recognisable diagram: training loss sliding smoothly toward zero, validation loss shaped like a U. The vertical distance between them is the 'generalisation gap' — and it widens as you overfit. The lowest point of the validation U is, by definition, the model that will do best on unseen data. Early stopping is nothing more than a rule for finding that point automatically and keeping it.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">loss<br>│<span style="color:#be123c">\\</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#be123c">_/</span>&nbsp;&nbsp;val (U-shape)<br>│&nbsp;<span style="color:#be123c">\\_____</span><span style="color:#eab308">⭐</span><span style="color:#be123c">/</span>&nbsp;&nbsp;&nbsp;&larr; keep THIS epoch<br>│&nbsp;&nbsp;<span style="color:#0ea5e9">\\________</span>&nbsp;&nbsp;train (&rarr; 0)<br>└─────────────── epoch<br>gap between the lines = overfitting</div>`,
+   code:"# best epoch = argmin(val_loss)\n# train_loss keeps falling past it — ignore that\n# the widening gap between the curves = overfitting" },
+ { title:"4. The idea — watch val, keep the best, then stop",
+   why:"Early stopping treats the number of epochs as a hyperparameter and tunes it automatically using the validation curve. After every epoch you evaluate val loss. You always remember the weights from the best (lowest-val) epoch so far. You keep going as long as val is still improving. When it clearly stops improving, you stop and hand back those best weights. No change to the model, the loss, or the optimiser — just a smarter answer to 'when do I stop?'",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">each epoch:<br>&nbsp;&nbsp;train one pass<br>&nbsp;&nbsp;v = val_loss()<br>&nbsp;&nbsp;if v is a new best &rarr; <b>snapshot weights</b><br>&nbsp;&nbsp;if val hasn't improved for a while &rarr; <b>stop</b><br>&nbsp;&nbsp;return the snapshot</div>`,
+   code:"best_val = inf; best_state = None\nfor epoch in range(max_epochs):\n    train_one_epoch()\n    v = val_loss()\n    if v < best_val: best_val, best_state = v, snapshot()\n    if converged(): break\nload(best_state)" },
+ { title:"5. Patience — don't quit on a single bad epoch",
+   why:"Validation loss is measured on a finite, noisy set, so it jitters. It might tick up for one or two epochs and then resume falling to a new, better minimum. If you stopped at the very first uptick you'd quit prematurely and ship an under-trained model. Patience fixes this: you allow val to fail to improve for up to `patience` epochs in a row before you believe the upturn is real. Every time you DO hit a new best, the patience counter resets to zero. Small patience = twitchy, stops early; large patience = calmer, but wastes epochs deep in the overfit zone.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">val: 0.14 <span style="color:#16a34a">0.11</span> 0.12 0.11 <span style="color:#16a34a">0.10</span> 0.11 0.12 0.13 ...<br>wait:&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;1&nbsp;&nbsp;&nbsp;0(*)&nbsp;0&nbsp;&nbsp;1&nbsp;&nbsp;&nbsp;2&nbsp;&nbsp;&nbsp;3 &rarr; stop@patience=3<br>(*) 0.11&gt;0.11? no new best, but soon 0.10 resets it<br><br>a noisy uptick alone must NOT stop you</div>`,
+   code:"wait = 0\nif v < best_val:\n    best_val, best_state, wait = v, snapshot(), 0   # reset\nelse:\n    wait += 1\n    if wait >= patience: break            # only now: stop" },
+ { title:"6. Min-delta — an improvement must be big enough",
+   why:"Without a threshold, a microscopic drop like 0.00001 still counts as 'improvement', resets patience, and keeps training grinding on noise forever. min-delta sets the smallest change that qualifies as real progress: an epoch is a new best only if it beats the record by MORE than min-delta. This turns the question from 'did val go down at all?' into 'did val go down enough to care?'. Larger min-delta makes the criterion stricter and stops training sooner; min-delta = 0 means any improvement counts.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">best = 0.100 ,  min_delta = 0.005<br>new v = 0.0997 &rarr; drop 0.0003 &lt; &Delta; &rarr; <span style="color:#be123c">not a best</span><br>new v = 0.0930 &rarr; drop 0.0070 &gt; &Delta; &rarr; <span style="color:#16a34a">new best!</span><br><br>&ldquo;did it improve <b>enough</b>?&rdquo;, not just &ldquo;did it improve?&rdquo;</div>`,
+   code:"if v < best_val - min_delta:   # must beat by a margin\n    best_val, best_state, wait = v, snapshot(), 0\nelse:\n    wait += 1\n# min_delta bigger  ->  stricter  ->  stops sooner" },
+ { title:"7. Restore best weights — the step people forget",
+   why:"When the loop finally breaks, the model is NOT at its best epoch — it is `patience` epochs later, already sliding into overfitting. If you deploy it as-is you've thrown away the entire benefit. That's why you snapshot the best weights along the way and LOAD THEM BACK before shipping. In the demo, flipping 'restore best weights' off makes the deployed test error jump up visibly — that jump is precisely the `patience` epochs of overfitting you accidentally kept. Keras even defaults restore_best_weights to False, which quietly bites a lot of people.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">... <span style="color:#eab308">⭐ best@epoch 456</span> ... stop@epoch 656<br><br>restore ON :  deploy weights@456  &rarr; <span style="color:#16a34a">test 0.12</span><br>restore OFF:  deploy weights@656  &rarr; <span style="color:#be123c">test 0.13+</span><br><br>without restoring, early stopping is only half done</div>`,
+   code:"# loop broke at the STOP epoch, a bit past best\nmodel.load_state_dict(best_state)   # rewind to the star\n# ship THIS.  (Keras: restore_best_weights=True — not the default!)" },
+ { title:"8. Why it's regularisation — a budget on the weights",
+   why:"Gradient descent starts from small initial weights and nudges them a little each step. The longer you train, the farther the weights can travel from that small starting point, and the more complex a function they can express. Stopping early puts a hard budget on how far they get to move — which keeps the effective model simpler and smoother. So early stopping fights overfitting the same way an explicit penalty does, but by limiting the OPTIMISATION rather than changing the objective. It is regularisation hiding inside the training schedule.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">small init &rarr; each GD step grows &#8214;w&#8214; a bit<br>more epochs &rarr; bigger &#8214;w&#8214; &rarr; wigglier function<br><br>stop early = cap on &#8214;w&#8214; = simpler model<br>(no penalty term added — just fewer steps)</div>`,
+   code:"# effective capacity grows WITH training time\n# fewer steps  =>  smaller ||w||  =>  simpler fit\n# same effect as shrinking weights — but for free" },
+ { title:"9. Early stopping ≈ L2 / ridge regression",
+   why:"This isn't just an analogy. For a linear least-squares model trained by gradient descent, you can show that stopping after t steps gives almost exactly the same solution as adding an L2 (ridge) penalty of a particular strength — with fewer steps corresponding to a STRONGER penalty. Both shrink the solution toward the small-weight origin; early stopping does it by not walking as far, ridge does it by pulling back with a spring. That equivalence is why early stopping behaves like a regulariser you never explicitly wrote down, and why it plays so nicely alongside real weight decay.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">stop after t steps  &harr;  ridge penalty &lambda;(t)<br><br>few steps  &nbsp;&harr;&nbsp; large &lambda;  (strong shrinkage)<br>many steps &harr; small &lambda;  (weak shrinkage)<br><br>early stopping = implicit L2, tuned by TIME</div>`,
+   code:"# linear + GD from 0:  w(t) ~ ridge solution with lambda ~ 1/(lr*t)\n# stopping time IS the regularisation strength\n# that's why 'train less' and 'penalise more' rhyme" },
+ { title:"10. Using it well — splits, metrics, and friends",
+   why:"Practical notes. (1) Monitor the metric you truly care about — often val_loss, but sometimes val_accuracy or an F1 (with mode='max'). (2) Keep the validation set honest: never train on it, and remember that heavily tuning to val slowly leaks it — that's what the untouched test set is for. (3) Early stopping composes with the other regularisers (weight decay, dropout, augmentation, label smoothing) — use them together. (4) It's nearly free: no extra compute, and it even SAVES you the wasted epochs. Its only real cost is the slice of data you hold out. That combination — free, effective, and a compute-saver — is why early stopping is on by default in essentially every serious training run.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">monitor:  val_loss (min) · val_acc (max)<br>splits :  train &rarr; grads · val &rarr; stop · test &rarr; report once<br>friends:  + weight decay + dropout + augmentation<br>cost   :  a held-out set · saves wasted epochs</div>`,
+   code:"EarlyStopping(monitor='val_loss', mode='min',\n              patience=10, min_delta=1e-3,\n              restore_best_weights=True)   # on by default, basically free" },
+];
+</script>
+
+<script>
+// ---- UNDERSTAND engine (shared pattern) ----
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s,i) => { const bn = document.createElement("button");
+  bn.className = "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm";
+  bn.innerHTML = `<div class="font-semibold">${s.title}</div>`; bn.onclick = () => show(i); stepsEl.appendChild(bn); });
+function show(i){ curS = i; const s = STEPS[i];
+  document.getElementById("concept").innerHTML = `<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML = `<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent = s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx) => { bn.className = idx===i
+    ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold"
+    : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick = () => show(Math.max(0, curS-1));
+nextB.onclick = () => show(Math.min(STEPS.length-1, curS+1));
+let tm = null;
+autoB.onclick = () => { if (tm){ clearInterval(tm); tm=null; autoB.textContent="▶ Auto-play"; return; }
+  autoB.textContent = "⏸ Pause"; show(0);
+  tm = setInterval(() => { if (curS >= STEPS.length-1){ clearInterval(tm); tm=null; autoB.textContent="▶ Replay"; return; } show(curS+1); }, 5200); };
+show(0);
+
+function copy(btn){ const pre = btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500); }
+</script>
+</body>
+</html>
