@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 51 — Vision Transformer (ViT)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  .kept { color:#059669; font-weight:700; }
+  .recomp { color:#d97706; font-weight:700; }
+  .vio { color:#7c3aed; font-weight:700; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .preset-btn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:7px 12px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; transition:.12s; }
+  .preset-btn:hover{ border-color:#fda4af; }
+  .preset-btn.on{ background:#f43f5e; border-color:#f43f5e; color:#fff; }
+  .metric{ font-variant-numeric:tabular-nums; }
+  canvas{ display:block; }
+  .kvrow{ display:flex; justify-content:space-between; gap:10px; font-size:12px; padding:3px 0; border-bottom:1px dashed #e2e8f0; }
+  .kvrow span:first-child{ color:#64748b; }
+  .legend-sym{ display:inline-flex; width:16px; height:16px; border-radius:5px; }
+  .btn-solid{ background:#f43f5e; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-dark{ background:#0f172a; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-ghost{ background:#fff; border:1.5px solid #e2e8f0; color:#475569; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .imgwrap{ width:100%; max-width:430px; aspect-ratio:1/1; margin:0 auto; border-radius:12px; overflow:hidden; border:1px solid #e2e8f0; }
+  .imgwrap canvas{ width:100%; height:100%; cursor:crosshair; }
+  .bignum{ font-variant-numeric:tabular-nums; font-weight:900; line-height:1; }
+  .statcard{ border-radius:12px; border:1.5px solid #e2e8f0; background:#fff; padding:10px 12px; text-align:center; }
+  .statcard .lab{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; font-weight:800; color:#94a3b8; }
+  .stripbox{ border-radius:8px; overflow:hidden; border:1px solid #e2e8f0; }
+  .stripbox canvas{ width:100%; height:26px; display:block; image-rendering:pixelated; }
+  .clscell{ background:#0f172a; color:#fff; }
+  .headbtn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:6px 11px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; }
+  .headbtn.on{ background:#7c3aed; border-color:#7c3aed; color:#fff; }
+  .clsbtn.on{ background:#0f172a; border-color:#0f172a; color:#fff; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 51</div>
+      <h1 class="text-xl font-bold">&#127750; Vision Transformer (ViT) &mdash; the transformer was built for <em>sequences of words</em>, so ViT&rsquo;s one radical move is to make an <strong>image look like a sentence</strong>: chop it into a grid of fixed <strong>16&times;16 patches</strong> (&ldquo;<em>an image is worth 16&times;16 words</em>&rdquo;), <strong>flatten</strong> each patch&rsquo;s <span class="mono">16&middot;16&middot;3 = 768</span> pixels into a vector, and <strong>linearly project</strong> it to a <span class="mono">D</span>-dim <strong>token</strong> &mdash; a learned &ldquo;patch embedding&rdquo; that is literally just a <span class="mono">Conv2d(3, D, kernel=16, stride=16)</span>. Prepend one extra learnable <span class="mono">[CLS]</span> token (its final state is the whole-image summary the classifier reads), <strong>add positional embeddings</strong> so the model knows where each patch sat (a bag of patches has no inherent order), and feed the <span class="mono">N+1</span> tokens through a <strong>completely standard transformer encoder</strong> &mdash; the exact multi-head self-attention + MLP blocks from language, <span class="sk">no convolutions anywhere</span>. Every patch attends to <em>every</em> other patch from layer 1, so ViT has a <strong>global receptive field immediately</strong>, where a CNN grows its view slowly through stacked local filters. The catch is <strong>inductive bias</strong>: a conv <em>bakes in</em> locality and translation-equivariance (nearby pixels relate; a cat is a cat wherever it appears), and ViT throws all of that away &mdash; it must <em>learn</em> those regularities from data, which makes it <span class="sk">data-hungry</span> (plain ViT only beats strong CNNs after pre-training on <span class="mono">~300M</span> images like JFT-300M; on ImageNet-alone it underperforms), later fixed by heavy augmentation + distillation (DeiT). Self-attention is <span class="recomp">O(N&sup2;)</span> in the token count, so the <strong>patch size is the key knob</strong>: smaller patches &rarr; more tokens &rarr; finer detail but a quadratic blow-up in compute. Below: split a live image into a patch grid (a slider sets patch size &rarr; token count &amp; sequence length), watch a patch become a flattened vector &rarr; embedded token &rarr; <span class="vio">+ positional embedding</span>, and click any patch to see a simplified <strong>attention</strong> map of which patches it looks at &mdash; all computed in the browser.</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== LOOK ===================== -->
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-6 lg:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">Turn an image into a <span class="kept">sequence of patch-tokens</span>, add <span class="vio">positions</span>, and let every patch <span class="sk">attend to every other</span>.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto text-center">Three live panels. <b>(1) Patchify:</b> the image is cut into a grid of fixed patches &mdash; drag the <b>patch-size</b> slider and watch the <span class="kept">token count</span> and <span class="mono">sequence length&nbsp;=&nbsp;N+1</span> (the +1 is <span class="mono">[CLS]</span>) change, along with the <span class="recomp">O(N&sup2;)</span> attention cost. <b>(2) Patch &rarr; token:</b> click a patch and watch it get flattened, <b>linearly projected</b> to a <span class="mono">D</span>-dim token, and have a <span class="vio">positional embedding</span> added &mdash; the sequence that goes into the encoder. <b>(3) Attention:</b> click any patch to see a <em>simplified</em> map of which patches it attends to, switch heads, or view what the <span class="mono">[CLS]</span> token looks at.</p>
+
+      <!-- ============ PANEL 1 : PATCHIFY ============ -->
+      <div class="bg-white rounded-xl border-2 border-rose-200 p-4 mb-4">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+          <div class="text-sm font-bold text-slate-800">1 &middot; Patchify &mdash; an image is a grid of fixed <span class="mono">P&times;P</span> patches</div>
+          <div class="text-[11px] text-slate-400">click a patch to select it &middot; base image <span class="mono">224&times;224</span></div>
+        </div>
+        <p class="text-[12px] text-slate-500 mb-3">A ViT never sees a whole image &mdash; it sees a <b>sequence of non-overlapping patches</b>. With a <span class="mono">224&times;224</span> image and patch size <span class="mono">P</span>, you get a <span class="mono">(224/P)&times;(224/P)</span> grid of <span class="mono">N</span> patches, then prepend a <span class="mono">[CLS]</span> token for a sequence of <span class="mono">L = N+1</span> tokens. Smaller patches capture finer detail but explode the token count &mdash; and self-attention is <span class="recomp">O(L&sup2;)</span>, so halving <span class="mono">P</span> roughly <b>16&times;</b>s the attention cost.</p>
+
+        <div class="grid lg:grid-cols-[430px_1fr] gap-5">
+          <div>
+            <div class="imgwrap"><canvas id="imgC"></canvas></div>
+            <div class="text-[11px] text-slate-400 mt-2 text-center">The grid divides the image into <span class="mono" id="p1_grid">14&times;14</span> patches. Each becomes one token.</div>
+          </div>
+          <div>
+            <div class="bg-slate-50 rounded-xl border border-slate-200 p-3 mb-3">
+              <div class="ctrl">
+                <label>patch size <span class="mono">P</span> &nbsp;<span class="text-slate-400 font-normal">(pixels per side)</span><span class="sk stat mono" id="v_patch">16&times;16</span></label>
+                <input type="range" id="s_patch" min="0" max="5" step="1" value="2">
+                <div class="flex gap-2 flex-wrap mt-1" id="patchBtns">
+                  <button class="preset-btn" data-i="0">8</button>
+                  <button class="preset-btn" data-i="1">14</button>
+                  <button class="preset-btn on" data-i="2">16 · ViT-B/16</button>
+                  <button class="preset-btn" data-i="3">28</button>
+                  <button class="preset-btn" data-i="4">32 · ViT-B/32</button>
+                  <button class="preset-btn" data-i="5">56</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
+              <div class="statcard"><div class="lab">patch size</div><div class="bignum text-2xl text-slate-800 mt-1" id="m_patch">16&times;16</div></div>
+              <div class="statcard"><div class="lab">grid</div><div class="bignum text-2xl text-slate-800 mt-1" id="m_grid">14&times;14</div></div>
+              <div class="statcard" style="border-color:#6ee7b7"><div class="lab" style="color:#059669">tokens N</div><div class="bignum text-2xl kept mt-1" id="m_tokens">196</div></div>
+              <div class="statcard" style="border-color:#fda4af"><div class="lab" style="color:#be123c">sequence L = N+1</div><div class="bignum text-2xl sk mt-1" id="m_seq">197</div></div>
+              <div class="statcard"><div class="lab">patch vector P&sup2;&middot;3</div><div class="bignum text-2xl text-slate-800 mt-1" id="m_pvec">768</div></div>
+              <div class="statcard"><div class="lab">embed dim D</div><div class="bignum text-2xl text-slate-800 mt-1">768</div></div>
+            </div>
+
+            <div class="bg-white rounded-xl border border-slate-200 p-3">
+              <div class="text-[11px] uppercase font-bold text-amber-600 tracking-wider mb-1">Attention cost &mdash; every token attends to every token</div>
+              <div class="exbar-track" style="height:26px;border-radius:9px;overflow:hidden;display:flex;background:#f1f5f9;border:1px solid #e2e8f0">
+                <div id="costBar" style="height:100%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;white-space:nowrap;background:linear-gradient(90deg,#d97706,#f59e0b);flex-basis:14%;transition:flex-basis .25s">&mdash;</div>
+              </div>
+              <div class="text-[11px] text-slate-500 mt-1" id="cost_lbl">&mdash;</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ PANEL 2 : PATCH -> TOKEN ============ -->
+      <div class="bg-white rounded-xl border-2 border-emerald-200 p-4 mb-4">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+          <div class="text-sm font-bold text-slate-800">2 &middot; Patch &rarr; <span class="kept">token</span> &rarr; <span class="vio">+ positional embedding</span></div>
+          <div class="text-[11px] text-slate-400">selected patch <span class="mono" id="p2_coord">(7, 7)</span> · token <span class="mono" id="p2_idx">#98</span></div>
+        </div>
+        <p class="text-[12px] text-slate-500 mb-3">One patch, all the way to a token. <b>Flatten</b> the patch&rsquo;s <span class="mono" id="p2_flatdim">16&middot;16&middot;3 = 768</span> pixel values into a vector, run it through a single <b>linear layer</b> (the shared <span class="mono">D&times;(P&sup2;&middot;3)</span> patch-embedding matrix) to get a <span class="kept">D-dim token</span>, then <b>add a <span class="vio">positional embedding</span></b> for this patch&rsquo;s slot so order isn&rsquo;t lost. That sum is what enters the encoder. (Strips show 64 of the 768 dims; blue = negative, red = positive.)</p>
+
+        <div class="grid lg:grid-cols-[150px_1fr] gap-5 items-center">
+          <div class="text-center">
+            <div style="width:120px;height:120px;margin:0 auto;border-radius:10px;overflow:hidden;border:2px solid #f43f5e"><canvas id="patchC" width="120" height="120" style="width:120px;height:120px;image-rendering:pixelated"></canvas></div>
+            <div class="text-[11px] text-slate-400 mt-2">the selected patch<br><span class="mono" id="p2_px">16&times;16&times;3</span> pixels</div>
+          </div>
+          <div class="space-y-3">
+            <div>
+              <div class="text-[11px] font-bold text-slate-500 mb-1">1 &middot; flatten &rarr; vector of <span class="mono" id="p2_flatdim2">768</span> numbers</div>
+              <div class="stripbox"><canvas id="flatC" width="256" height="26"></canvas></div>
+            </div>
+            <div>
+              <div class="text-[11px] font-bold text-emerald-600 mb-1">2 &middot; linear projection <span class="mono">W&middot;x</span> &rarr; token (D = 768)</div>
+              <div class="stripbox"><canvas id="tokC" width="256" height="26"></canvas></div>
+            </div>
+            <div>
+              <div class="text-[11px] font-bold vio mb-1">3 &middot; + positional embedding (slot <span class="mono" id="p2_slot">98</span>)</div>
+              <div class="stripbox"><canvas id="posC" width="256" height="26"></canvas></div>
+            </div>
+            <div>
+              <div class="text-[11px] font-bold text-slate-800 mb-1">= token fed to the transformer encoder</div>
+              <div class="stripbox" style="border-color:#0f172a"><canvas id="sumC" width="256" height="26"></canvas></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-4">
+          <div class="text-[11px] uppercase font-bold text-slate-500 tracking-wider mb-1">The full input sequence &mdash; <span class="mono clscell px-1 rounded">[CLS]</span> then every patch, coloured by its content (selected patch outlined)</div>
+          <div class="stripbox" style="height:34px"><canvas id="seqC" width="720" height="34" style="height:34px"></canvas></div>
+          <div class="text-[11px] text-slate-500 mt-1" id="seq_lbl">&mdash;</div>
+        </div>
+      </div>
+
+      <!-- ============ PANEL 3 : ATTENTION ============ -->
+      <div class="bg-white rounded-xl border-2 border-violet-200 p-4 mb-4">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+          <div class="text-sm font-bold text-slate-800">3 &middot; <span class="vio">Attention</span> &mdash; which patches does this one look at?</div>
+          <div class="flex gap-2 items-center flex-wrap">
+            <span class="text-[11px] text-slate-400">head:</span>
+            <button class="headbtn on" data-h="0">content</button>
+            <button class="headbtn" data-h="1">local</button>
+            <button class="headbtn" data-h="2">salient</button>
+            <button class="headbtn clsbtn" id="clsBtn">[CLS]</button>
+          </div>
+        </div>
+        <p class="text-[12px] text-slate-500 mb-3"><b>Click any patch</b> (here or in panel 1) to make it the <span class="vio">query</span>; brightness shows how much it attends to each other patch. Real ViT heads are <em>learned</em>; these three are illustrative &mdash; <b>content</b> attends to patches of similar colour, <b>local</b> to nearby patches, <b>salient</b> to high-contrast (edge) patches. The <b><span class="mono">[CLS]</span></b> view shows what the classification token pools from &mdash; the patches that decide the label. Weights are a real softmax and sum to 1.</p>
+
+        <div class="grid lg:grid-cols-[430px_1fr] gap-5">
+          <div>
+            <div class="imgwrap" style="border-color:#0b1220;background:#0b1220"><canvas id="attC"></canvas></div>
+            <div class="text-[11px] text-slate-400 mt-2 text-center" id="att_mode">query patch attention (content head)</div>
+          </div>
+          <div class="space-y-3">
+            <div id="attVerdict" class="rounded-xl p-4 text-center" style="background:#2e1065">
+              <div class="text-[11px] uppercase font-bold tracking-wider" style="color:#c4b5fd">attention entropy (how spread out)</div>
+              <div id="a_entropy" class="text-3xl font-black metric text-white mt-1">&mdash;</div>
+              <div id="a_entropysub" class="pill mt-1" style="background:#4c1d95;color:#c4b5fd">&mdash;</div>
+            </div>
+            <div class="bg-white rounded-xl border border-slate-200 p-4">
+              <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-2">Top patches attended to</div>
+              <div id="topList" class="space-y-1"></div>
+            </div>
+            <div class="bg-white rounded-xl border border-slate-200 p-4">
+              <div class="text-xs uppercase font-bold text-slate-500 tracking-wider mb-1">Reading it</div>
+              <div id="a_note" class="text-sm text-slate-600">&mdash;</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-sm text-slate-600">
+        <b class="text-slate-800">What to try:</b> (1) In <b>panel 1</b>, drag the patch slider from <span class="mono">56</span> down to <span class="mono">8</span>: the grid goes from <span class="mono">4&times;4</span> (16 tokens) to <span class="mono">28&times;28</span> (784 tokens) and the <span class="kept">sequence length</span> and <span class="recomp">O(L&sup2;)</span> cost bar shoot up &mdash; that quadratic wall is why ViTs use <span class="mono">16&times;16</span>, not per-pixel. (2) Note <span class="mono">P=16</span> is exactly <b>ViT-B/16</b> (196 patches, seq 197) and <span class="mono">P=32</span> is <b>ViT-B/32</b> &mdash; the &ldquo;/16&rdquo; in the name <em>is</em> the patch size. (3) In <b>panel 2</b>, click patches in different regions (sky vs house vs tree) and watch the <span class="kept">token strip</span> change while the <span class="vio">positional strip</span> depends only on the slot &mdash; move to an adjacent patch and only the position part shifts. (4) In <b>panel 3</b>, click a sky patch on the <b>content</b> head: it lights up all the <em>other</em> sky patches even far away &mdash; a global receptive field a shallow CNN can&rsquo;t reach. (5) Switch to the <b>local</b> head: attention collapses to the neighbourhood (that&rsquo;s the locality a conv hard-codes but ViT must learn). (6) Hit <span class="mono">[CLS]</span>: the classifier token concentrates on the high-contrast object edges, not the flat background.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== UNDERSTAND ===================== -->
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">From &ldquo;an image is 16&times;16 words&rdquo; to a full classifier</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BUILD ===================== -->
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">A Vision Transformer is startlingly little code &mdash; it&rsquo;s a <em>standard</em> transformer encoder with a patch-embedding front-end. We&rsquo;ll build it piece by piece: patch embedding as a strided conv, the <code>[CLS]</code> token and positional embeddings, one encoder block (pre-norm MHSA + MLP), the classification head, and finally the whole <code>forward</code> &mdash; the ViT-B/16 config from the paper.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Patch embedding = a strided convolution</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Splitting into patches and linearly projecting each one is <em>exactly</em> a <code>Conv2d</code> with <code>kernel_size = stride = P</code>: each kernel position covers one non-overlapping patch and outputs a <code>D</code>-vector. No loops needed &mdash; one conv turns <span class="mono">(B,3,224,224)</span> into <span class="mono">(B,D,14,14)</span>.</p>
+        <div class="relative"><pre>import torch, torch.nn as nn
+
+class PatchEmbed(nn.Module):
+    def __init__(self, img=224, P=16, in_ch=3, D=768):
+        super().__init__()
+        self.n_patches = (img // P) ** 2          # 14*14 = 196
+        # kernel = stride = P  ->  one D-vector per PxP patch
+        self.proj = nn.Conv2d(in_ch, D, kernel_size=P, stride=P)
+
+    def forward(self, x):                          # x: (B, 3, 224, 224)
+        x = self.proj(x)                           # (B, D, 14, 14)
+        x = x.flatten(2).transpose(1, 2)           # (B, 196, D)  tokens
+        return x</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Prepend the <code>[CLS]</code> token + add positional embeddings</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A single learnable <code>[CLS]</code> vector is prepended to the 196 patch tokens (its output becomes the image summary). Then a learnable positional embedding &mdash; one per slot, including <code>[CLS]</code> &mdash; is <em>added</em>, because self-attention is permutation-invariant and would otherwise not know a patch&rsquo;s location.</p>
+        <div class="relative"><pre>self.cls = nn.Parameter(torch.zeros(1, 1, D))          # 1 learnable token
+self.pos = nn.Parameter(torch.zeros(1, 1 + n_patches, D))  # learned positions
+
+def add_tokens(self, x):                    # x: (B, 196, D)
+    B = x.shape[0]
+    cls = self.cls.expand(B, -1, -1)        # (B, 1, D)
+    x = torch.cat([cls, x], dim=1)          # (B, 197, D)  <- [CLS] + patches
+    x = x + self.pos                        # add position to every token
+    return x</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Multi-head self-attention over the patches</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Identical to the language transformer (Day 30). Project tokens to Q, K, V; every token attends to every other via scaled dot-product softmax; concat the heads and project back. This is the <em>only</em> place patches exchange information &mdash; and they do it globally, all-to-all, from the first layer.</p>
+        <div class="relative"><pre>class MHSA(nn.Module):
+    def __init__(self, D=768, heads=12):
+        super().__init__()
+        self.h, self.dh = heads, D // heads
+        self.qkv = nn.Linear(D, 3 * D)
+        self.out = nn.Linear(D, D)
+
+    def forward(self, x):                       # (B, L, D)
+        B, L, D = x.shape
+        qkv = self.qkv(x).reshape(B, L, 3, self.h, self.dh).permute(2,0,3,1,4)
+        q, k, v = qkv[0], qkv[1], qkv[2]        # (B, h, L, dh)
+        att = (q @ k.transpose(-2,-1)) / self.dh**0.5   # (B, h, L, L)
+        att = att.softmax(dim=-1)               # every token over every token
+        x = (att @ v).transpose(1,2).reshape(B, L, D)
+        return self.out(x)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">One encoder block &mdash; pre-norm, residual, MLP</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The standard block: <code>LayerNorm &rarr; attention &rarr; +residual</code>, then <code>LayerNorm &rarr; MLP(GELU) &rarr; +residual</code>. ViT uses <b>pre-norm</b> (LN before each sub-layer) for stable deep training. Stack 12 of these for ViT-Base. Nothing here is vision-specific &mdash; it&rsquo;s the same block as GPT/BERT.</p>
+        <div class="relative"><pre>class Block(nn.Module):
+    def __init__(self, D=768, heads=12, mlp=4):
+        super().__init__()
+        self.n1, self.n2 = nn.LayerNorm(D), nn.LayerNorm(D)
+        self.attn = MHSA(D, heads)
+        self.mlp = nn.Sequential(
+            nn.Linear(D, mlp*D), nn.GELU(), nn.Linear(mlp*D, D))
+
+    def forward(self, x):
+        x = x + self.attn(self.n1(x))     # pre-norm attention + residual
+        x = x + self.mlp(self.n2(x))      # pre-norm MLP + residual
+        return x</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">The whole ViT &mdash; classify from <code>[CLS]</code></h3></div>
+        <p class="text-sm text-slate-600 mb-3">Assemble: patch-embed &rarr; add <code>[CLS]</code> + positions &rarr; 12 blocks &rarr; final LayerNorm &rarr; take <b>only the <code>[CLS]</code> token&rsquo;s</b> output &rarr; a linear head to class logits. That single token, refined by attending to all patches, carries the whole-image decision.</p>
+        <div class="relative"><pre>class ViT(nn.Module):
+    def __init__(self, img=224, P=16, D=768, depth=12, heads=12, classes=1000):
+        super().__init__()
+        self.patch = PatchEmbed(img, P, 3, D)
+        n = self.patch.n_patches
+        self.cls = nn.Parameter(torch.zeros(1, 1, D))
+        self.pos = nn.Parameter(torch.zeros(1, 1 + n, D))
+        self.blocks = nn.ModuleList([Block(D, heads) for _ in range(depth)])
+        self.norm = nn.LayerNorm(D)
+        self.head = nn.Linear(D, classes)
+
+    def forward(self, x):
+        x = self.patch(x)                          # (B, 196, D)
+        cls = self.cls.expand(x.shape[0], -1, -1)
+        x = torch.cat([cls, x], 1) + self.pos      # (B, 197, D)
+        for blk in self.blocks: x = blk(x)
+        x = self.norm(x)
+        return self.head(x[:, 0])                  # <- [CLS] token only</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Run it &mdash; and the data-hungriness caveat</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A forward pass is one line. But training matters: with <b>no</b> convolutional inductive bias, plain ViT needs either <b>huge pre-training</b> (JFT-300M &rarr; then fine-tune) or, on ImageNet-scale data, heavy augmentation + regularization + distillation (the <b>DeiT</b> recipe) to match a good CNN. This is the single most important practical fact about ViT.</p>
+        <div class="relative"><pre>model = ViT(img=224, P=16, D=768, depth=12, heads=12, classes=1000)
+x = torch.randn(4, 3, 224, 224)          # a batch of 4 images
+logits = model(x)                        # (4, 1000)  -> class scores
+
+# ViT-B/16: ~86M params, 196 patch tokens + 1 [CLS] = 197.
+# NO conv locality bias  ->  data-hungry:
+#   * pre-train on JFT-300M, then fine-tune  (original paper), OR
+#   * DeiT recipe: strong aug + distillation to train on ImageNet alone.
+# Optimizer: AdamW, cosine schedule, big weight decay.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 51 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">The <strong>Vision Transformer</strong> applies the language transformer to images by making an image <em>look like a sentence</em>: cut it into fixed <span class="mono">16&times;16</span> patches, <strong>flatten + linearly embed</strong> each into a token (literally a <span class="mono">Conv2d(3,D,16,16)</span>), prepend a learnable <span class="mono">[CLS]</span> token, <strong>add positional embeddings</strong>, and push the <span class="mono">N+1</span> tokens through a <em>standard</em> transformer encoder &mdash; then classify from the <span class="mono">[CLS]</span> output. Because attention is all-to-all, ViT sees globally from layer 1, unlike a CNN&rsquo;s slowly-growing receptive field &mdash; but it also lacks the conv&rsquo;s built-in <strong>locality &amp; translation-equivariance</strong> inductive bias, so it&rsquo;s <span class="sk">data-hungry</span> and only shines with huge pre-training (JFT-300M) or the DeiT augmentation+distillation recipe. The <strong>patch size</strong> is the master knob: smaller patches mean more tokens, finer detail, and an <span class="recomp">O(N&sup2;)</span> compute blow-up. ViT is now the backbone under CLIP, DINO, MAE, SAM and most modern vision. <strong>&#128073; Tomorrow, Day 52:</strong> CLIP &mdash; train an image encoder (a ViT!) and a text encoder together with a contrastive loss so pictures and captions land in one shared space, unlocking zero-shot classification from plain-English labels.</p></div>
+  </div>
+</section>
+
+<script>
+// ---- tab switching ----
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+  if (t.dataset.tab === "look") requestAnimationFrame(() => { render(); });
+});
+</script>
+
+<script>
+// ==================================================================
+//  DAY 51 — VISION TRANSFORMER (ViT).
+//  An image is turned into a SEQUENCE of patch-tokens:
+//    1. split 224x224 into a grid of PxP patches (N = (224/P)^2)
+//    2. flatten each patch (P*P*3 numbers) and LINEARLY PROJECT to D
+//    3. prepend a learnable [CLS] token  ->  sequence length L = N+1
+//    4. ADD positional embeddings (order is otherwise lost)
+//    5. run a standard transformer encoder; classify from [CLS].
+//  No convolutions -> no locality/translation-equivariance bias ->
+//  data-hungry. Self-attention is O(L^2) so patch size is the knob.
+//  Everything below is computed live from a procedurally-drawn image.
+// ==================================================================
+
+// ---------- config ----------
+const IMG = 224;                                  // logical image size
+const PATCH_OPTIONS = [8, 14, 16, 28, 32, 56];    // all divide 224
+const D = 768;                                    // embed dim (ViT-B)
+const STRIP_DIMS = 64;                            // dims shown in the strips
+
+// ---------- state ----------
+let patchIdx = 2;                 // -> P = 16
+let selQ = { fx: 0.5, fy: 0.53 }; // selected patch as a fractional centre
+let head = 0;                     // 0 content, 1 local, 2 salient
+let clsMode = false;
+let PM = null;                    // current {grid, means}
+
+// ---------- PRNG ----------
+function mulberry32(a){
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// ---------- the sample image (procedural scene) ----------
+function drawScene(g, S){
+  // sky
+  const sky = g.createLinearGradient(0, 0, 0, S * 0.64);
+  sky.addColorStop(0, "#38bdf8"); sky.addColorStop(1, "#dbeafe");
+  g.fillStyle = sky; g.fillRect(0, 0, S, S * 0.64);
+  // sun glow + sun
+  g.globalAlpha = 0.45; g.fillStyle = "#fef08a";
+  g.beginPath(); g.arc(S * 0.78, S * 0.22, S * 0.15, 0, 7); g.fill();
+  g.globalAlpha = 1; g.fillStyle = "#fde047";
+  g.beginPath(); g.arc(S * 0.78, S * 0.22, S * 0.085, 0, 7); g.fill();
+  // mountains
+  g.fillStyle = "#a78bfa";
+  g.beginPath(); g.moveTo(0, S * 0.64); g.lineTo(S * 0.30, S * 0.30); g.lineTo(S * 0.58, S * 0.64); g.closePath(); g.fill();
+  g.fillStyle = "#7c3aed";
+  g.beginPath(); g.moveTo(S * 0.42, S * 0.64); g.lineTo(S * 0.70, S * 0.36); g.lineTo(S * 0.99, S * 0.64); g.closePath(); g.fill();
+  // ground
+  g.fillStyle = "#4ade80"; g.fillRect(0, S * 0.64, S, S * 0.36);
+  g.fillStyle = "#16a34a"; g.fillRect(0, S * 0.82, S, S * 0.18);
+  // house
+  g.fillStyle = "#ef4444"; g.fillRect(S * 0.15, S * 0.55, S * 0.20, S * 0.16);      // wall
+  g.fillStyle = "#7f1d1d";
+  g.beginPath(); g.moveTo(S * 0.12, S * 0.55); g.lineTo(S * 0.25, S * 0.44); g.lineTo(S * 0.38, S * 0.55); g.closePath(); g.fill(); // roof
+  g.fillStyle = "#fde68a"; g.fillRect(S * 0.185, S * 0.60, S * 0.05, S * 0.05);     // window
+  g.fillStyle = "#78350f"; g.fillRect(S * 0.285, S * 0.615, S * 0.045, S * 0.095);  // door
+  // tree
+  g.fillStyle = "#7c2d12"; g.fillRect(S * 0.605, S * 0.605, S * 0.03, S * 0.11);
+  g.fillStyle = "#15803d"; g.beginPath(); g.arc(S * 0.62, S * 0.58, S * 0.065, 0, 7); g.fill();
+}
+
+// offscreen 224x224 for exact per-patch stats
+const off = document.createElement("canvas");
+off.width = IMG; off.height = IMG;
+drawScene(off.getContext("2d"), IMG);
+const IMG_DATA = off.getContext("2d").getImageData(0, 0, IMG, IMG).data;
+
+// bright display-resolution scene cache (for fast attention blitting)
+const bright = document.createElement("canvas");
+function ensureBright(S){
+  if (bright.width !== S){ bright.width = S; bright.height = S; drawScene(bright.getContext("2d"), S); }
+}
+
+// ---------- per-patch statistics ----------
+function computePatchMeans(P){
+  const grid = IMG / P;
+  const means = [];
+  for (let ry = 0; ry < grid; ry++){
+    for (let rx = 0; rx < grid; rx++){
+      let r = 0, g = 0, b = 0, r2 = 0, g2 = 0, b2 = 0, n = 0;
+      for (let y = 0; y < P; y++){
+        for (let x = 0; x < P; x++){
+          const px = (((ry * P + y) * IMG) + (rx * P + x)) * 4;
+          const R = IMG_DATA[px], G = IMG_DATA[px + 1], B = IMG_DATA[px + 2];
+          r += R; g += G; b += B; r2 += R * R; g2 += G * G; b2 += B * B; n++;
+        }
+      }
+      const mr = r / n, mg = g / n, mb = b / n;
+      const contrast = Math.max(0, (r2/n - mr*mr) + (g2/n - mg*mg) + (b2/n - mb*mb));
+      means.push({ rx, ry, r: mr, g: mg, b: mb, contrast });
+    }
+  }
+  return { grid, means };
+}
+function selIndex(){
+  const g = PM.grid;
+  const cx = Math.max(0, Math.min(g - 1, Math.floor(selQ.fx * g)));
+  const cy = Math.max(0, Math.min(g - 1, Math.floor(selQ.fy * g)));
+  return cy * g + cx;
+}
+
+// ---------- attention (illustrative, real softmax) ----------
+function softmax(scores){
+  const mx = Math.max.apply(null, scores);
+  const ex = scores.map(s => Math.exp(s - mx));
+  const sum = ex.reduce((a, b) => a + b, 0);
+  return ex.map(e => e / sum);
+}
+function attention(means, grid, qi, h){
+  const q = means[qi];
+  const cmax = 255 * 255 * 3, pmax = grid * grid * 2;
+  const scores = means.map((k, ki) => {
+    const cd = ((q.r-k.r)**2 + (q.g-k.g)**2 + (q.b-k.b)**2) / cmax;   // 0..1 colour dist
+    const pd = ((q.rx-k.rx)**2 + (q.ry-k.ry)**2) / pmax;             // 0..1 pos dist
+    const ct = k.contrast / cmax;                                    // 0..1 contrast
+    if (h === 0) return -cd * 9;                 // content: similar colour
+    if (h === 1) return -pd * 14 - cd * 2;       // local: nearby patches
+    return -cd * 2 + ct * 6 - pd * 0.4;          // salient: high-contrast
+  });
+  return softmax(scores);
+}
+function clsAttention(means){
+  const cmax = 255 * 255 * 3;
+  return softmax(means.map(k => (k.contrast / cmax) * 7));
+}
+function currentWeights(){
+  if (clsMode) return clsAttention(PM.means);
+  return attention(PM.means, PM.grid, selIndex(), head);
+}
+
+// ---------- strips (token / position visualisation) ----------
+function lerp(a, b, t){ return a + (b - a) * t; }
+function heatColor(v){
+  v = Math.max(-1, Math.min(1, v));
+  const lo = [59,130,246], mid = [241,245,249], hi = [244,63,94];
+  let c;
+  if (v < 0){ const t = -v; c = [lerp(mid[0],lo[0],t), lerp(mid[1],lo[1],t), lerp(mid[2],lo[2],t)]; }
+  else      { const t =  v; c = [lerp(mid[0],hi[0],t), lerp(mid[1],hi[1],t), lerp(mid[2],hi[2],t)]; }
+  return "rgb(" + (c[0]|0) + "," + (c[1]|0) + "," + (c[2]|0) + ")";
+}
+function drawStrip(cv, arr){
+  const g = cv.getContext("2d"), W = cv.width, H = cv.height, n = arr.length, cw = W / n;
+  g.clearRect(0, 0, W, H);
+  for (let i = 0; i < n; i++){ g.fillStyle = heatColor(arr[i]); g.fillRect(Math.floor(i*cw), 0, Math.ceil(cw) + 1, H); }
+}
+function normalize(arr){
+  let m = 0; for (const v of arr) m = Math.max(m, Math.abs(v));
+  return m > 0 ? arr.map(v => v / m) : arr;
+}
+// flatten preview: raw pixel values of the patch (normalised to [-1,1])
+function flattenPreview(patch){
+  const arr = [];
+  const rnd = mulberry32(((patch.rx * 73856093) ^ (patch.ry * 19349663)) >>> 0);
+  for (let i = 0; i < STRIP_DIMS; i++){
+    const jitter = (rnd() - 0.5) * 0.25;
+    const ch = i % 3 === 0 ? patch.r : (i % 3 === 1 ? patch.g : patch.b);
+    arr.push((ch / 255 - 0.5) * 2 + jitter);
+  }
+  return arr;
+}
+// linear projection: deterministic pseudo-embedding from patch colour
+function tokenEmbed(patch){
+  const rnd = mulberry32(((Math.round(patch.r)*31 + Math.round(patch.g)*131 + Math.round(patch.b)*911) >>> 0) || 1);
+  const arr = [];
+  for (let i = 0; i < STRIP_DIMS; i++){
+    const w1 = rnd()*2 - 1, w2 = rnd()*2 - 1, w3 = rnd()*2 - 1, bnd = rnd()*0.4 - 0.2;
+    arr.push(w1*(patch.r/255-0.5) + w2*(patch.g/255-0.5) + w3*(patch.b/255-0.5) + bnd);
+  }
+  return normalize(arr);
+}
+// positional embedding: sinusoidal ladder (real ViT learns these; sinusoidal is illustrative)
+function posEmbed(slot){
+  const arr = [];
+  for (let i = 0; i < STRIP_DIMS; i++){
+    const freq = 1 / Math.pow(10000, (2 * Math.floor(i/2)) / STRIP_DIMS);
+    arr.push(i % 2 === 0 ? Math.sin(slot * freq) : Math.cos(slot * freq));
+  }
+  return arr;
+}
+
+// ================= PANEL 1 : patchify =================
+const imgC = document.getElementById("imgC");
+function fitSquare(cv){
+  const R = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 400;
+  const px = Math.round(w * R);
+  if (cv.width !== px){ cv.width = px; cv.height = px; }
+}
+function renderPanel1(){
+  fitSquare(imgC);
+  const g = imgC.getContext("2d"), S = imgC.width;
+  ensureBright(S);
+  g.clearRect(0, 0, S, S);
+  g.drawImage(bright, 0, 0);
+  const grid = PM.grid, cell = S / grid;
+  // grid lines
+  g.strokeStyle = "rgba(15,23,42,0.35)"; g.lineWidth = Math.max(1, S / 500);
+  g.beginPath();
+  for (let i = 1; i < grid; i++){ g.moveTo(i*cell, 0); g.lineTo(i*cell, S); g.moveTo(0, i*cell); g.lineTo(S, i*cell); }
+  g.stroke();
+  // highlight selected patch
+  const qi = selIndex(), q = PM.means[qi];
+  g.strokeStyle = "#f43f5e"; g.lineWidth = Math.max(2.5, S / 130);
+  g.strokeRect(q.rx*cell, q.ry*cell, cell, cell);
+
+  // metrics
+  const P = PATCH_OPTIONS[patchIdx];
+  const N = grid * grid, L = N + 1, pvec = P * P * 3;
+  document.getElementById("v_patch").textContent = P + "×" + P;
+  document.getElementById("m_patch").textContent = P + "×" + P;
+  document.getElementById("m_grid").textContent = grid + "×" + grid;
+  document.getElementById("p1_grid").textContent = grid + "×" + grid;
+  document.getElementById("m_tokens").textContent = N;
+  document.getElementById("m_seq").textContent = L;
+  document.getElementById("m_pvec").textContent = pvec.toLocaleString();
+  // O(L^2) cost bar, relative to the largest (P=8 -> 785)
+  const Lmax = (IMG/PATCH_OPTIONS[0])**2 + 1;
+  const cost = (L * L) / (Lmax * Lmax);
+  const bar = document.getElementById("costBar");
+  bar.style.flexBasis = (Math.max(3, cost * 100)).toFixed(1) + "%";
+  bar.textContent = "L² = " + (L*L).toLocaleString() + " pairs";
+  document.getElementById("cost_lbl").innerHTML =
+    "self-attention compares all <b class='mono'>" + L + "</b> tokens with all <b class='mono'>" + L +
+    "</b> &rarr; <b class='recomp mono'>" + (L*L).toLocaleString() + "</b> attention scores per layer per head. Halving P ≈ 16&times; this cost.";
+}
+
+// ================= PANEL 2 : patch -> token =================
+function renderPanel2(){
+  const P = PATCH_OPTIONS[patchIdx], grid = PM.grid, qi = selIndex(), q = PM.means[qi];
+  // patch zoom
+  const pc = document.getElementById("patchC"), pg = pc.getContext("2d");
+  pg.imageSmoothingEnabled = false;
+  const sx = q.rx * P, sy = q.ry * P;
+  pg.clearRect(0, 0, 120, 120);
+  pg.drawImage(off, sx, sy, P, P, 0, 0, 120, 120);
+  // labels
+  const pvec = P * P * 3;
+  document.getElementById("p2_coord").textContent = "(" + q.rx + ", " + q.ry + ")";
+  document.getElementById("p2_idx").textContent = "#" + (qi + 1);   // +1: after [CLS] at slot 0
+  document.getElementById("p2_slot").textContent = (qi + 1);
+  document.getElementById("p2_px").textContent = P + "×" + P + "×3";
+  document.getElementById("p2_flatdim").textContent = P + "·" + P + "·3 = " + pvec.toLocaleString();
+  document.getElementById("p2_flatdim2").textContent = pvec.toLocaleString();
+  // strips
+  const tok = tokenEmbed(q), pos = normalize(posEmbed(qi + 1));
+  const sum = normalize(tok.map((v, i) => v + pos[i]));
+  drawStrip(document.getElementById("flatC"), flattenPreview(q));
+  drawStrip(document.getElementById("tokC"), tok);
+  drawStrip(document.getElementById("posC"), pos);
+  drawStrip(document.getElementById("sumC"), sum);
+  // sequence band
+  const seq = document.getElementById("seqC");
+  fitStripWidth(seq);
+  const g = seq.getContext("2d"), W = seq.width, H = seq.height;
+  g.clearRect(0, 0, W, H);
+  const N = grid * grid, cells = N + 1, cw = W / cells;
+  // [CLS] cell
+  g.fillStyle = "#0f172a"; g.fillRect(0, 0, Math.ceil(cw) + 1, H);
+  // patch cells in row-major order
+  for (let i = 0; i < N; i++){
+    const m = PM.means[i];
+    g.fillStyle = "rgb(" + (m.r|0) + "," + (m.g|0) + "," + (m.b|0) + ")";
+    g.fillRect(Math.floor((i + 1) * cw), 0, Math.ceil(cw) + 1, H);
+  }
+  // outline selected
+  g.strokeStyle = "#f43f5e"; g.lineWidth = 2;
+  g.strokeRect((qi + 1) * cw, 1, Math.max(3, cw), H - 2);
+  document.getElementById("seq_lbl").innerHTML =
+    "sequence length <b class='sk mono'>L = " + cells + "</b> = 1 [CLS] + <b class='kept mono'>" + N +
+    "</b> patch tokens, each a <b class='mono'>" + D + "</b>-dim vector. This whole strip is the transformer&rsquo;s input.";
+}
+function fitStripWidth(cv){
+  const R = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 720;
+  const px = Math.round(w * R);
+  if (cv.width !== px){ cv.width = px; cv.height = Math.round(34 * R); }
+}
+
+// ================= PANEL 3 : attention =================
+const attC = document.getElementById("attC");
+function renderPanel3(){
+  fitSquare(attC);
+  const g = attC.getContext("2d"), S = attC.width;
+  ensureBright(S);
+  const grid = PM.grid, cell = S / grid;
+  const w = currentWeights(), wmax = Math.max.apply(null, w);
+  // dark base
+  g.clearRect(0, 0, S, S);
+  g.fillStyle = "#0b1220"; g.fillRect(0, 0, S, S);
+  // reveal each patch by its attention weight
+  for (let i = 0; i < PM.means.length; i++){
+    const m = PM.means[i];
+    const a = wmax > 0 ? w[i] / wmax : 0;
+    g.globalAlpha = 0.12 + 0.88 * a;
+    g.drawImage(bright, m.rx*P_px(grid,S), m.ry*P_px(grid,S), cell, cell, m.rx*cell, m.ry*cell, cell, cell);
+  }
+  g.globalAlpha = 1;
+  // outline query patch (not in CLS mode)
+  if (!clsMode){
+    const qi = selIndex(), q = PM.means[qi];
+    g.strokeStyle = "#a78bfa"; g.lineWidth = Math.max(2.5, S / 120);
+    g.strokeRect(q.rx*cell, q.ry*cell, cell, cell);
+    // lines to the top attended patches
+    const cxq = (q.rx + 0.5) * cell, cyq = (q.ry + 0.5) * cell;
+    const order = w.map((v, i) => [v, i]).sort((a, b) => b[0] - a[0]).slice(0, 6);
+    g.strokeStyle = "rgba(196,181,253,0.55)"; g.lineWidth = Math.max(1, S / 400);
+    for (const [, i] of order){
+      if (i === qi) continue;
+      const m = PM.means[i];
+      g.beginPath(); g.moveTo(cxq, cyq); g.lineTo((m.rx+0.5)*cell, (m.ry+0.5)*cell); g.stroke();
+    }
+  }
+  updateAttReadout(w);
+}
+function P_px(grid, S){ return S / grid; }   // bright is drawn at display res, same grid mapping
+
+function updateAttReadout(w){
+  // entropy (nats) normalised to [0,1] by log(L)
+  let H = 0; for (const p of w){ if (p > 0) H -= p * Math.log(p); }
+  const Hn = H / Math.log(w.length);
+  document.getElementById("a_entropy").textContent = (Hn * 100).toFixed(0) + "%";
+  document.getElementById("a_entropysub").textContent = Hn > 0.75 ? "spread out (global)" : (Hn > 0.4 ? "moderate" : "focused (peaky)");
+  document.getElementById("att_mode").textContent = clsMode
+    ? "[CLS] token attention — what the classifier pools"
+    : "query patch attention (" + ["content","local","salient"][head] + " head)";
+  // top list
+  const order = w.map((v, i) => [v, i]).sort((a, b) => b[0] - a[0]).slice(0, 5);
+  const list = document.getElementById("topList");
+  list.innerHTML = "";
+  for (const [v, i] of order){
+    const m = PM.means[i];
+    const rgb = "rgb(" + (m.r|0) + "," + (m.g|0) + "," + (m.b|0) + ")";
+    list.insertAdjacentHTML("beforeend",
+      "<div class='flex items-center gap-2 text-[12px]'>" +
+        "<span class='legend-sym' style='width:14px;height:14px;background:" + rgb + ";border:1px solid #cbd5e1'></span>" +
+        "<span class='mono text-slate-600'>patch (" + m.rx + "," + m.ry + ")</span>" +
+        "<span class='ml-auto mono font-bold vio'>" + (v * 100).toFixed(1) + "%</span></div>");
+  }
+  document.getElementById("a_note").innerHTML = clsMode
+    ? "The <b class='mono'>[CLS]</b> token has no pixels of its own &mdash; it becomes the image summary purely by <b>attending to the patches</b>. Here it concentrates on high-contrast object edges (house, tree, sun), the regions that decide the class, and largely ignores flat sky."
+    : (head === 0
+        ? "The <b>content</b> head pulls in patches of <b>similar colour anywhere</b> in the image &mdash; note how a sky patch reaches other sky patches far away. That instant global reach is what a shallow CNN can&rsquo;t do."
+        : head === 1
+          ? "The <b>local</b> head stays in the <b>neighbourhood</b> &mdash; exactly the locality a convolution hard-codes for free, but which ViT has to <em>learn</em> from data (and only does with enough of it)."
+          : "The <b>salient</b> head is drawn to <b>high-contrast edges</b> &mdash; boundaries carry the most information, so heads like this act like learned edge detectors.");
+}
+
+// ---------- render all ----------
+function render(){
+  PM = computePatchMeans(PATCH_OPTIONS[patchIdx]);
+  renderPanel1();
+  renderPanel2();
+  renderPanel3();
+}
+
+// ---------- controls ----------
+const sPatch = document.getElementById("s_patch");
+function setPatch(i){
+  patchIdx = Math.max(0, Math.min(PATCH_OPTIONS.length - 1, i));
+  sPatch.value = patchIdx;
+  document.querySelectorAll("#patchBtns [data-i]").forEach(b => b.classList.toggle("on", +b.dataset.i === patchIdx));
+  render();
+}
+sPatch.addEventListener("input", e => setPatch(+e.target.value));
+document.querySelectorAll("#patchBtns [data-i]").forEach(b => b.onclick = () => setPatch(+b.dataset.i));
+
+// click to select a patch (shared across panel 1 & 3)
+function pickFrom(cv, e){
+  const rect = cv.getBoundingClientRect();
+  selQ.fx = Math.max(0, Math.min(0.999, (e.clientX - rect.left) / rect.width));
+  selQ.fy = Math.max(0, Math.min(0.999, (e.clientY - rect.top) / rect.height));
+  clsMode = false;
+  document.getElementById("clsBtn").classList.remove("on");
+  renderPanel1(); renderPanel2(); renderPanel3();
+}
+imgC.addEventListener("click", e => pickFrom(imgC, e));
+attC.addEventListener("click", e => pickFrom(attC, e));
+
+// head + CLS controls
+document.querySelectorAll(".headbtn[data-h]").forEach(b => b.onclick = () => {
+  head = +b.dataset.h; clsMode = false;
+  document.querySelectorAll(".headbtn[data-h]").forEach(x => x.classList.toggle("on", x === b));
+  document.getElementById("clsBtn").classList.remove("on");
+  renderPanel3();
+});
+document.getElementById("clsBtn").addEventListener("click", () => {
+  clsMode = !clsMode;
+  document.getElementById("clsBtn").classList.toggle("on", clsMode);
+  if (clsMode) document.querySelectorAll(".headbtn[data-h]").forEach(x => x.classList.remove("on"));
+  else document.querySelectorAll(".headbtn[data-h]").forEach(x => x.classList.toggle("on", +x.dataset.h === head));
+  renderPanel3();
+});
+
+window.addEventListener("resize", () => { if (!document.getElementById("look").classList.contains("hidden")) render(); });
+
+// ---------- go ----------
+setPatch(2);
+</script>
+
+<script>
+// ===================== UNDERSTAND — 10 steps =====================
+const STEPS = [
+ { title:"1. The one idea: an image is a sequence of patches",
+   why:"Transformers were built for sequences of word-tokens. ViT's whole trick is to make an image look like a sentence: chop the H×W image into a grid of non-overlapping P×P patches and treat each patch as a 'word'. A 224×224 image at P=16 becomes 14×14 = 196 patch-tokens — that's the paper's title, 'An Image is Worth 16×16 Words'. Everything after this is a standard NLP transformer.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">224×224 image  ÷  16×16 patches<br>→ 14×14 = <b>196 patch-tokens</b><br><br>"an image is worth 16×16 words"<br>→ feed a plain transformer, like a sentence</div>`,
+   code:"# an image -> a sequence of patch 'words'\n# 224x224, patch P=16  ->  (224/16)^2 = 196 patches\n# each patch is one token; then it's a normal transformer" },
+ { title:"2. Patchify — split into non-overlapping patches",
+   why:"With patch size P, the H×W image is tiled into (H/P)×(W/P) patches, no overlap. This is the only image-specific step. Smaller P → more, finer patches (more detail, more tokens); larger P → fewer, coarser patches (cheaper). The number of patches N = (H/P)·(W/P) directly sets the sequence length the transformer must process.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">N = (H/P) × (W/P)  patches<br><br>P=16 → 196 tokens   (ViT-B/16)<br>P=32 → 49  tokens   (ViT-B/32)<br>P=8  → 784 tokens   (fine, but O(N²) costly)</div>`,
+   code:"# non-overlapping tiling\npatches = image.unfold(2, P, P).unfold(3, P, P)\n# -> N = (H/P)*(W/P) patches, each P x P x C" },
+ { title:"3. Linear patch embedding — the image 'tokenizer'",
+   why:"Each P×P×3 patch is flattened to a vector of P²·3 = 768 numbers and multiplied by ONE shared matrix (D × P²·3) to become a D-dim token. That's the learned 'patch embedding'. Implemented efficiently it's just a Conv2d(3, D, kernel=P, stride=P): each kernel position covers exactly one patch and outputs its D-vector — so 'patchify + linear-embed' is literally a single strided convolution.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">patch (16×16×3) → flatten → 768 numbers<br>× W (D × 768) → <b>D-dim token</b><br><br>≡ Conv2d(3, D, kernel=16, stride=16)<br>one conv = patchify + embed</div>`,
+   code:"# flatten + linear == strided conv\nproj = nn.Conv2d(3, D, kernel_size=P, stride=P)\ntokens = proj(x).flatten(2).transpose(1,2)  # (B, N, D)" },
+ { title:"4. The [CLS] token — a slot for the answer",
+   why:"Borrowed from BERT. A single EXTRA learnable vector is prepended to the N patch tokens, so the sequence length becomes N+1. It carries no pixels; its job is to gather information from all patches through attention, and its FINAL-layer output is the whole-image representation the classifier reads. (Alternative: mean-pool all patch tokens — also works; the original ViT uses [CLS].)",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">[CLS] · patch₁ · patch₂ · … · patch₁₉₆<br>└── seq length L = N + 1 = 197<br><br>[CLS] attends to all patches → its output<br>= image summary → goes to the classifier</div>`,
+   code:"cls = nn.Parameter(torch.zeros(1, 1, D))\nx = torch.cat([cls.expand(B,-1,-1), tokens], dim=1)\n# sequence length is now N+1  (extra 'summary' slot)" },
+ { title:"5. Positional embeddings — put the order back",
+   why:"Self-attention is permutation-invariant: shuffle the patches and it gives the same output. But position matters (sky is up, ground is down). So a learnable positional embedding — one vector per slot, including [CLS] — is ADDED to each token. Without it, ViT can't tell where a patch was and accuracy collapses. (ViT learns these 1-D position vectors; they end up encoding a 2-D grid layout.)",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">attention is order-blind → add positions<br><br>token_i  ←  token_i  +  pos_i<br>pos: (N+1) learnable vectors, one per slot<br><br>remove it → the grid becomes a bag → acc drops</div>`,
+   code:"pos = nn.Parameter(torch.zeros(1, N+1, D))  # learned\nx = x + pos    # add position to every token (incl. [CLS])\n# without this, patches are an unordered set" },
+ { title:"6. The transformer encoder — completely standard",
+   why:"Now it's the exact block from language models (Days 12/13/30): L× of [ LayerNorm → multi-head self-attention → residual ] then [ LayerNorm → MLP(GELU) → residual ], pre-norm. Every token attends to every other token, so from the very first layer each patch has a GLOBAL receptive field — unlike a CNN, which only sees far-apart pixels after many layers. Nothing here is vision-specific.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">×L blocks (ViT-B: L=12, 12 heads):<br>x += MHSA(LN(x))     ← all-to-all attention<br>x += MLP(LN(x))      ← per-token GELU MLP<br><br>global receptive field from layer 1</div>`,
+   code:"for blk in blocks:               # 12 identical blocks\n    x = x + attn(norm1(x))       # global self-attention\n    x = x + mlp(norm2(x))        # GELU MLP\n# identical to a GPT/BERT encoder stack" },
+ { title:"7. Classification head — read the [CLS] output",
+   why:"After the last block and a final LayerNorm, take ONLY the [CLS] token's output vector (the first position) and pass it through a single linear layer to class logits. That one D-dim vector, refined by 12 layers of attending to every patch, is the entire image's decision. Train end-to-end with cross-entropy — the [CLS] representation and all embeddings are learned jointly.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">x = encoder(x)          # (B, N+1, D)<br>summary = LN(x)[:, 0]   # the [CLS] output<br>logits = Linear(D, classes)(summary)<br><br>softmax + cross-entropy → train it all</div>`,
+   code:"x = norm(encoder(x))         # (B, N+1, D)\ncls_out = x[:, 0]            # take the [CLS] token\nlogits = head(cls_out)      # (B, num_classes)" },
+ { title:"8. ViT vs CNN — the inductive-bias trade",
+   why:"A convolution BAKES IN two priors for free: locality (nearby pixels interact) and translation-equivariance (a feature is the same wherever it appears) via weight-sharing. ViT has almost NONE of this — only the patch cut and position embeddings are mild spatial hints; it must LEARN locality and translation from data. That's more flexible (it can model long-range relations early) but removes the head start a CNN gets.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">CNN: locality + translation-equivariance BUILT IN<br>      → strong prior, learns from little data<br><br>ViT: almost no spatial prior → must LEARN it<br>      → flexible + global, but nothing for free</div>`,
+   code:"# conv: weight-sharing + small kernels\n#   -> locality & translation-equivariance FREE\n# ViT: attention is global + content-based\n#   -> no built-in locality; it must be learned" },
+ { title:"9. The catch: ViT is data-hungry",
+   why:"With little built-in prior, ViT needs a lot of data to learn what a CNN assumes. On ImageNet-1k alone, plain ViT UNDERPERFORMS a comparable ResNet. It only pulls ahead after pre-training on huge datasets (JFT-300M, ~300M images), then fine-tuning. DeiT later showed you can train ViT on ImageNet alone IF you use strong augmentation, regularization, and knowledge distillation from a CNN teacher. More data → ViT keeps scaling past CNNs.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">small data:  CNN &gt; ViT   (prior wins)<br>huge data:   ViT &gt; CNN   (flexibility wins)<br><br>fixes: pre-train on JFT-300M, or<br>DeiT = strong aug + distillation on ImageNet</div>`,
+   code:"# plain ViT + ImageNet-1k only -> worse than ResNet\n# ViT + JFT-300M pretrain -> state of the art\n# DeiT: aug + regularization + distill -> ViT on 1k" },
+ { title:"10. Where ViT is used — the modern vision backbone",
+   why:"ViT is now the default image backbone. It's the image encoder in CLIP (Day 52), the model behind self-supervised DINO and masked-autoencoder MAE pre-training, the encoder in Segment Anything (SAM), and the vision tower in most multimodal LLMs. Variants fix its weaknesses: Swin adds windowed local attention (a CNN-like hierarchy), hybrids use a conv stem, and patch-size is tuned per compute budget.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">ViT powers: CLIP · DINO · MAE · SAM · VLMs<br><br>variants: Swin (windowed/hierarchical),<br>hybrid (conv stem), DeiT (distilled)<br><br>the default vision backbone today</div>`,
+   code:"# ViT is the image encoder inside:\n#   CLIP, DINO/DINOv2, MAE, SAM, most VLMs\n# variants: Swin (local windows), hybrid conv-stem\n# next: CLIP aligns a ViT with a text encoder" },
+];
+</script>
+
+<script>
+// ---- UNDERSTAND engine (shared pattern) ----
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s,i) => { const bn = document.createElement("button");
+  bn.className = "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm";
+  bn.innerHTML = `<div class="font-semibold">${s.title}</div>`; bn.onclick = () => show(i); stepsEl.appendChild(bn); });
+function show(i){ curS = i; const s = STEPS[i];
+  document.getElementById("concept").innerHTML = `<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML = `<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent = s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx) => { bn.className = idx===i
+    ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold"
+    : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick = () => show(Math.max(0, curS-1));
+nextB.onclick = () => show(Math.min(STEPS.length-1, curS+1));
+let tm = null;
+autoB.onclick = () => { if (tm){ clearInterval(tm); tm=null; autoB.textContent="▶ Auto-play"; return; }
+  autoB.textContent = "⏸ Pause"; show(0);
+  tm = setInterval(() => { if (curS >= STEPS.length-1){ clearInterval(tm); tm=null; autoB.textContent="▶ Replay"; return; } show(curS+1); }, 5200); };
+show(0);
+
+function copy(btn){ const pre = btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500); }
+</script>
+</body>
+</html>

@@ -52,6 +52,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 43 — Contrastive Learning (SimCLR / InfoNCE)](https://dev48v.infy.uk/dl/day43-contrastive-learning.html) — `day43-contrastive-learning.html`
 - [DeepLearningFromZero · Day 44 — Gradient Clipping](https://dev48v.infy.uk/dl/day44-gradient-clipping.html) — `day44-gradient-clipping.html`
 - [DeepLearningFromZero · Day 45 — Early Stopping](https://dev48v.infy.uk/dl/day45-early-stopping.html) — `day45-early-stopping.html`
+- [DeepLearningFromZero · Day 51 — Vision Transformer (ViT)](https://dev48v.infy.uk/dl/day51-vision-transformer.html) — `day51-vision-transformer.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk
