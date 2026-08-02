@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 52 — CLIP (Contrastive Language–Image Pre-training)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  .kept { color:#059669; font-weight:700; }
+  .recomp { color:#d97706; font-weight:700; }
+  .vio { color:#7c3aed; font-weight:700; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .preset-btn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:7px 12px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; transition:.12s; }
+  .preset-btn:hover{ border-color:#fda4af; }
+  .preset-btn.on{ background:#f43f5e; border-color:#f43f5e; color:#fff; }
+  .metric{ font-variant-numeric:tabular-nums; }
+  canvas{ display:block; }
+  .kvrow{ display:flex; justify-content:space-between; gap:10px; font-size:12px; padding:3px 0; border-bottom:1px dashed #e2e8f0; }
+  .kvrow span:first-child{ color:#64748b; }
+  .legend-sym{ display:inline-flex; width:16px; height:16px; border-radius:5px; }
+  .btn-solid{ background:#f43f5e; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-dark{ background:#0f172a; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-ghost{ background:#fff; border:1.5px solid #e2e8f0; color:#475569; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .bignum{ font-variant-numeric:tabular-nums; font-weight:900; line-height:1; }
+  .statcard{ border-radius:12px; border:1.5px solid #e2e8f0; background:#fff; padding:10px 12px; text-align:center; }
+  .statcard .lab{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; font-weight:800; color:#94a3b8; }
+  /* CLIP-specific */
+  .simcell{ display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; font-variant-numeric:tabular-nums; border-radius:6px; aspect-ratio:1/1; min-height:34px; cursor:default; transition:background .25s, outline .15s; }
+  .simcell.diag{ outline:3px solid #0f172a; outline-offset:-3px; }
+  .emojihead{ display:flex; align-items:center; justify-content:center; font-size:22px; }
+  .thumbbtn{ font-size:26px; width:54px; height:54px; border-radius:13px; border:2px solid #e2e8f0; background:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:.12s; }
+  .thumbbtn:hover{ border-color:#fda4af; }
+  .thumbbtn.on{ border-color:#f43f5e; background:#fff1f2; box-shadow:0 0 0 3px rgba(244,63,94,.15); }
+  .candrow{ display:grid; grid-template-columns:30px 150px 1fr 54px; align-items:center; gap:10px; padding:5px 8px; border-radius:10px; border:1.5px solid transparent; }
+  .candrow.win{ border-color:#f43f5e; background:#fff1f2; }
+  .zbar-track{ height:20px; border-radius:6px; background:#f1f5f9; overflow:hidden; }
+  .zbar{ height:100%; border-radius:6px; background:linear-gradient(90deg,#e11d48,#fb7185); transition:width .3s; }
+  .scatterwrap{ width:100%; height:340px; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .scatterwrap canvas{ width:100%; height:100%; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 52</div>
+      <h1 class="text-xl font-bold">&#128391; CLIP (Contrastive Language&ndash;Image Pre-training) &mdash; instead of training an image classifier on a <em>fixed</em> list of labels, CLIP trains <strong>two encoders at once</strong> &mdash; an <span class="kept">image encoder</span> (a ViT or ResNet) and a <span class="vio">text encoder</span> (a transformer) &mdash; so that a picture and its caption land at the <strong>same point in one shared embedding space</strong>. The training signal is dead simple: take a <strong>batch of N (image, caption) pairs</strong>, embed all N images and all N captions, <span class="mono">L2-normalize</span> every vector, and form the <strong>N&times;N matrix of cosine similarities</strong> between every image and every caption. Exactly N of those <span class="mono">N&sup2;</span> cells are <span class="kept">true pairs</span> &mdash; they sit on the <strong>diagonal</strong> &mdash; and the other <span class="mono">N&sup2;&minus;N</span> are <span class="sk">mismatches</span>. The <strong>contrastive loss</strong> just says: <em>make the diagonal the largest entry in its row and in its column</em> &mdash; pull each image toward its own caption and push it away from every other caption in the batch, symmetrically (a cross-entropy over the rows <b>and</b> over the columns), with a learned <strong>temperature</strong> scaling the similarities before the softmax. No hand-labelled classes at all &mdash; the caption <em>is</em> the supervision, and the web has <span class="mono">~400M</span> such pairs for free. The payoff is <strong>zero-shot classification</strong>: to classify a brand-new image with a set of labels you&rsquo;ve <em>never trained on</em>, just write each label as a sentence &mdash; <span class="mono">&ldquo;a photo of a {cat}&rdquo;</span>, <span class="mono">&ldquo;a photo of a {dog}&rdquo;</span> &mdash; encode those prompts with the text tower, encode the image with the image tower, and pick the <strong>nearest caption</strong>. The same shared space also gives <strong>image&harr;text retrieval</strong> for free, and CLIP&rsquo;s text encoder is what conditions <strong>DALL&middot;E 2 and Stable Diffusion</strong> and powers open-vocabulary detection/segmentation. Below: watch a live batch&rsquo;s images and captions <span class="kept">align in a shared space</span> as you &ldquo;train&rdquo; it, see the <strong>N&times;N similarity matrix</strong> light up its <span class="sk">diagonal</span> while the contrastive loss drops, and run a <strong>zero-shot classifier</strong> &mdash; all computed live in the browser from toy deterministic embeddings.</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== LOOK ===================== -->
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-6 lg:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">Pull each image toward <span class="kept">its own caption</span> and away from <span class="sk">every other</span> &mdash; one shared space, then classify <span class="vio">zero-shot</span>.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto text-center">Three live panels. <b>(1) Shared space:</b> a batch of <span class="mono">6</span> (image, caption) pairs &mdash; drag <b>training</b> or hit <b>&#9654; Train</b> and watch each emoji (the image) snap onto its caption word as the two encoders learn one aligned space. <b>(2) Similarity matrix:</b> the <span class="mono">6&times;6</span> cosine-similarity matrix of every image against every caption &mdash; the contrastive target is to make the <span class="sk">diagonal</span> (true pairs) win its row and column; the <b>loss</b> drops and the diagonal lights up as you train. <b>(3) Zero-shot:</b> pick an image, score it against label prompts <span class="mono">&ldquo;a photo of a&hellip;&rdquo;</span>, and read off the softmax pick &mdash; classification with <b>no classifier trained</b>.</p>
+
+      <!-- ============ PANEL 1 : SHARED SPACE ============ -->
+      <div class="bg-white rounded-xl border-2 border-emerald-200 p-4 mb-4">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+          <div class="text-sm font-bold text-slate-800">1 &middot; Two encoders, <span class="kept">one shared space</span> &mdash; matching pairs pulled together</div>
+          <div class="text-[11px] text-slate-400">emoji = the image &middot; pill = its caption</div>
+        </div>
+        <p class="text-[12px] text-slate-500 mb-3">The <span class="kept">image encoder</span> maps each picture to a vector; the <span class="vio">text encoder</span> maps each caption to a vector; both are <span class="mono">L2-normalized</span> into the <b>same</b> space. Contrastive training moves an image and <em>its</em> caption to the <b>same location</b> while spreading different concepts apart. Untrained, the vectors are random noise &mdash; drag the slider (or press <b>Train</b>) and watch every emoji glide onto its own word.</p>
+
+        <div class="grid lg:grid-cols-[220px_1fr] gap-5">
+          <div>
+            <div class="text-[11px] uppercase font-bold text-slate-500 tracking-wider mb-2">the batch (N = 6 pairs)</div>
+            <div id="batchList" class="space-y-1"></div>
+          </div>
+          <div>
+            <div class="scatterwrap mb-3"><canvas id="spaceC"></canvas></div>
+            <div class="bg-slate-50 rounded-xl border border-slate-200 p-3">
+              <div class="ctrl">
+                <label>training progress &nbsp;<span class="text-slate-400 font-normal">(random&nbsp;&rarr;&nbsp;aligned)</span><span class="kept stat mono" id="v_train">100%</span></label>
+                <input type="range" id="s_train" min="0" max="1" step="0.01" value="1">
+              </div>
+              <div class="flex gap-2 flex-wrap mt-2">
+                <button id="btnTrain" class="btn-solid">&#9654; Train the encoders</button>
+                <button id="btnReset" class="btn-ghost">Reset to untrained</button>
+                <span class="ml-auto flex items-center gap-3 text-[11px] text-slate-500">
+                  <span class="flex items-center gap-1"><span class="legend-sym" style="width:12px;height:12px;border-radius:999px;background:#0f172a"></span> image</span>
+                  <span class="flex items-center gap-1"><span class="legend-sym" style="width:14px;height:12px;border-radius:4px;background:#ede9fe;border:1.5px solid #7c3aed"></span> caption</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ PANEL 2 : SIMILARITY MATRIX ============ -->
+      <div class="bg-white rounded-xl border-2 border-rose-200 p-4 mb-4">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+          <div class="text-sm font-bold text-slate-800">2 &middot; The <span class="sk">N&times;N</span> similarity matrix &mdash; the contrastive loss lives here</div>
+          <div class="text-[11px] text-slate-400">rows = images &middot; columns = captions</div>
+        </div>
+        <p class="text-[12px] text-slate-500 mb-3">Every cell is <span class="mono">cosine(image<sub>i</sub>, caption<sub>j</sub>)</span>. The <span class="sk">boxed diagonal</span> holds the <b>N true pairs</b>; the <span class="mono">N&sup2;&minus;N</span> off-diagonal cells are <b>negatives</b>. The <b>symmetric contrastive loss</b> is a softmax cross-entropy that wants each diagonal cell to be the <b>biggest in its row</b> (image&rarr;caption) <b>and its column</b> (caption&rarr;image), scaled by a <span class="mono">temperature</span>. Train the encoders and watch the diagonal turn hot while the loss falls.</p>
+
+        <div class="grid lg:grid-cols-[1fr_300px] gap-5">
+          <div>
+            <div id="matrixGrid" style="display:grid; gap:4px;"></div>
+            <div class="text-[11px] text-slate-400 mt-2 flex items-center gap-3 flex-wrap">
+              <span class="flex items-center gap-1"><span class="legend-sym" style="background:#3b82f6"></span>&minus;1</span>
+              <span class="flex items-center gap-1"><span class="legend-sym" style="background:#f1f5f9"></span>0</span>
+              <span class="flex items-center gap-1"><span class="legend-sym" style="background:#f43f5e"></span>+1 cosine similarity</span>
+              <span class="ml-auto">boxed = true pair (diagonal target)</span>
+            </div>
+          </div>
+          <div class="space-y-3">
+            <div class="rounded-xl p-4 text-center" style="background:#4c0519">
+              <div class="text-[11px] uppercase font-bold tracking-wider" style="color:#fda4af">symmetric contrastive loss</div>
+              <div id="m_loss" class="text-4xl font-black metric text-white mt-1">&mdash;</div>
+              <div id="m_loss_sub" class="pill mt-1" style="background:#881337;color:#fecdd3">&mdash;</div>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div class="statcard" style="border-color:#6ee7b7"><div class="lab" style="color:#059669">diagonal sim</div><div class="bignum text-2xl kept mt-1" id="m_diag">&mdash;</div></div>
+              <div class="statcard"><div class="lab">off-diag sim</div><div class="bignum text-2xl text-slate-700 mt-1" id="m_off">&mdash;</div></div>
+              <div class="statcard" style="border-color:#fda4af"><div class="lab" style="color:#be123c">img&rarr;txt acc</div><div class="bignum text-2xl sk mt-1" id="m_acc">&mdash;</div></div>
+              <div class="statcard"><div class="lab">temperature &tau;</div><div class="bignum text-2xl text-slate-700 mt-1" id="m_temp">0.10</div></div>
+            </div>
+            <div class="bg-slate-50 rounded-xl border border-slate-200 p-3">
+              <div class="ctrl">
+                <label>temperature <span class="mono">&tau;</span> &nbsp;<span class="text-slate-400 font-normal">(logit scale = 1/&tau;)</span><span class="recomp stat mono" id="v_temp">0.10</span></label>
+                <input type="range" id="s_temp" min="0.02" max="0.6" step="0.01" value="0.1">
+              </div>
+              <div class="text-[11px] text-slate-500 mt-1">Lower &tau; &rarr; sharper softmax &rarr; harder push on negatives. CLIP <em>learns</em> &tau; (clamped) instead of fixing it.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ PANEL 3 : ZERO-SHOT ============ -->
+      <div class="bg-white rounded-xl border-2 border-violet-200 p-4 mb-4">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+          <div class="text-sm font-bold text-slate-800">3 &middot; <span class="vio">Zero-shot</span> classification &mdash; no classifier, just the nearest caption</div>
+          <div class="text-[11px] text-slate-400">image scored against label prompts</div>
+        </div>
+        <p class="text-[12px] text-slate-500 mb-3"><b>Pick an image.</b> Every candidate label is turned into a prompt <span class="mono">&ldquo;a photo of a {label}&rdquo;</span>, encoded by the <span class="vio">text tower</span>, and compared to the image&rsquo;s embedding by cosine similarity; a <span class="mono">softmax</span> (temperature <span class="mono" id="z_temp">0.10</span>) turns the scores into probabilities and the <b>argmax is the prediction</b>. The last two labels (<span class="mono">boat, cake</span>) are <b>never in the training batch</b> &mdash; open-vocabulary, that&rsquo;s the whole point. Train the encoders in panel&nbsp;1 first, then classify.</p>
+
+        <div class="grid lg:grid-cols-[240px_1fr] gap-5">
+          <div>
+            <div class="text-[11px] uppercase font-bold text-slate-500 tracking-wider mb-2">choose the image to classify</div>
+            <div id="thumbs" class="flex gap-2 flex-wrap"></div>
+            <div id="zVerdict" class="rounded-xl p-4 mt-3 text-center" style="background:#2e1065">
+              <div class="text-[11px] uppercase font-bold tracking-wider" style="color:#c4b5fd">prediction</div>
+              <div id="z_pred" class="text-2xl font-black text-white mt-1">&mdash;</div>
+              <div id="z_predprob" class="pill mt-1" style="background:#4c1d95;color:#c4b5fd">&mdash;</div>
+            </div>
+            <div class="text-[11px] text-slate-500 mt-2" id="z_note">&mdash;</div>
+          </div>
+          <div>
+            <div class="text-[11px] uppercase font-bold text-slate-500 tracking-wider mb-2">score against every label prompt</div>
+            <div id="candList" class="space-y-1"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-sm text-slate-600">
+        <b class="text-slate-800">What to try:</b> (1) Hit <b>Reset to untrained</b> in panel 1: the shared space is random noise, the matrix diagonal is no hotter than anything else, the <span class="sk">loss</span> is high (&asymp; <span class="mono">ln&nbsp;N</span>), and zero-shot guesses randomly &mdash; a fresh CLIP knows nothing. (2) Press <b>&#9654; Train</b> and watch all three panels move together: emojis slide onto their captions, the matrix <span class="kept">diagonal</span> turns hot rose while off-diagonals cool to grey, the loss collapses toward 0, and img&rarr;txt accuracy hits 100%. (3) In panel 2 drag <span class="mono">&tau;</span> down: the softmax sharpens, so the same similarities give a lower loss &mdash; temperature sets how hard negatives are pushed. (4) In panel 3, classify the <span class="mono">&#127744; tree</span> or <span class="mono">&#9992; airplane</span>: once trained it nails the right label even though <b>no image classifier was ever trained</b> &mdash; the caption <em>is</em> the class. (5) Notice <span class="mono">boat</span> and <span class="mono">cake</span> are candidates with <b>no image in the batch</b>: CLIP can score any label you can write in words, which is exactly why it&rsquo;s <b>open-vocabulary</b>.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== UNDERSTAND ===================== -->
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">From a caption as supervision to zero-shot vision</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BUILD ===================== -->
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">CLIP is two ordinary encoders glued by one loss. We&rsquo;ll build it piece by piece: two towers projecting to a shared dim, the L2-normalized embeddings, the temperature-scaled cosine-similarity matrix, the <em>symmetric</em> contrastive loss that is the whole idea, a minimal training step, and finally <b>zero-shot classification</b> from plain-English label prompts.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Two encoders that project into one shared space</h3></div>
+        <p class="text-sm text-slate-600 mb-3">An image encoder (a ViT or ResNet) and a text encoder (a transformer) each output their own feature vector, then a small linear <b>projection</b> maps both into the <em>same</em> <code>D</code>-dim embedding space. A single learnable scalar <code>logit_scale</code> stores the temperature as <code>log(1/&tau;)</code>.</p>
+        <div class="relative"><pre>import torch, torch.nn as nn, torch.nn.functional as F
+
+class CLIP(nn.Module):
+    def __init__(self, image_encoder, text_encoder, d_img, d_txt, D=512):
+        super().__init__()
+        self.image_encoder = image_encoder      # e.g. a ViT  -> (B, d_img)
+        self.text_encoder  = text_encoder       # a transformer -> (B, d_txt)
+        self.img_proj = nn.Linear(d_img, D, bias=False)  # into shared space
+        self.txt_proj = nn.Linear(d_txt, D, bias=False)
+        # learned temperature, stored as log(1/tau); init ~ log(1/0.07)
+        self.logit_scale = nn.Parameter(torch.tensor(2.6592))</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Encode a batch &amp; <code>L2-normalize</code> onto the unit sphere</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Embed all <code>N</code> images and all <code>N</code> captions, then normalize every vector to length 1. After normalization a dot product <em>is</em> the cosine similarity, so all vectors live on the unit hypersphere and only their <b>direction</b> matters.</p>
+        <div class="relative"><pre>def encode(self, images, tokens):
+    img = self.img_proj(self.image_encoder(images))   # (N, D)
+    txt = self.txt_proj(self.text_encoder(tokens))    # (N, D)
+    img = F.normalize(img, dim=-1)   # unit vectors -> dot = cosine
+    txt = F.normalize(txt, dim=-1)
+    return img, txt</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">The <code>N&times;N</code> similarity matrix, scaled by temperature</h3></div>
+        <p class="text-sm text-slate-600 mb-3">One matrix multiply gives every image-vs-caption cosine similarity. Multiply by <code>logit_scale.exp()</code> (that&rsquo;s <code>1/&tau;</code>) to turn similarities into logits &mdash; a small &tau; sharpens the softmax and pushes negatives harder. Clamp the scale so it can&rsquo;t explode.</p>
+        <div class="relative"><pre>def logits(self, img, txt):                 # img,txt: (N, D)
+    scale = self.logit_scale.exp().clamp(max=100.0)   # = 1/tau
+    logits_per_image = scale * img @ txt.t()   # (N, N): row i = image i
+    logits_per_text  = logits_per_image.t()    # (N, N): row j = caption j
+    return logits_per_image, logits_per_text</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">The symmetric contrastive loss &mdash; the whole idea</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The correct match for image <code>i</code> is caption <code>i</code>, so the <b>labels are just <code>arange(N)</code></b> &mdash; the diagonal. Cross-entropy over each <b>row</b> makes each image pick its caption (image&rarr;text); cross-entropy over each <b>column</b> makes each caption pick its image (text&rarr;image); average them. That symmetry is the contrastive loss (InfoNCE, both directions) &mdash; every off-diagonal cell in the batch is a negative.</p>
+        <div class="relative"><pre>def clip_loss(self, img, txt):
+    N = img.shape[0]
+    logits_per_image, logits_per_text = self.logits(img, txt)
+    labels = torch.arange(N, device=img.device)   # diagonal = truth
+
+    loss_i2t = F.cross_entropy(logits_per_image, labels)  # each image -> its text
+    loss_t2i = F.cross_entropy(logits_per_text,  labels)  # each text  -> its image
+    return (loss_i2t + loss_t2i) / 2                       # symmetric InfoNCE</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">The training loop &mdash; captions <em>are</em> the labels</h3></div>
+        <p class="text-sm text-slate-600 mb-3">No class annotations anywhere: a batch is just (image, caption) pairs scraped from the web. Bigger batches mean more negatives per step, which is why CLIP trains with <b>very large batches</b> (32k+). That&rsquo;s the entire recipe &mdash; scale it to ~400M pairs and zero-shot emerges.</p>
+        <div class="relative"><pre>opt = torch.optim.AdamW(model.parameters(), lr=5e-4, weight_decay=0.2)
+
+for images, captions in dataloader:          # (image, text) pairs, NO labels
+    tokens = tokenize(captions)
+    img, txt = model.encode(images, tokens)
+    loss = model.clip_loss(img, txt)         # symmetric contrastive
+    opt.zero_grad(); loss.backward(); opt.step()
+    model.logit_scale.data.clamp_(max=4.6052)   # keep 1/tau <= 100
+
+# big batches = more negatives per image = a stronger signal.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Zero-shot classification &mdash; the payoff</h3></div>
+        <p class="text-sm text-slate-600 mb-3">To classify with labels you never trained on: write each label as a prompt, encode the prompts once with the <b>text tower</b> to get a set of &ldquo;class vectors,&rdquo; encode the image with the <b>image tower</b>, and take the <b>nearest</b> caption. No fine-tuning, no new head &mdash; the shared space already lines images up with words.</p>
+        <div class="relative"><pre>@torch.no_grad()
+def zero_shot(model, image, class_names):
+    prompts = [f"a photo of a {c}." for c in class_names]   # prompt engineering
+    txt = F.normalize(model.txt_proj(model.text_encoder(tokenize(prompts))), dim=-1)
+    img = F.normalize(model.img_proj(model.image_encoder(image[None])), dim=-1)
+
+    sims  = (img @ txt.t()).squeeze(0)          # cosine to each class prompt
+    probs = (sims / TEMPERATURE).softmax(dim=-1)
+    return class_names[int(probs.argmax())], probs   # nearest label wins
+
+# class_names can be ANYTHING you can phrase in words -> open-vocabulary.
+# same embeddings also give image<->text retrieval for free.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 52 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2"><strong>CLIP</strong> trains an <span class="kept">image encoder</span> and a <span class="vio">text encoder</span> together so a picture and its caption land at the <strong>same point in one shared embedding space</strong>. Over a batch of <span class="mono">N</span> (image, caption) pairs it builds the <span class="mono">N&times;N</span> cosine-similarity matrix and applies a <strong>symmetric contrastive loss</strong> &mdash; a temperature-scaled softmax cross-entropy over the rows <em>and</em> the columns &mdash; that pulls the <span class="sk">diagonal</span> (true pairs) up and pushes every off-diagonal negative down, using the caption itself as the only label. At scale (~400M web pairs) this unlocks <strong>zero-shot classification</strong>: embed the image, embed label prompts like <span class="mono">&ldquo;a photo of a {label}&rdquo;</span>, and pick the nearest &mdash; no task-specific training, fully open-vocabulary &mdash; plus <strong>image&harr;text retrieval</strong>, and a text encoder that conditions <strong>DALL&middot;E 2 / Stable Diffusion</strong> and drives open-vocab detection &amp; segmentation. <strong>&#128073; Tomorrow, Day 53:</strong> BERT &amp; Masked LM &mdash; bidirectional pre-training that predicts masked-out tokens, the recipe that made transfer learning the default for NLP.</p></div>
+  </div>
+</section>
+
+<script>
+// ---- tab switching ----
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+  if (t.dataset.tab === "look") requestAnimationFrame(() => { render(); });
+});
+</script>
+
+<script>
+// ==================================================================
+//  DAY 52 — CLIP (Contrastive Language-Image Pre-training).
+//  Two encoders (image + text) are trained JOINTLY so a matching
+//  (image, caption) pair lands at the SAME point in one shared space:
+//    1. embed N images + N captions, L2-normalize (dot = cosine)
+//    2. build the N x N cosine-similarity matrix
+//    3. contrastive loss = symmetric softmax cross-entropy pulling the
+//       DIAGONAL (true pairs) up, every off-diagonal negative down,
+//       scaled by a learned TEMPERATURE.
+//  Payoff: ZERO-SHOT classification -> embed the image + label prompts
+//  ("a photo of a {label}"), pick the nearest caption. Open-vocabulary.
+//  Everything below uses toy DETERMINISTIC embeddings so it runs offline.
+// ==================================================================
+
+// ---------- config ----------
+const D = 32;                       // dim of the shared embedding space
+const BATCH = [                     // the training batch: image + caption
+  { label:"cat",      emoji:"🐱" },
+  { label:"dog",      emoji:"🐶" },
+  { label:"pizza",    emoji:"🍕" },
+  { label:"car",      emoji:"🚗" },
+  { label:"tree",     emoji:"🌳" },
+  { label:"airplane", emoji:"✈️" },
+];
+const EXTRA = [                     // label-only concepts (never in the batch)
+  { label:"boat", emoji:"⛵" },
+  { label:"cake", emoji:"🍰" },
+];
+const N = BATCH.length;
+const CANDIDATES = BATCH.concat(EXTRA);   // zero-shot label vocabulary
+
+// ---------- state ----------
+let train = 1.0;        // training progress 0 (random) .. 1 (aligned)
+let temp = 0.10;        // softmax temperature
+let queryIdx = 0;       // which image is being zero-shot classified
+
+// ---------- PRNG + deterministic vectors ----------
+function mulberry32(a){
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function hashStr(s){ let h = 2166136261 >>> 0; for (let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function randn(rnd){ let u=0,v=0; while(u===0)u=rnd(); while(v===0)v=rnd(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+function dot(a,b){ let s=0; for (let i=0;i<a.length;i++) s+=a[i]*b[i]; return s; }
+function normalize(v){ const n = Math.sqrt(dot(v,v)) || 1; return v.map(x => x/n); }
+function vlerp(a,b,t){ return a.map((x,i) => x + (b[i]-x)*t); }
+function unitVec(seed){ const rnd = mulberry32(hashStr(seed)); const v=[]; for (let i=0;i<D;i++) v.push(randn(rnd)); return normalize(v); }
+
+// per-concept: base = the aligned target (shared by both towers when trained);
+// img/txt = the untrained (random) directions of each encoder.
+const VEC = {};
+function ensureVec(label){ if (!VEC[label]) VEC[label] = { base:unitVec("base|"+label), img:unitVec("img|"+label), txt:unitVec("txt|"+label) }; }
+CANDIDATES.forEach(c => ensureVec(c.label));
+// embedding of a concept from one tower at training level t:
+//   untrained -> random tower direction ; trained -> shared 'base' direction
+function embed(label, mod, t){ const v = VEC[label]; return normalize(vlerp(v[mod], v.base, t)); }
+
+// fixed 2-D projection (orthonormal) for the shared-space scatter
+const proj0 = unitVec("proj|0");
+let _p1 = unitVec("proj|1"); { const d = dot(proj0,_p1); _p1 = normalize(_p1.map((x,i)=> x - d*proj0[i])); }
+const proj1 = _p1;
+function project(e){ return [dot(e,proj0), dot(e,proj1)]; }
+
+// ---------- current embeddings (recomputed each render) ----------
+let imgEmb = [], txtEmb = [], S = [];
+function computeAll(){
+  imgEmb = BATCH.map(c => embed(c.label, "img", train));
+  txtEmb = BATCH.map(c => embed(c.label, "txt", train));
+  S = imgEmb.map(iv => txtEmb.map(tv => dot(iv, tv)));   // N x N cosine sims
+}
+
+// ---------- math helpers ----------
+function softmax(scores){
+  const mx = Math.max.apply(null, scores);
+  const ex = scores.map(s => Math.exp(s - mx));
+  const sum = ex.reduce((a,b) => a+b, 0);
+  return ex.map(e => e / sum);
+}
+// symmetric contrastive loss over the N x N matrix at temperature `temp`
+function clipLoss(){
+  let i2t = 0, t2i = 0;
+  for (let i=0;i<N;i++){ const p = softmax(S[i].map(s => s/temp)); i2t += -Math.log(Math.max(p[i], 1e-12)); }
+  for (let j=0;j<N;j++){ const col = S.map(row => row[j]); const p = softmax(col.map(s => s/temp)); t2i += -Math.log(Math.max(p[j], 1e-12)); }
+  return (i2t/N + t2i/N) / 2;
+}
+function i2tAccuracy(){
+  let c = 0;
+  for (let i=0;i<N;i++){ let best=0; for (let j=1;j<N;j++) if (S[i][j] > S[i][best]) best=j; if (best===i) c++; }
+  return c / N;
+}
+
+// ---------- colour ----------
+function lerp(a,b,t){ return a + (b-a)*t; }
+function heatColor(v){
+  v = Math.max(-1, Math.min(1, v));
+  const lo = [59,130,246], mid = [241,245,249], hi = [244,63,94];
+  let c;
+  if (v < 0){ const t = -v; c = [lerp(mid[0],lo[0],t), lerp(mid[1],lo[1],t), lerp(mid[2],lo[2],t)]; }
+  else      { const t =  v; c = [lerp(mid[0],hi[0],t), lerp(mid[1],hi[1],t), lerp(mid[2],hi[2],t)]; }
+  return "rgb(" + (c[0]|0) + "," + (c[1]|0) + "," + (c[2]|0) + ")";
+}
+
+// ================= build static DOM =================
+// panel 1: batch list
+const batchList = document.getElementById("batchList");
+BATCH.forEach((c,i) => {
+  batchList.insertAdjacentHTML("beforeend",
+    "<div class='flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1'>" +
+      "<span style='font-size:22px'>" + c.emoji + "</span>" +
+      "<span class='text-[12px] text-slate-600'>&ldquo;a photo of a <b class='text-slate-800'>" + c.label + "</b>&rdquo;</span>" +
+    "</div>");
+});
+
+// panel 2: matrix grid (headers + cells)
+const matrixGrid = document.getElementById("matrixGrid");
+matrixGrid.style.gridTemplateColumns = "44px repeat(" + N + ", 1fr)";
+const cellEls = [];
+matrixGrid.insertAdjacentHTML("beforeend", "<div></div>");                 // corner
+BATCH.forEach(c => matrixGrid.insertAdjacentHTML("beforeend", "<div class='emojihead' title='caption: " + c.label + "'>" + c.emoji + "</div>"));
+for (let i=0;i<N;i++){
+  matrixGrid.insertAdjacentHTML("beforeend", "<div class='emojihead' title='image: " + BATCH[i].label + "'>" + BATCH[i].emoji + "</div>");
+  cellEls[i] = [];
+  for (let j=0;j<N;j++){
+    const el = document.createElement("div");
+    el.className = "simcell" + (i===j ? " diag" : "");
+    matrixGrid.appendChild(el);
+    cellEls[i][j] = el;
+  }
+}
+
+// panel 3: thumbnails + candidate rows
+const thumbs = document.getElementById("thumbs");
+BATCH.forEach((c,i) => {
+  const b = document.createElement("button");
+  b.className = "thumbbtn" + (i===0 ? " on" : "");
+  b.textContent = c.emoji; b.title = "classify the " + c.label;
+  b.onclick = () => { queryIdx = i; document.querySelectorAll("#thumbs .thumbbtn").forEach((x,k)=>x.classList.toggle("on", k===i)); render(); };
+  thumbs.appendChild(b);
+});
+const candList = document.getElementById("candList");
+const candEls = [];
+CANDIDATES.forEach((c,k) => {
+  const row = document.createElement("div");
+  row.className = "candrow";
+  row.innerHTML =
+    "<span style='font-size:22px'>" + c.emoji + "</span>" +
+    "<span class='text-[12px] text-slate-600 mono'>a photo of a " + c.label + (k>=N ? " <span class=\"text-slate-300\">(unseen)</span>" : "") + "</span>" +
+    "<div class='zbar-track'><div class='zbar' style='width:0%'></div></div>" +
+    "<span class='text-[12px] font-bold metric text-right'></span>";
+  candList.appendChild(row);
+  candEls[k] = { row, bar: row.querySelector(".zbar"), pct: row.querySelector("span:last-child") };
+});
+
+// ================= panel 1 : scatter =================
+function fitCanvas(cv){
+  const R = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 600, h = cv.clientHeight || 340;
+  const pw = Math.round(w*R), ph = Math.round(h*R);
+  if (cv.width !== pw || cv.height !== ph){ cv.width = pw; cv.height = ph; }
+}
+function drawScatter(){
+  const cv = document.getElementById("spaceC");
+  fitCanvas(cv);
+  const g = cv.getContext("2d"), W = cv.width, H = cv.height, R = window.devicePixelRatio || 1;
+  g.clearRect(0,0,W,H);
+  // points
+  const P = [];
+  for (let i=0;i<N;i++){ P.push({ p:project(imgEmb[i]), type:"img", i }); P.push({ p:project(txtEmb[i]), type:"txt", i }); }
+  let minx=Infinity,maxx=-Infinity,miny=Infinity,maxy=-Infinity;
+  P.forEach(o => { minx=Math.min(minx,o.p[0]); maxx=Math.max(maxx,o.p[0]); miny=Math.min(miny,o.p[1]); maxy=Math.max(maxy,o.p[1]); });
+  const pad = 42*R;
+  const sx = v => pad + (v-minx)/((maxx-minx)||1)*(W-2*pad);
+  const sy = v => pad + (v-miny)/((maxy-miny)||1)*(H-2*pad);
+  // connectors between matching image & caption
+  for (let i=0;i<N;i++){
+    const a = project(imgEmb[i]), b = project(txtEmb[i]);
+    g.strokeStyle = "rgba(148,163,184,0.55)"; g.lineWidth = Math.max(1, 1.2*R); g.setLineDash([4*R,3*R]);
+    g.beginPath(); g.moveTo(sx(a[0]), sy(a[1])); g.lineTo(sx(b[0]), sy(b[1])); g.stroke();
+  }
+  g.setLineDash([]);
+  // caption pills
+  g.font = (12*R) + "px -apple-system, sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
+  for (let i=0;i<N;i++){
+    const b = project(txtEmb[i]); const x = sx(b[0]), y = sy(b[1]);
+    const txt = BATCH[i].label; const tw = g.measureText(txt).width;
+    const padx = 6*R, w = tw + 2*padx, h = 18*R;
+    g.fillStyle = "#ede9fe"; g.strokeStyle = "#7c3aed"; g.lineWidth = 1.3*R;
+    roundRect(g, x - w/2, y - h/2, w, h, 5*R); g.fill(); g.stroke();
+    g.fillStyle = "#5b21b6"; g.fillText(txt, x, y);
+  }
+  // image emojis (drawn on top so convergence is visible)
+  g.font = (22*R) + "px serif";
+  for (let i=0;i<N;i++){
+    const a = project(imgEmb[i]); g.fillText(BATCH[i].emoji, sx(a[0]), sy(a[1]) - 10*R);
+  }
+}
+function roundRect(g,x,y,w,h,r){ g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r); g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); }
+
+// ================= panel 2 : matrix + loss =================
+function drawMatrix(){
+  let diagSum=0, offSum=0, offN=0;
+  for (let i=0;i<N;i++){
+    for (let j=0;j<N;j++){
+      const v = S[i][j];
+      const el = cellEls[i][j];
+      el.style.background = heatColor(v);
+      el.style.color = (v > 0.55 || v < -0.55) ? "#fff" : "#0f172a";
+      el.textContent = v.toFixed(2);
+      el.title = "cos(image " + BATCH[i].label + ", caption " + BATCH[j].label + ") = " + v.toFixed(3);
+      if (i===j) diagSum += v; else { offSum += v; offN++; }
+    }
+  }
+  const loss = clipLoss();
+  document.getElementById("m_loss").textContent = loss.toFixed(3);
+  const sub = document.getElementById("m_loss_sub");
+  if (loss < 0.05){ sub.textContent = "≈ solved"; }
+  else if (loss < 0.7){ sub.textContent = "learning…"; }
+  else { sub.textContent = "≈ ln N = " + Math.log(N).toFixed(2) + " (random)"; }
+  document.getElementById("m_diag").textContent = (diagSum/N).toFixed(2);
+  document.getElementById("m_off").textContent = (offSum/offN).toFixed(2);
+  document.getElementById("m_acc").textContent = Math.round(i2tAccuracy()*100) + "%";
+  document.getElementById("m_temp").textContent = temp.toFixed(2);
+}
+
+// ================= panel 3 : zero-shot =================
+function drawZeroShot(){
+  const iv = embed(BATCH[queryIdx].label, "img", train);       // query image embedding
+  const sims = CANDIDATES.map(c => dot(iv, embed(c.label, "txt", train)));
+  const probs = softmax(sims.map(s => s/temp));
+  let best = 0; for (let k=1;k<CANDIDATES.length;k++) if (probs[k] > probs[best]) best = k;
+  CANDIDATES.forEach((c,k) => {
+    candEls[k].bar.style.width = (probs[k]*100).toFixed(1) + "%";
+    candEls[k].pct.textContent = (probs[k]*100).toFixed(1) + "%";
+    candEls[k].pct.style.color = (k===best) ? "#e11d48" : "#94a3b8";
+    candEls[k].row.classList.toggle("win", k===best);
+  });
+  document.getElementById("z_pred").textContent = CANDIDATES[best].emoji + " a photo of a " + CANDIDATES[best].label;
+  document.getElementById("z_predprob").textContent = (probs[best]*100).toFixed(1) + "% confident";
+  document.getElementById("z_temp").textContent = temp.toFixed(2);
+  const correct = (best === queryIdx);
+  const note = document.getElementById("z_note");
+  if (train < 0.15) note.innerHTML = "Untrained: the towers aren't aligned, so the pick is essentially <b>random</b>. Train the encoders in panel&nbsp;1.";
+  else if (correct) note.innerHTML = "Correct &mdash; and note <b>no image classifier was trained</b>. The nearest <em>caption</em> is the label.";
+  else note.innerHTML = "Not yet confident &mdash; keep training (panel&nbsp;1) so the image lands on its caption.";
+}
+
+// ---------- render all ----------
+function render(){
+  computeAll();
+  drawScatter();
+  drawMatrix();
+  drawZeroShot();
+  document.getElementById("v_train").textContent = Math.round(train*100) + "%";
+  document.getElementById("v_temp").textContent = temp.toFixed(2);
+}
+
+// ---------- controls ----------
+const sTrain = document.getElementById("s_train");
+sTrain.addEventListener("input", e => { train = +e.target.value; render(); });
+const sTemp = document.getElementById("s_temp");
+sTemp.addEventListener("input", e => { temp = +e.target.value; render(); });
+
+document.getElementById("btnReset").onclick = () => { train = 0; sTrain.value = 0; render(); };
+
+let trainAnim = null;
+document.getElementById("btnTrain").onclick = () => {
+  if (trainAnim) cancelAnimationFrame(trainAnim);
+  const t0 = performance.now(), dur = 1800;
+  train = 0; sTrain.value = 0;
+  function step(now){
+    const k = Math.min(1, (now - t0)/dur);
+    train = 1 - Math.pow(1 - k, 3);       // ease-out
+    sTrain.value = train;
+    render();
+    if (k < 1) trainAnim = requestAnimationFrame(step); else trainAnim = null;
+  }
+  trainAnim = requestAnimationFrame(step);
+};
+
+window.addEventListener("resize", () => { if (!document.getElementById("look").classList.contains("hidden")) render(); });
+
+// ---------- go ----------
+render();
+</script>
+
+<script>
+// ===================== UNDERSTAND — 10 steps =====================
+const STEPS = [
+ { title:"1. The one idea: put images and text in one shared space",
+   why:"A normal image classifier is locked to a fixed list of classes it was trained on. CLIP breaks that: it trains an image encoder and a text encoder together so that a picture and the sentence describing it map to the SAME point in one shared embedding space. Once images and words live in the same space, you can compare any image to any text — and the label can be anything you can write, not a fixed set.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">image → [image encoder] ─┐<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├─→ ONE shared space<br>caption → [text encoder] ─┘<br><br>a photo and its caption → the <b>same point</b></div>`,
+   code:"# two encoders, one space\nimg = image_encoder(image)   # -> vector\ntxt = text_encoder(caption)  # -> vector in the SAME space\n# train so matching (img, txt) land close together" },
+ { title:"2. Captions are the supervision — no labels needed",
+   why:"CLIP is trained on ~400M (image, caption) pairs scraped from the web (the WIT dataset). Nobody hand-labels classes; the caption that already came with the image IS the training signal. That's why it scales — free supervision — and why it learns an open, natural-language notion of categories instead of a fixed 1000-class list.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">web image + its alt-text caption = one pair<br><br>~400,000,000 pairs, NO class labels<br><br>the caption itself is the 'label'</div>`,
+   code:"# a training example is just:\n#   (image,  'a golden retriever playing in snow')\n# scraped from the web — no annotation step at all" },
+ { title:"3. Encode a batch and L2-normalize",
+   why:"Take a batch of N pairs. Embed all N images and all N captions, then L2-normalize every vector to length 1 so it sits on the unit hypersphere. After normalization a dot product equals the cosine similarity, so only DIRECTION matters — magnitude is thrown away and 'similar' means 'pointing the same way'.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">img_i = normalize(image_encoder(img_i))<br>txt_i = normalize(text_encoder(cap_i))<br><br>‖v‖ = 1  →  dot(a,b) = cos(a,b) ∈ [−1, 1]</div>`,
+   code:"img = F.normalize(image_encoder(images), dim=-1)  # (N, D)\ntxt = F.normalize(text_encoder(tokens),  dim=-1)  # (N, D)\n# unit vectors -> dot product IS cosine similarity" },
+ { title:"4. Build the N×N similarity matrix",
+   why:"One matrix multiply, img @ txt.T, gives an N×N grid: entry (i, j) is the cosine similarity between image i and caption j. The N diagonal entries are the TRUE pairs; the N²−N off-diagonal entries are mismatches. This single matrix is where the entire learning signal comes from.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">S = img @ txt.T          # (N × N)<br><br>S[i][i]  ← true pair   (diagonal, N of them)<br>S[i][j]  ← mismatch    (off-diagonal)<br><br>N positives vs N²−N negatives, for free</div>`,
+   code:"S = img @ txt.t()        # (N, N) cosine similarities\n# S[i][i] = matching pair   (want HIGH)\n# S[i][j] = wrong pair       (want LOW),  i != j" },
+ { title:"5. The contrastive target — diagonal wins every row & column",
+   why:"The goal is simple: for each image, its own caption should be the most similar of all N captions; and for each caption, its own image should be the most similar of all N images. In matrix terms: make each diagonal cell the largest in its row AND its column. That's 'pull the positive together, push the N−1 negatives apart' — done for every item at once.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">row i (image i vs all captions):  argmax = i<br>col j (caption j vs all images):  argmax = j<br><br>↑ pull diagonal up   ↓ push off-diagonal down</div>`,
+   code:"# the correct match for image i is caption i,\n# so the target for every row/column is its index:\nlabels = torch.arange(N)   # the diagonal is the truth" },
+ { title:"6. The symmetric contrastive loss (InfoNCE, both ways)",
+   why:"Treat each row as a classification over N captions with the correct answer on the diagonal → cross-entropy (image→text). Do the same over each column → cross-entropy (text→image). Average the two. That symmetric softmax cross-entropy over the similarity matrix IS the contrastive / InfoNCE loss — every other item in the batch is a negative, so bigger batches give more negatives and a stronger signal.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">loss_i2t = CE(rows(S/τ),    arange(N))<br>loss_t2i = CE(columns(S/τ), arange(N))<br>loss = (loss_i2t + loss_t2i) / 2<br><br>bigger batch = more negatives = harder task</div>`,
+   code:"lg = logit_scale.exp() * img @ txt.t()   # (N, N) logits\nlabels = torch.arange(N)\nloss = (F.cross_entropy(lg, labels) +\n        F.cross_entropy(lg.t(), labels)) / 2" },
+ { title:"7. Temperature — how hard to push the negatives",
+   why:"Before the softmax, similarities are divided by a temperature τ (equivalently multiplied by a logit scale = 1/τ). A small τ sharpens the distribution, so the loss punishes any high off-diagonal similarity harder — it makes the contrast crisper. CLIP doesn't fix τ; it LEARNS it as a parameter (clamped so 1/τ ≤ 100) so the model tunes its own contrast.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">logits = S / τ = S · (1/τ)<br><br>small τ → sharp softmax → hard on negatives<br>large τ → soft softmax → gentle<br><br>τ is LEARNED (clamped), not hand-set</div>`,
+   code:"# stored as a learnable log(1/tau):\nlogit_scale = nn.Parameter(torch.tensor(2.6592))\nlogits = logit_scale.exp().clamp(max=100) * img @ txt.t()" },
+ { title:"8. Zero-shot classification — the payoff",
+   why:"Here's the magic. To classify an image among labels you NEVER trained on, wrap each label in a prompt — 'a photo of a {label}' — and encode those prompts with the text tower to get one vector per class. Encode the image with the image tower. The predicted class is simply the caption with the highest cosine similarity. No fine-tuning, no new classifier head — the shared space already aligns pictures with words.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">prompts = ['a photo of a cat', 'a photo of a dog', …]<br>class_vecs = text_encoder(prompts)   # one per label<br>pred = argmax_c  cos(image_vec, class_vec_c)<br><br>labels can be ANY words → open-vocabulary</div>`,
+   code:"prompts = [f'a photo of a {c}.' for c in classes]\ntxt = normalize(text_encoder(tokenize(prompts)))\nimg = normalize(image_encoder(image[None]))\npred = classes[(img @ txt.t()).argmax()]   # nearest label" },
+ { title:"9. Prompts, retrieval, and robustness",
+   why:"How you phrase the prompt matters — 'a photo of a {label}' beats the bare word, and ensembling many templates ('a blurry photo of a {label}', 'a sculpture of a {label}', …) lifts accuracy further. The same shared space gives image↔text RETRIEVAL for free (search photos by a text query, or caption-match an image). And because CLIP learned from broad, messy web text rather than one curated dataset, it's unusually robust to distribution shift.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">prompt engineering: 'a photo of a {label}'<br>+ ensemble many templates → higher acc<br><br>retrieval: text query → nearest images<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; image → nearest captions<br><br>web-scale text → robust to distribution shift</div>`,
+   code:"# retrieval is the same space, other direction:\nq = normalize(text_encoder(tokenize(['a red bicycle'])))\nscores = q @ image_bank.t()      # rank images by a text query\ntopk = scores.topk(5).indices" },
+ { title:"10. Where CLIP is used — the bridge between vision and language",
+   why:"CLIP's text encoder conditions image GENERATORS — it's the text tower behind DALL·E 2 and Stable Diffusion, turning a prompt into the vector a diffusion model paints toward. Its aligned space powers open-vocabulary DETECTION and SEGMENTATION (detect/segment classes named at test time), zero-shot RETRIEVAL and moderation, and it's a common vision backbone inside multimodal LLMs. CLIP is the standard bridge that lets 'just describe it in words' control vision.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">CLIP powers:<br>• DALL·E 2 / Stable Diffusion (text conditioning)<br>• open-vocab detection & segmentation<br>• zero-shot retrieval / moderation<br>• vision backbone in multimodal LLMs</div>`,
+   code:"# text -> image generation is conditioned on CLIP text:\n#   prompt -> CLIP text embedding -> diffusion model paints it\n# open-vocab: name classes at TEST time, no retraining\n# next: BERT — masked-token pretraining for language" },
+];
+</script>
+
+<script>
+// ---- UNDERSTAND engine (shared pattern) ----
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s,i) => { const bn = document.createElement("button");
+  bn.className = "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm";
+  bn.innerHTML = `<div class="font-semibold">${s.title}</div>`; bn.onclick = () => show(i); stepsEl.appendChild(bn); });
+function show(i){ curS = i; const s = STEPS[i];
+  document.getElementById("concept").innerHTML = `<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML = `<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent = s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx) => { bn.className = idx===i
+    ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold"
+    : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick = () => show(Math.max(0, curS-1));
+nextB.onclick = () => show(Math.min(STEPS.length-1, curS+1));
+let tm = null;
+autoB.onclick = () => { if (tm){ clearInterval(tm); tm=null; autoB.textContent="▶ Auto-play"; return; }
+  autoB.textContent = "⏸ Pause"; show(0);
+  tm = setInterval(() => { if (curS >= STEPS.length-1){ clearInterval(tm); tm=null; autoB.textContent="▶ Replay"; return; } show(curS+1); }, 5200); };
+show(0);
+
+function copy(btn){ const pre = btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500); }
+</script>
+</body>
+</html>
