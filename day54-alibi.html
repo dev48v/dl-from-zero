@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 54 — ALiBi (Attention with Linear Biases)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  .kept { color:#059669; font-weight:700; }
+  .recomp { color:#d97706; font-weight:700; }
+  .vio { color:#7c3aed; font-weight:700; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .preset-btn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:7px 12px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; transition:.12s; }
+  .preset-btn:hover{ border-color:#fda4af; }
+  .preset-btn.on{ background:#f43f5e; border-color:#f43f5e; color:#fff; }
+  .metric{ font-variant-numeric:tabular-nums; }
+  canvas{ display:block; }
+  .kvrow{ display:flex; justify-content:space-between; gap:10px; font-size:12px; padding:3px 0; border-bottom:1px dashed #e2e8f0; }
+  .kvrow span:first-child{ color:#64748b; }
+  .legend-sym{ display:inline-flex; width:16px; height:16px; border-radius:5px; }
+  .btn-solid{ background:#f43f5e; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-dark{ background:#0f172a; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-ghost{ background:#fff; border:1.5px solid #e2e8f0; color:#475569; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .bignum{ font-variant-numeric:tabular-nums; font-weight:900; line-height:1; }
+  .statcard{ border-radius:12px; border:1.5px solid #e2e8f0; background:#fff; padding:10px 12px; text-align:center; }
+  .statcard .lab{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; font-weight:800; color:#94a3b8; }
+  /* ALiBi-specific */
+  .matwrap{ width:100%; aspect-ratio:1/1; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .matwrap canvas{ width:100%; height:100%; }
+  .plotwrap{ width:100%; height:300px; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .plotwrap canvas{ width:100%; height:100%; }
+  .barrow2{ display:grid; grid-template-columns:34px 1fr 1fr 48px; align-items:center; gap:6px; margin:2px 0; }
+  .barlab{ font-size:11px; color:#64748b; }
+  .bartrack{ position:relative; height:15px; background:#f1f5f9; border-radius:5px; overflow:hidden; }
+  .barfill{ position:absolute; left:0; top:0; bottom:0; border-radius:3px; transition:width .12s, background .12s; }
+  .barval{ font-size:11px; text-align:right; font-variant-numeric:tabular-nums; color:#475569; }
+  .grpcard{ background:#fff; border:1.5px solid #e2e8f0; border-radius:12px; padding:10px 12px; }
+  .grptitle{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; margin-bottom:4px; }
+  .slopebar{ display:grid; grid-template-columns:58px 1fr 60px; align-items:center; gap:8px; margin:3px 0; font-size:11px; }
+  .slopebar .st{ position:relative; height:15px; background:#f1f5f9; border-radius:5px; overflow:hidden; }
+  .slopebar .sf{ position:absolute; left:0; top:0; bottom:0; border-radius:3px; background:#7c3aed; transition:width .12s; }
+  .slopebar.on .sf{ background:#e11d48; }
+  .slopebar.on{ font-weight:800; }
+  .opbadge{ font-size:22px; font-weight:900; color:#94a3b8; text-align:center; line-height:1; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 54</div>
+      <h1 class="text-xl font-bold">&#8599;&#65039; ALiBi (Attention with Linear Biases) &mdash; self-attention is <em>order-blind</em>: shuffle the tokens and the raw <span class="mono">QK&#7488;</span> scores come out the same, so a Transformer has to be <strong>told</strong> where each token sits. The classic recipe <strong>adds a positional embedding</strong> to every token vector (Day 29&rsquo;s sinusoidal ladder, or a learned table), but those absolute codes are welded to the exact positions seen during training &mdash; feed a model trained at length <span class="mono">1024</span> a sequence of <span class="mono">3000</span> tokens and it meets position indices it has <em>never represented</em>, and quality collapses. <strong>ALiBi</strong> (Press, Smith &amp; Lewis, 2021 &mdash; <em>&ldquo;Train Short, Test Long&rdquo;</em>) deletes positional embeddings entirely and instead adds a <strong>static, non-learned linear bias straight onto the attention scores, before the softmax</strong>: for a query at position <span class="mono">i</span> attending a key at position <span class="mono">j</span> (<span class="mono">j &le; i</span> under a causal mask) it simply <strong>subtracts <span class="sk">m&middot;(i&minus;j)</span></strong> &mdash; a penalty that grows <strong>linearly with how far back the key is</strong>. There is nothing to learn: <span class="mono">m</span> is a <strong>fixed per-head slope</strong>, and the heads&rsquo; slopes form a <strong>geometric sequence</strong> <span class="mono">&frac12;, &frac14;, &#8539;, &hellip; = 2<sup>&minus;8h/n</sup></span> so some heads attend <em>sharply local</em> (steep slope) while others <em>gaze far</em> (gentle slope) &mdash; a built-in multi-scale <strong>recency prior</strong>. Because the bias depends <em>only on the relative distance <span class="mono">i&minus;j</span></em> and never on an absolute index, the whole pattern is <strong>translation-invariant</strong> and simply keeps suppressing ever-farther tokens the same way at <em>any</em> length &mdash; so a model trained on short sequences <strong>extrapolates</strong> to far longer ones with no retraining (which is why ALiBi rides in <strong>BLOOM, MPT</strong> and kin). The softmax turns that straight-line penalty into a clean <strong>exponential distance decay</strong>, giving each head a bounded effective window. Below: build the raw <span class="mono">QK&#7488;</span> <span class="vio">attention-score matrix</span>, watch the <span class="sk">&minus;m&middot;(i&minus;j)</span> ALiBi <strong>bias ramp</strong> add on top, and see the resulting <span class="kept">softmax attention</span> slide its mass toward nearby keys; drag the <strong>per-head slope m</strong> across the geometric schedule, flip <strong>ALiBi vs no-bias</strong>, and watch the length-extrapolation profile stay put as the sequence grows &mdash; softmax and the bias implemented <strong>by hand</strong>, no libraries.</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== LOOK ===================== -->
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-6 lg:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">No position embeddings &mdash; just add <span class="sk">&minus;m&middot;(i&minus;j)</span> to the scores and let the <span class="kept">softmax</span> lean toward recent keys.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto text-center">Three live panels. <b>(1) The computation:</b> the raw <span class="vio">QK&#7488; score matrix</span>, the ALiBi <span class="sk">bias matrix</span> <span class="mono">&minus;m&middot;(i&minus;j)</span>, and the <span class="kept">softmax attention</span> of their sum &mdash; pick a query row and watch its weights redistribute toward nearer keys. <b>(2) The per-head slopes:</b> the geometric schedule <span class="mono">&frac12;,&frac14;,&hellip;</span> drawn as bias-vs-distance lines, one per head. <b>(3) Length extrapolation:</b> the attention-by-distance profile for a query at the last token, overlaid at the <b>train</b> length and a longer <b>test</b> length &mdash; they coincide, which is exactly why ALiBi tests long.</p>
+
+      <!-- ============ control bar ============ -->
+      <div class="bg-white rounded-xl border-2 border-slate-200 p-3 mb-4 flex items-center justify-center flex-wrap gap-4">
+        <div class="ctrl" style="min-width:230px">
+          <label>head slope <span class="mono">m = 2<sup>&minus;h</sup></span> &nbsp; <span class="sk stat mono" id="mVal">1/4</span></label>
+          <input type="range" id="headSlider" min="1" max="8" step="1" value="2">
+        </div>
+        <div class="ctrl" style="min-width:170px">
+          <label>sequence length <span class="mono">N</span><span class="recomp stat mono" id="seqVal">8</span></label>
+          <input type="range" id="seqSlider" min="4" max="14" step="1" value="8">
+        </div>
+        <div class="ctrl" style="min-width:170px">
+          <label>query row <span class="mono">i</span><span class="vio stat mono" id="qiVal">7</span></label>
+          <input type="range" id="qiSlider" min="0" max="7" step="1" value="7">
+        </div>
+        <button id="biasToggle" class="preset-btn on">ALiBi bias: ON</button>
+        <button id="btnReseed" class="btn-ghost">New scores</button>
+      </div>
+
+      <!-- ============ PANEL 1 : THE COMPUTATION ============ -->
+      <div class="bg-white rounded-xl border-2 border-emerald-200 p-4 mb-4">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+          <div class="text-sm font-bold text-slate-800">1 &middot; <span class="mono">softmax( QK&#7488;/&radic;d <span class="sk">&minus; m&middot;(i&minus;j)</span> )</span> &mdash; three matrices, causal</div>
+          <div class="text-[11px] text-slate-400">rows = query <span class="mono">i</span> &middot; cols = key <span class="mono">j</span> &middot; upper triangle masked</div>
+        </div>
+        <p class="text-[12px] text-slate-500 mb-3">The <span class="vio">score matrix</span> is a toy <span class="mono">QK&#7488;/&radic;d</span> (click a cell to nudge it &mdash; it&rsquo;s editable). The <span class="sk">bias matrix</span> is <b>fixed and unlearned</b>: cell <span class="mono">(i,j)</span> holds <span class="mono">&minus;m&middot;(i&minus;j)</span>, so it&rsquo;s <b>0 on the diagonal</b> and drops the farther left you go. Their sum goes through a per-row <span class="kept">softmax</span> (causal: the model can&rsquo;t see the future, so <span class="mono">j&gt;i</span> is masked to <span class="mono">&minus;&infin;</span>). Turn the bias <b>off</b> to see attention with no position signal at all.</p>
+
+        <div class="grid lg:grid-cols-3 gap-3 mb-3">
+          <div>
+            <div class="grptitle text-center" style="color:#7c3aed">scores &nbsp;QK&#7488;/&radic;d</div>
+            <div class="matwrap"><canvas id="scoreC"></canvas></div>
+          </div>
+          <div class="relative">
+            <div class="grptitle text-center" style="color:#be123c">+ ALiBi bias &nbsp;&minus;m&middot;(i&minus;j)</div>
+            <div class="matwrap" id="biasWrap"><canvas id="biasC"></canvas></div>
+          </div>
+          <div>
+            <div class="grptitle text-center" style="color:#059669">= attention &nbsp;softmax(&middot;)</div>
+            <div class="matwrap"><canvas id="attnC"></canvas></div>
+          </div>
+        </div>
+
+        <div class="grpcard">
+          <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+            <div class="grptitle" style="color:#0f172a">query row <span class="mono" id="rowIlabel">i = 7</span> &mdash; softmax weights per key</div>
+            <div class="text-[11px] text-slate-500 flex items-center gap-3">
+              <span class="flex items-center gap-1"><span class="legend-sym" style="background:#94a3b8"></span>no bias</span>
+              <span class="flex items-center gap-1"><span class="legend-sym" style="background:#e11d48"></span>ALiBi</span>
+            </div>
+          </div>
+          <div id="rowBars"></div>
+          <div class="text-[11px] text-slate-500 mt-2" id="rowNote">&mdash;</div>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-4 mb-4">
+        <!-- ============ PANEL 2 : PER-HEAD SLOPES ============ -->
+        <div class="bg-white rounded-xl border-2 border-violet-200 p-4">
+          <div class="text-sm font-bold text-slate-800 mb-1">2 &middot; The per-head <span class="vio">slope schedule</span> &mdash; a geometric ladder</div>
+          <p class="text-[12px] text-slate-500 mb-3">Each head gets a <b>different fixed slope</b> <span class="mono">m<sub>h</sub> = 2<sup>&minus;8h/n</sup></span>. For <span class="mono">n = 8</span> heads that is exactly <span class="mono">&frac12;, &frac14;, &#8539;, &hellip;, 1/256</span>. Steep slopes = <b>sharp recency</b> (only the last few keys survive); gentle slopes = a head that can still <b>look far back</b>. Every line is the bias <span class="mono">&minus;m<sub>h</sub>&middot;d</span> vs distance <span class="mono">d = i&minus;j</span>; the selected head is bold.</p>
+          <div class="plotwrap mb-3"><canvas id="slopeC"></canvas></div>
+          <div id="slopeBars"></div>
+        </div>
+
+        <!-- ============ PANEL 3 : LENGTH EXTRAPOLATION ============ -->
+        <div class="bg-white rounded-xl border-2 border-rose-200 p-4">
+          <div class="text-sm font-bold text-slate-800 mb-1">3 &middot; Why it <span class="sk">extrapolates</span> &mdash; train short, test long</div>
+          <p class="text-[12px] text-slate-500 mb-3">Flatten the raw scores and attention is driven purely by the bias: weight falls off as <span class="mono">e<sup>&minus;m&middot;d</sup></span> with distance. Because that depends <b>only on <span class="mono">d = i&minus;j</span></b>, the profile is the <b>same shape at any length</b> &mdash; the <span class="sk">test</span> curve lies right on top of the <span class="recomp">train</span> curve, so a longer context introduces no unseen &ldquo;position.&rdquo; The grey line is <b>no-bias</b> attention: uniform <span class="mono">1/L</span>, which dilutes as the sequence grows.</p>
+          <div class="ctrl mb-2" style="max-width:320px">
+            <label>test length <span class="mono">L<sub>test</sub></span><span class="sk stat mono" id="testVal">32</span></label>
+            <input type="range" id="testSlider" min="8" max="64" step="1" value="32">
+          </div>
+          <div class="plotwrap mb-3"><canvas id="extrapC"></canvas></div>
+          <div class="grid grid-cols-3 gap-2 text-center">
+            <div class="statcard"><div class="lab">train len</div><div class="bignum text-xl recomp mt-1" id="e_train">8</div></div>
+            <div class="statcard"><div class="lab">eff. window (90%)</div><div class="bignum text-xl sk mt-1" id="e_win">&mdash;</div></div>
+            <div class="statcard"><div class="lab">train&harr;test max &Delta;</div><div class="bignum text-xl text-slate-700 mt-1" id="e_gap">&mdash;</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-sm text-slate-600">
+        <b class="text-slate-800">What to try:</b> (1) In panel 1 toggle <b>ALiBi ON/OFF</b> and watch the query-row bars: with the bias on, mass slides off the far-left keys and piles onto the <b>nearest</b> ones &mdash; the rose bars beat the grey bars near the diagonal. (2) Drag <b>head slope m</b> from head 1 (<span class="mono">m=&frac12;</span>, sharp) to head 8 (<span class="mono">m=1/256</span>, almost flat): steep <span class="mono">m</span> = <b>stronger recency</b>, a tiny effective window; gentle <span class="mono">m</span> lets far keys back in. (3) Click cells in the <span class="vio">score matrix</span> to make a far key <em>very</em> attractive &mdash; ALiBi still taxes it by distance, so it takes a big raw score to overcome the bias. (4) In panel 3 slide <b>test length</b> way past the train length: the two decay curves stay glued together (max &Delta; &asymp; 0) &mdash; that overlap <em>is</em> length extrapolation. (5) Grow <b>N</b> and pick different <b>query rows</b>: the bias pattern only ever depends on the <em>distance</em> <span class="mono">i&minus;j</span>, never on the absolute row &mdash; translation invariance you can see.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== UNDERSTAND ===================== -->
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">From positional embeddings to a linear attention bias</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BUILD ===================== -->
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">ALiBi is a handful of lines bolted onto ordinary attention: no embeddings, no learned parameters, just a fixed bias added to the scores. We&rsquo;ll build it up: softmax by hand, the causal distance matrix, the geometric per-head slopes, the full ALiBi attention, a multi-head wrapper, and the one property &mdash; distance-only &mdash; that makes it extrapolate.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Softmax &amp; a causal mask, by hand</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Attention needs a numerically-stable row softmax (subtract the row max first). Causal means a query at <code>i</code> may only see keys <code>j &le; i</code>; we mark the rest <code>-inf</code> so <code>exp</code> sends them to exactly 0. Sanity: every row sums to 1.</p>
+        <div class="relative"><pre>import numpy as np
+
+def softmax(row):                      # stable, 1-D
+    m = np.max(row[np.isfinite(row)])
+    e = np.exp(row - m)                 # -inf -> 0
+    return e / e.sum()
+
+def causal_mask(N):                    # True where allowed (j <= i)
+    return np.tril(np.ones((N, N), dtype=bool))</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">The distance matrix &mdash; and the bias</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The whole of ALiBi lives in one matrix: <code>(i - j)</code>, the number of steps a key is <b>behind</b> the query. Multiply by the head slope and negate: <code>bias = -m * (i - j)</code>. It&rsquo;s 0 on the diagonal and grows more negative to the left. No learning, no embeddings.</p>
+        <div class="relative"><pre>def distance(N):
+    i = np.arange(N)[:, None]          # (N,1) query index
+    j = np.arange(N)[None, :]          # (1,N) key index
+    return i - j                       # (N,N)  >=0 in the causal region
+
+def alibi_bias(N, m):
+    return -m * distance(N)            # -m*(i-j) : linear recency penalty</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">The per-head slopes &mdash; a geometric sequence</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Each head gets its own slope so the model attends at many scales at once. For <code>n</code> heads (a power of 2) the slopes are the geometric sequence <code>m_h = 2^(-8h/n)</code>, i.e. ratio <code>2^(-8/n)</code> starting from it. For <code>n=8</code>: <code>1/2, 1/4, &hellip;, 1/256</code>.</p>
+        <div class="relative"><pre>def head_slopes(n):
+    start = 2 ** (-8 / n)              # = 2^(-8/n)
+    return np.array([start ** (h + 1) for h in range(n)])
+
+head_slopes(8)
+# [0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625, 0.0078125, 0.00390625]
+#  steep (local)  ------------------------------->  gentle (far)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">ALiBi attention for one head</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Ordinary scaled dot-product attention, but add the bias to the scores <b>before</b> the softmax and apply the causal mask. Nothing else about attention changes &mdash; and there is no positional embedding added to <code>Q</code>, <code>K</code> or the inputs anywhere.</p>
+        <div class="relative"><pre>def alibi_attention(Q, K, V, m):
+    N, d = Q.shape
+    scores = (Q @ K.T) / np.sqrt(d)    # (N,N) raw QK^T
+    scores = scores + alibi_bias(N, m) # <-- the ONE new line
+    scores[~causal_mask(N)] = -np.inf  # can't see the future
+    A = np.stack([softmax(r) for r in scores])
+    return A @ V, A                    # output, attention weights</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Multi-head &mdash; one slope per head</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Run each head with <b>its own</b> slope from the schedule, then concatenate. Cheap heads see only the last token or two; gentle heads keep long-range context alive. The bias is added inside each head; the outputs concat exactly as in vanilla multi-head attention.</p>
+        <div class="relative"><pre>def multihead_alibi(Qh, Kh, Vh):       # lists of length n_heads
+    n = len(Qh)
+    slopes = head_slopes(n)
+    outs = []
+    for h in range(n):
+        o, _ = alibi_attention(Qh[h], Kh[h], Vh[h], slopes[h])
+        outs.append(o)
+    return np.concatenate(outs, axis=-1)   # (N, n*d_head)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Why it extrapolates &mdash; distance, not position</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The bias reads only <code>i - j</code>. Slide the whole window along the sequence and every entry is unchanged &mdash; it is <b>translation-invariant</b>, so length <code>N</code> never appears as an absolute index the way a positional embedding would. Train at 1024, run at 3000: the model only ever sees relative distances, and far ones are simply taxed more.</p>
+        <div class="relative"><pre># translation invariance: bias(i,j) depends ONLY on (i-j)
+b = alibi_bias(8, 0.25)
+assert np.allclose(b[7,3], b[6,2])     # same distance 4 -> same bias
+assert np.allclose(b[5,5], 0.0)        # distance 0 -> no penalty
+
+# softmax turns the LINEAR bias into an EXPONENTIAL decay in distance:
+#   weight(d)  ∝  exp(-m * d)          # bounded effective window ~ 1/m
+# no absolute position is ever represented -> test length > train length OK</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 54 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2"><strong>ALiBi</strong> gives a Transformer position <em>without</em> positional embeddings: it adds a fixed, unlearned bias <span class="mono">&minus;m&middot;(i&minus;j)</span> straight onto the attention scores before the softmax, penalising each key in proportion to how far <em>behind</em> the query it sits. Every head owns a slope from the geometric schedule <span class="mono">2<sup>&minus;8h/n</sup></span> (<span class="mono">&frac12;,&frac14;,&hellip;</span>), so the model attends at many recency scales at once, and the softmax turns that straight-line penalty into an exponential distance decay with a bounded window. Because the bias depends <em>only</em> on the relative distance <span class="mono">i&minus;j</span> and never on an absolute index, it is translation-invariant &mdash; a model trained short <strong>extrapolates</strong> to far longer contexts, the property that put ALiBi into BLOOM and MPT. Unlike <strong>sinusoidal</strong> (absolute, added to inputs) or <strong>RoPE</strong> (relative, applied by rotating Q/K), ALiBi needs no embedding table and no rotation &mdash; just one added matrix. <strong>&#128073; Tomorrow, Day 55:</strong> Mixture-of-Experts &mdash; route each token to a few expert MLPs for huge capacity at a cheap per-token cost.</p></div>
+  </div>
+</section>
+
+<script>
+// ---- tab switching ----
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+  if (t.dataset.tab === "look") requestAnimationFrame(() => { render(); });
+});
+</script>
+
+<script>
+// ==================================================================
+//  DAY 54 — ALiBi (ATTENTION WITH LINEAR BIASES).
+//  Position WITHOUT positional embeddings. Instead of adding a
+//  positional vector to the inputs, add a fixed, unlearned linear
+//  bias onto the attention scores BEFORE the softmax:
+//
+//      scores'[i][j] = QKᵀ[i][j]/√d  −  m·(i − j)      (causal: j ≤ i)
+//      A[i]          = softmax( scores'[i] )
+//
+//  m is a fixed PER-HEAD slope; the heads' slopes form a geometric
+//  sequence  m_h = 2^(−8h/n)  =  1/2, 1/4, 1/8, …  (for n = 8).
+//  Because the bias depends only on the RELATIVE distance (i − j),
+//  it is translation-invariant → a model trained short extrapolates
+//  to far longer sequences. softmax + the bias are BY HAND — no libs.
+// ==================================================================
+
+// ---------- config / state ----------
+const NMAX = 16, DH = 8;
+let N = 8;                 // sequence length
+let headIdx = 2;           // 1..8 -> slope m = 2^-headIdx
+let qi = 7;                // selected query row
+let useBias = true;        // ALiBi on/off
+let sSeed = 11;            // score PRNG seed
+let testLen = 32;          // panel-3 test length
+let Qv = [], Kv = [], SFULL = [];   // toy Q,K vectors and QKᵀ/√d scores
+
+// ---------- PRNG + gaussian ----------
+function mulberry32(a){
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function randn(rnd){ let u=0,v=0; while(u===0)u=rnd(); while(v===0)v=rnd(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+
+// ---------- toy scores : QKᵀ / √d over deterministic Q,K ----------
+function initScores(seed){
+  const rnd = mulberry32(seed >>> 0);
+  Qv = []; Kv = [];
+  for (let p=0;p<NMAX;p++){
+    const q=[], k=[];
+    for (let d=0; d<DH; d++){ q.push(randn(rnd)); k.push(randn(rnd)); }
+    Qv.push(q); Kv.push(k);
+  }
+  SFULL = [];
+  const s = Math.sqrt(DH);
+  for (let i=0;i<NMAX;i++){
+    SFULL.push([]);
+    for (let j=0;j<NMAX;j++){
+      let dot=0; for (let d=0; d<DH; d++) dot += Qv[i][d]*Kv[j][d];
+      SFULL[i].push(dot / s);
+    }
+  }
+}
+initScores(sSeed);
+
+// ---------- ALiBi pieces (by hand) ----------
+function slope(){ return Math.pow(2, -headIdx); }        // m = 2^-h
+function aliBias(i, j, m){ return -m * (i - j); }        // −m·(i−j)
+
+// numerically-stable softmax over a row; −Infinity entries -> 0
+function softmax(row){
+  let mx = -Infinity;
+  for (const v of row) if (v > mx) mx = v;
+  let sum = 0; const out = row.map(v => { const e = Math.exp(v - mx); sum += e; return e; });
+  return out.map(e => e / sum);
+}
+
+// attention weights for one query row i over keys 0..i, with/without bias
+function rowAttention(i, withBias){
+  const m = slope();
+  const logits = [];
+  for (let j=0;j<N;j++){
+    if (j > i){ logits.push(-Infinity); continue; }           // causal mask
+    let z = SFULL[i][j];
+    if (withBias) z += aliBias(i, j, m);
+    logits.push(z);
+  }
+  return softmax(logits);
+}
+
+// full attention matrix (rows already softmax-normalised, masked -> 0)
+function attentionMatrix(withBias){
+  const A = [];
+  for (let i=0;i<N;i++) A.push(rowAttention(i, withBias));
+  return A;
+}
+
+// ---------- colour helpers ----------
+function lerp(a,b,t){ return a + (b-a)*t; }
+function clamp(v,lo,hi){ return v<lo?lo:(v>hi?hi:v); }
+function rgb(c){ return "rgb(" + (c[0]|0) + "," + (c[1]|0) + "," + (c[2]|0) + ")"; }
+function diverge(v){                                    // v in [-1,1] : blue - white - rose
+  v = clamp(v,-1,1);
+  const lo=[59,130,246], mid=[248,250,252], hi=[225,29,72];
+  if (v < 0){ const t=-v; return rgb([lerp(mid[0],lo[0],t), lerp(mid[1],lo[1],t), lerp(mid[2],lo[2],t)]); }
+  const t=v; return rgb([lerp(mid[0],hi[0],t), lerp(mid[1],hi[1],t), lerp(mid[2],hi[2],t)]);
+}
+function seqBlue(t){                                     // 0..1 white -> blue (for the bias magnitude)
+  t = clamp(t,0,1); const mid=[248,250,252], lo=[37,99,235];
+  return rgb([lerp(mid[0],lo[0],t), lerp(mid[1],lo[1],t), lerp(mid[2],lo[2],t)]);
+}
+function seqRose(t){                                     // 0..1 white -> rose (for the attention)
+  t = clamp(t,0,1); const mid=[255,255,255], hi=[225,29,72];
+  return rgb([lerp(mid[0],hi[0],t), lerp(mid[1],hi[1],t), lerp(mid[2],hi[2],t)]);
+}
+
+// ---------- canvas sizing ----------
+function fitCanvas(cv){
+  const R = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 300, h = cv.clientHeight || 300;
+  const pw = Math.round(w*R), ph = Math.round(h*R);
+  if (cv.width !== pw || cv.height !== ph){ cv.width = pw; cv.height = ph; }
+}
+
+// ---------- draw one N×N matrix ----------
+// cellFn(i,j) -> { color, masked }  ;  highlightRow outlines a query row
+function drawMatrix(cv, cellFn){
+  fitCanvas(cv);
+  const g = cv.getContext("2d"), W = cv.width, H = cv.height, R = window.devicePixelRatio || 1;
+  g.clearRect(0,0,W,H);
+  const padL = 20*R, padT = 20*R;
+  const gw = W - padL - 4*R, gh = H - padT - 4*R;
+  const cw = gw / N, ch = gh / N;
+  g.font = (9*R)+"px -apple-system, sans-serif"; g.textAlign="center"; g.textBaseline="middle";
+  for (let i=0;i<N;i++){
+    for (let j=0;j<N;j++){
+      const x = padL + j*cw, y = padT + i*ch;
+      const cell = cellFn(i,j);
+      if (cell.masked){
+        g.fillStyle = "#f1f5f9"; g.fillRect(x,y,cw+0.5,ch+0.5);
+        g.strokeStyle = "#e2e8f0"; g.lineWidth = 1*R;
+        g.beginPath(); g.moveTo(x, y+ch); g.lineTo(x+cw, y); g.stroke();
+      } else {
+        g.fillStyle = cell.color; g.fillRect(x,y,cw+0.5,ch+0.5);
+        if (cell.text !== undefined && cw > 20*R){
+          g.fillStyle = cell.textCol || "#0f172a"; g.fillText(cell.text, x+cw/2, y+ch/2);
+        }
+      }
+      g.strokeStyle = "rgba(148,163,184,0.35)"; g.lineWidth = 1;
+      g.strokeRect(x,y,cw,ch);
+    }
+  }
+  // highlight selected query row
+  const hy = padT + qi*ch;
+  g.strokeStyle = "#0f172a"; g.lineWidth = 2.2*R;
+  g.strokeRect(padL, hy, gw, ch);
+  // axis ticks (query index down the left, key index across the top)
+  g.fillStyle = "#94a3b8"; g.font = (9*R)+"px -apple-system, sans-serif";
+  for (let k=0;k<N;k++){
+    g.textAlign="center"; g.fillText(String(k), padL + k*cw + cw/2, padT/2);
+    g.textAlign="center"; g.fillText(String(k), padL/2, padT + k*ch + ch/2);
+  }
+}
+
+// ================= PANEL 1 renders =================
+function drawScores(){
+  let mabs = 1e-6;
+  for (let i=0;i<N;i++) for (let j=0;j<=i;j++) mabs = Math.max(mabs, Math.abs(SFULL[i][j]));
+  drawMatrix(document.getElementById("scoreC"), (i,j) => {
+    if (j > i) return { masked:true };
+    return { color: diverge(SFULL[i][j]/mabs) };
+  });
+}
+function drawBias(){
+  const m = slope();
+  const wrap = document.getElementById("biasWrap");
+  wrap.style.opacity = useBias ? "1" : "0.32";
+  let mmax = 1e-6;
+  for (let i=0;i<N;i++) for (let j=0;j<=i;j++) mmax = Math.max(mmax, m*(i-j));
+  drawMatrix(document.getElementById("biasC"), (i,j) => {
+    if (j > i) return { masked:true };
+    const b = m*(i-j);                     // magnitude of the penalty (>=0)
+    return { color: seqBlue(b/mmax) };
+  });
+}
+function drawAttn(){
+  const A = attentionMatrix(useBias);
+  drawMatrix(document.getElementById("attnC"), (i,j) => {
+    if (j > i) return { masked:true };
+    return { color: seqRose(A[i][j]) };    // weights already in [0,1]
+  });
+}
+
+// query-row weight bars : no-bias (grey) vs ALiBi (rose)
+function drawRowBars(){
+  const wNo  = rowAttention(qi, false);
+  const wYes = rowAttention(qi, true);
+  const host = document.getElementById("rowBars");
+  host.innerHTML = "";
+  for (let j=0;j<=qi;j++){
+    const row = document.createElement("div"); row.className = "barrow2";
+    row.innerHTML =
+      "<span class='barlab'>k"+j+"</span>" +
+      "<div class='bartrack'><div class='barfill' style='width:"+(wNo[j]*100).toFixed(1)+"%;background:#94a3b8'></div></div>" +
+      "<div class='bartrack'><div class='barfill' style='width:"+(wYes[j]*100).toFixed(1)+"%;background:#e11d48'></div></div>" +
+      "<span class='barval'>"+(useBias?wYes[j]:wNo[j]).toFixed(2)+"</span>";
+    host.appendChild(row);
+  }
+  // note: where did ALiBi move the mass?
+  const near = qi;                                     // nearest key = the diagonal
+  const dMass = wYes[near] - wNo[near];
+  const farMass = wNo[0] - wYes[0];
+  document.getElementById("rowNote").innerHTML =
+    "ALiBi moves <b class='sk'>+" + (dMass*100).toFixed(1) + "%</b> of the mass onto the nearest key (k" + near +
+    ") and pulls <b>&minus;" + (farMass*100).toFixed(1) + "%</b> off the farthest (k0). Both rows sum to " +
+    "<span class='mono'>" + wYes.reduce((a,b)=>a+b,0).toFixed(3) + "</span>.";
+}
+
+// ================= PANEL 2 : slope ladder =================
+function slopesAll(n){ const start = Math.pow(2, -8/n); const a=[]; for (let h=0;h<n;h++) a.push(Math.pow(start, h+1)); return a; }
+function drawSlopes(){
+  const cv = document.getElementById("slopeC"); fitCanvas(cv);
+  const g = cv.getContext("2d"), W = cv.width, H = cv.height, R = window.devicePixelRatio || 1;
+  g.clearRect(0,0,W,H);
+  const pad = 34*R;
+  const dmax = 12, ymin = -6, ymax = 0.3;
+  const sx = d => pad + d/dmax*(W-1.4*pad);
+  const sy = y => (H-pad) - (y-ymin)/(ymax-ymin)*(H-1.5*pad);
+  // axes
+  g.strokeStyle = "#e2e8f0"; g.lineWidth = 1*R;
+  g.beginPath(); g.moveTo(sx(0), sy(0)); g.lineTo(sx(dmax), sy(0)); g.stroke();
+  g.beginPath(); g.moveTo(sx(0), sy(ymin)); g.lineTo(sx(0), sy(ymax)); g.stroke();
+  g.fillStyle = "#94a3b8"; g.font = (11*R)+"px -apple-system, sans-serif"; g.textAlign="center";
+  g.fillText("distance  d = i − j  →", W/2, H - 8*R);
+  g.save(); g.translate(12*R, H/2); g.rotate(-Math.PI/2); g.fillText("bias  −m·d", 0, 0); g.restore();
+  const S = slopesAll(8);
+  const cols = ["#e11d48","#f97316","#eab308","#22c55e","#14b8a6","#3b82f6","#6366f1","#a855f7"];
+  S.forEach((m,h) => {
+    const sel = (h+1 === headIdx);
+    g.strokeStyle = sel ? cols[h] : "rgba(148,163,184,0.5)";
+    g.lineWidth = (sel ? 3.2 : 1.5)*R;
+    g.beginPath();
+    for (let d=0; d<=dmax; d++){ const y = clamp(-m*d, ymin, ymax); if (d===0) g.moveTo(sx(d), sy(y)); else g.lineTo(sx(d), sy(y)); }
+    g.stroke();
+  });
+}
+function drawSlopeBars(){
+  const S = slopesAll(8);
+  const host = document.getElementById("slopeBars"); host.innerHTML = "";
+  const mmax = S[0];
+  const frac = ["1/2","1/4","1/8","1/16","1/32","1/64","1/128","1/256"];
+  S.forEach((m,h) => {
+    const row = document.createElement("div"); row.className = "slopebar" + ((h+1===headIdx)?" on":"");
+    row.innerHTML =
+      "<span>head "+(h+1)+"</span>" +
+      "<div class='st'><div class='sf' style='width:"+(m/mmax*100).toFixed(1)+"%'></div></div>" +
+      "<span class='mono'>m = "+frac[h]+"</span>";
+    row.onclick = () => { headIdx = h+1; document.getElementById("headSlider").value = headIdx; render(); };
+    row.style.cursor = "pointer";
+    host.appendChild(row);
+  });
+}
+
+// ================= PANEL 3 : length extrapolation =================
+// flat scores => weight(d) ∝ exp(-m d), normalised over 0..L-1
+function decayProfile(m, L){
+  const w = []; let Z = 0;
+  for (let d=0; d<L; d++){ const e = Math.exp(-m*d); w.push(e); Z += e; }
+  return w.map(e => e / Z);
+}
+function drawExtrap(){
+  const cv = document.getElementById("extrapC"); fitCanvas(cv);
+  const g = cv.getContext("2d"), W = cv.width, H = cv.height, R = window.devicePixelRatio || 1;
+  g.clearRect(0,0,W,H);
+  const m = slope();
+  const Ltest = testLen, Ltrain = N;
+  const wTrain = decayProfile(m, Ltrain);
+  const wTest  = decayProfile(m, Ltest);
+  const pad = 34*R;
+  const dmax = Ltest - 1;
+  let ymax = Math.max(wTrain[0], wTest[0], 1/Ltrain) * 1.15;
+  const sx = d => pad + d/Math.max(1,dmax)*(W-1.4*pad);
+  const sy = y => (H-pad) - y/ymax*(H-1.6*pad);
+  // axes
+  g.strokeStyle = "#e2e8f0"; g.lineWidth = 1*R;
+  g.beginPath(); g.moveTo(sx(0), sy(0)); g.lineTo(sx(dmax), sy(0)); g.stroke();
+  g.beginPath(); g.moveTo(sx(0), sy(0)); g.lineTo(sx(0), sy(ymax)); g.stroke();
+  g.fillStyle = "#94a3b8"; g.font = (11*R)+"px -apple-system, sans-serif"; g.textAlign="center";
+  g.fillText("distance from query  d = i − j  →", W/2, H - 8*R);
+  g.save(); g.translate(12*R, H/2); g.rotate(-Math.PI/2); g.fillText("attention weight", 0, 0); g.restore();
+  // no-bias uniform reference (uses test length)
+  g.strokeStyle = "#94a3b8"; g.lineWidth = 1.5*R; g.setLineDash([5*R,4*R]);
+  g.beginPath(); g.moveTo(sx(0), sy(1/Ltest)); g.lineTo(sx(dmax), sy(1/Ltest)); g.stroke();
+  g.setLineDash([]);
+  // test curve (rose), drawn first / thicker
+  g.strokeStyle = "#e11d48"; g.lineWidth = 3.4*R;
+  g.beginPath(); wTest.forEach((y,d) => { if (d===0) g.moveTo(sx(d), sy(y)); else g.lineTo(sx(d), sy(y)); }); g.stroke();
+  // train curve (amber), on top, dashed so overlap is visible
+  g.strokeStyle = "#d97706"; g.lineWidth = 2*R; g.setLineDash([6*R,4*R]);
+  g.beginPath(); wTrain.forEach((y,d) => { if (d===0) g.moveTo(sx(d), sy(y)); else g.lineTo(sx(d), sy(y)); }); g.stroke();
+  g.setLineDash([]);
+  // dots
+  wTest.forEach((y,d) => { g.fillStyle="#e11d48"; g.beginPath(); g.arc(sx(d), sy(y), 2.6*R, 0, 2*Math.PI); g.fill(); });
+  // legend
+  g.textAlign="left"; g.font=(11*R)+"px -apple-system, sans-serif";
+  g.fillStyle="#e11d48"; g.fillText("● test  L="+Ltest, W-118*R, 16*R);
+  g.fillStyle="#d97706"; g.fillText("- - train  L="+Ltrain, W-118*R, 30*R);
+  g.fillStyle="#94a3b8"; g.fillText("· · no-bias 1/L", W-118*R, 44*R);
+
+  // stats: effective 90% window + max train↔test gap over shared distances
+  let cum = 0, win = Ltrain;
+  for (let d=0; d<Ltrain; d++){ cum += wTrain[d]; if (cum >= 0.9){ win = d+1; break; } }
+  let gap = 0; for (let d=0; d<Ltrain; d++) gap = Math.max(gap, Math.abs(wTrain[d]-wTest[d]));
+  document.getElementById("e_train").textContent = Ltrain;
+  document.getElementById("e_win").textContent = win + " tok";
+  document.getElementById("e_gap").textContent = gap.toFixed(4);
+}
+
+// ================= wire controls =================
+const headSlider = document.getElementById("headSlider");
+const seqSlider  = document.getElementById("seqSlider");
+const qiSlider   = document.getElementById("qiSlider");
+const testSlider = document.getElementById("testSlider");
+const biasToggle = document.getElementById("biasToggle");
+
+headSlider.addEventListener("input", e => { headIdx = +e.target.value; render(); });
+seqSlider.addEventListener("input", e => {
+  N = +e.target.value;
+  if (qi > N-1){ qi = N-1; }
+  qiSlider.max = N-1; qiSlider.value = qi;
+  render();
+});
+qiSlider.addEventListener("input", e => { qi = clamp(+e.target.value, 0, N-1); render(); });
+testSlider.addEventListener("input", e => { testLen = +e.target.value; render(); });
+biasToggle.onclick = () => { useBias = !useBias; render(); };
+document.getElementById("btnReseed").onclick = () => { sSeed = (sSeed*1664525 + 1013904223) >>> 0; initScores(sSeed); render(); };
+
+// click a scores cell to edit it (nudge the raw QKᵀ up, wrapping)
+document.getElementById("scoreC").addEventListener("click", ev => {
+  const cv = ev.currentTarget, rect = cv.getBoundingClientRect();
+  const R = 1;                                   // client-space geometry
+  const padL = 20, padT = 20;
+  const gw = cv.clientWidth - padL - 4, gh = cv.clientHeight - padT - 4;
+  const cw = gw / N, ch = gh / N;
+  const j = Math.floor((ev.clientX - rect.left - padL) / cw);
+  const i = Math.floor((ev.clientY - rect.top  - padT) / ch);
+  if (i>=0 && i<N && j>=0 && j<=i){
+    SFULL[i][j] += 0.9;
+    if (SFULL[i][j] > 4){ SFULL[i][j] -= 8; }     // wrap so it stays illustrative
+    render();
+  }
+});
+
+// ---------- master render ----------
+function render(){
+  // control read-outs
+  const fracTxt = ["","1/2","1/4","1/8","1/16","1/32","1/64","1/128","1/256"][headIdx];
+  document.getElementById("mVal").textContent = fracTxt;
+  document.getElementById("seqVal").textContent = N;
+  document.getElementById("qiVal").textContent = qi;
+  document.getElementById("testVal").textContent = testLen;
+  document.getElementById("rowIlabel").textContent = "i = " + qi;
+  biasToggle.textContent = "ALiBi bias: " + (useBias ? "ON" : "OFF");
+  biasToggle.classList.toggle("on", useBias);
+
+  drawScores();
+  drawBias();
+  drawAttn();
+  drawRowBars();
+  drawSlopes();
+  drawSlopeBars();
+  drawExtrap();
+}
+
+window.addEventListener("resize", () => { if (!document.getElementById("look").classList.contains("hidden")) render(); });
+
+// ---------- go ----------
+render();
+</script>
+
+<script>
+// ===================== UNDERSTAND — 10 steps =====================
+const STEPS = [
+ { title:"1. Attention is order-blind",
+   why:"Self-attention scores are QKᵀ — pure dot products between token vectors. Permute the tokens and you permute the rows/cols of the score matrix but change nothing about the values: attention has NO built-in notion of who came first. So a Transformer must be told position somehow, or 'the dog bit the man' and 'the man bit the dog' look identical to it.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">score[i][j] = Qᵢ · Kⱼ / √d<br><br>shuffle tokens → same set of scores<br><br>⇒ attention needs a POSITION signal</div>`,
+   code:"# raw attention has no order\nS = (Q @ K.T) / d**0.5      # depends only on CONTENT\n# permuting rows of X permutes S the same way — no position" },
+ { title:"2. The classic fix: positional embeddings",
+   why:"The original Transformer ADDS a positional vector to every token embedding before attention — either a fixed sinusoidal ladder (Day 29) or a learned lookup table indexed by absolute position. It works, but the code for 'position 3000' is something a model trained only up to position 1024 has literally never seen, so quality falls off a cliff beyond the training length.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">x'ₚ = xₚ + PE(p)      (added to the INPUT)<br><br>PE = sin/cos ladder  OR  learned table<br><br>positions &gt; train length = never seen → breaks</div>`,
+   code:"# absolute positional embedding\nX = token_emb + pos_emb[:N]   # add position to inputs\n# pos_emb row for p=3000 unseen if trained to N=1024" },
+ { title:"3. The ALiBi idea: bias the scores, not the inputs",
+   why:"ALiBi throws positional embeddings out entirely. It adds NOTHING to the token vectors. Instead, right before the softmax, it adds a fixed bias straight onto the attention scores that depends on how far apart the query and key are: scores' = QKᵀ/√d − m·(i−j). No embedding table, no learned parameters — position enters as a penalty on distance.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">scores'[i][j] = QKᵀ/√d  −  m·(i − j)<br><br>added to the SCORES, before softmax<br>nothing added to Q, K, or the inputs</div>`,
+   code:"scores = (Q @ K.T) / d**0.5\nscores = scores - m * (i - j)   # ALiBi: one added term\nA = softmax(scores)             # then usual softmax" },
+ { title:"4. The bias is linear in distance",
+   why:"The penalty −m·(i−j) is a straight line in the distance d = i−j. On the diagonal (d=0, the query attending itself/the newest token) the bias is 0. One step back (d=1) it's −m, two steps −2m, and so on — the farther behind a key sits, the bigger the constant tax on its score. It's the simplest possible recency prior: linear.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">d = i − j   (steps the key is behind)<br><br>bias(d) = −m·d<br>d=0 → 0   d=1 → −m   d=2 → −2m …<br><br>a straight-line penalty on distance</div>`,
+   code:"d    = i - j            # >= 0 in the causal region\nbias = -m * d          # linear: 0, -m, -2m, -3m, ...\n# 0 on the diagonal, more negative going back" },
+ { title:"5. Softmax turns the line into exponential decay",
+   why:"softmax exponentiates, so a bias that is LINEAR in distance becomes a weight that decays EXPONENTIALLY in distance: weight(d) ∝ exp(score) ∝ exp(−m·d). Even with equal raw scores, keys fade like a geometric sequence as they get farther away, giving each head a soft, bounded 'effective window' of roughly 1/m tokens. Bigger m ⇒ faster decay ⇒ tighter recency.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">weight(d) ∝ exp(−m·d)      (from softmax)<br><br>linear penalty → exponential decay<br>effective window ≈ 1/m tokens<br>larger m ⇒ sharper recency</div>`,
+   code:"# with flat scores, softmax(−m·d) gives\n#   weight(d) ∝ exp(−m d)   — geometric fall-off\n# bounded window ~ 1/m ; big m → only nearby keys survive" },
+ { title:"6. One slope per head — a geometric schedule",
+   why:"A single recency scale would be limiting, so ALiBi gives every head its OWN fixed slope. For n heads the slopes are the geometric sequence m_h = 2^(−8h/n): for n=8 that's 1/2, 1/4, 1/8, …, 1/256. Steep-slope heads see only the last token or two (sharp locality); gentle-slope heads keep long-range context. The model attends at many scales simultaneously — for free.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">m_h = 2^(−8h/n)<br>n=8 → 1/2, 1/4, 1/8, …, 1/256<br><br>steep m = local head · gentle m = far head<br>multi-scale recency across the heads</div>`,
+   code:"def head_slopes(n):\n    start = 2 ** (-8 / n)\n    return [start ** (h+1) for h in range(n)]\n# n=8 → [0.5, 0.25, 0.125, ..., 0.00390625]" },
+ { title:"7. Why it extrapolates: distance, not position",
+   why:"The bias reads ONLY the relative distance i−j, never an absolute index. Slide the whole attention window one token to the right and every bias entry is unchanged — it's translation-invariant. So the model never encounters a 'new position' at test time; a longer sequence just means larger distances, and larger distances are simply taxed more by the same rule. Train at 1024, run at 3000, no retraining.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">bias(i,j) depends only on (i − j)<br>bias(7,3) = bias(6,2) = bias(101,97)<br><br>translation-invariant ⇒ no absolute position<br>test length &gt; train length just works</div>`,
+   code:"# translation invariance\nassert bias(i, j) == bias(i+1, j+1)   # same distance\n# no absolute index anywhere → generalises past train length" },
+ { title:"8. ALiBi vs sinusoidal vs RoPE",
+   why:"Sinusoidal (Vaswani 2017): ABSOLUTE, added to the inputs, a sin/cos ladder — extrapolates poorly. RoPE (Su 2021, Day 29): RELATIVE, rotates Q and K by angle ∝ position so their dot product depends on i−j — strong, the LLaMA/GPT-NeoX choice, and extrapolates moderately (better with tricks). ALiBi: RELATIVE, a plain additive distance penalty on the scores — no rotation, no table, the simplest, and the strongest pure length-extrapolator.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">sinusoidal : absolute, add to inputs (sin/cos)<br>RoPE       : relative, ROTATE Q,K by position<br>ALiBi      : relative, ADD −m·(i−j) to scores<br><br>ALiBi = cheapest, best raw extrapolation</div>`,
+   code:"# sinusoidal: X += PE(pos)          # absolute, on inputs\n# RoPE:       Q,K = rotate(Q,K, pos)  # relative, by rotation\n# ALiBi:      scores += -m*(i-j)       # relative, on scores" },
+ { title:"9. Train short, test long — the result",
+   why:"Press, Smith & Lewis (2021) trained on short sequences and evaluated on much longer ones. Sinusoidal and learned embeddings degrade as soon as you pass the training length; ALiBi's perplexity keeps IMPROVING as the context grows, at no extra training cost and slightly LESS memory (no position embeddings to store). That property — plus its one-line simplicity — put ALiBi into BLOOM, MPT and other long-context models.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">train len 1024 → eval 2048, 3072, …<br><br>sinusoidal/learned: ppl ↑ past train len (breaks)<br>ALiBi:            ppl ↓ as context grows<br><br>used in BLOOM · MPT</div>`,
+   code:"# 'Train Short, Test Long' (Press et al. 2021)\n# eval_len >> train_len:\n#   learned/sinusoidal PE → perplexity blows up\n#   ALiBi                 → perplexity keeps dropping" },
+ { title:"10. Recap — position as a penalty",
+   why:"ALiBi is position without embeddings: add −m·(i−j) to the attention scores before the softmax and you're done. Fixed per-head slopes on a geometric ladder (2^(−8h/n)) give multi-scale recency; the softmax turns the linear penalty into exponential distance decay with a bounded window; and because it's a function of relative distance alone, it's translation-invariant and extrapolates from short training to long inference. One matrix, no parameters, no table.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">scores' = QKᵀ/√d − m·(i−j)<br>m_h = 2^(−8h/n) · softmax ⇒ exp(−m·d)<br>relative ⇒ translation-invariant ⇒ extrapolates<br><br>next: Mixture-of-Experts — route tokens to expert MLPs</div>`,
+   code:"# the whole idea on one line:\nscores = (Q @ K.T)/d**0.5 - m*(i - j)   # ALiBi\nattn   = softmax(mask_causal(scores))\n# m per head = 2^(-8h/n) ; no positional embedding at all" },
+];
+</script>
+
+<script>
+// ---- UNDERSTAND engine (shared pattern) ----
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s,i) => { const bn = document.createElement("button");
+  bn.className = "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm";
+  bn.innerHTML = `<div class="font-semibold">${s.title}</div>`; bn.onclick = () => show(i); stepsEl.appendChild(bn); });
+function show(i){ curS = i; const s = STEPS[i];
+  document.getElementById("concept").innerHTML = `<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML = `<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent = s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx) => { bn.className = idx===i
+    ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold"
+    : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick = () => show(Math.max(0, curS-1));
+nextB.onclick = () => show(Math.min(STEPS.length-1, curS+1));
+let tm = null;
+autoB.onclick = () => { if (tm){ clearInterval(tm); tm=null; autoB.textContent="▶ Auto-play"; return; }
+  autoB.textContent = "⏸ Pause"; show(0);
+  tm = setInterval(() => { if (curS >= STEPS.length-1){ clearInterval(tm); tm=null; autoB.textContent="▶ Replay"; return; } show(curS+1); }, 5200); };
+show(0);
+
+function copy(btn){ const pre = btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500); }
+</script>
+</body>
+</html>
