@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 55 — RoPE (Rotary Position Embeddings)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  .kept { color:#059669; font-weight:700; }
+  .recomp { color:#d97706; font-weight:700; }
+  .vio { color:#4f46e5; font-weight:700; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .preset-btn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:7px 12px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; transition:.12s; }
+  .preset-btn:hover{ border-color:#fda4af; }
+  .preset-btn.on{ background:#f43f5e; border-color:#f43f5e; color:#fff; }
+  .metric{ font-variant-numeric:tabular-nums; }
+  canvas{ display:block; }
+  .kvrow{ display:flex; justify-content:space-between; gap:10px; font-size:12px; padding:3px 0; border-bottom:1px dashed #e2e8f0; }
+  .kvrow span:first-child{ color:#64748b; }
+  .legend-sym{ display:inline-flex; width:16px; height:16px; border-radius:5px; }
+  .btn-solid{ background:#f43f5e; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-dark{ background:#0f172a; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-ghost{ background:#fff; border:1.5px solid #e2e8f0; color:#475569; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .bignum{ font-variant-numeric:tabular-nums; font-weight:900; line-height:1; }
+  .statcard{ border-radius:12px; border:1.5px solid #e2e8f0; background:#fff; padding:10px 12px; text-align:center; }
+  .statcard .lab{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; font-weight:800; color:#94a3b8; }
+  /* RoPE-specific */
+  .matwrap{ width:100%; aspect-ratio:1/1; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .matwrap canvas{ width:100%; height:100%; }
+  .plotwrap{ width:100%; height:300px; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .plotwrap canvas{ width:100%; height:100%; }
+  .circlewrap{ width:100%; height:230px; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .circlewrap canvas{ width:100%; height:100%; }
+  .grpcard{ background:#fff; border:1.5px solid #e2e8f0; border-radius:12px; padding:10px 12px; }
+  .grptitle{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; margin-bottom:4px; }
+  .cbar{ display:grid; grid-template-columns:70px 1fr 60px; align-items:center; gap:8px; margin:3px 0; font-size:11px; }
+  .cbar .ct{ position:relative; height:16px; background:#f1f5f9; border-radius:5px; overflow:hidden; }
+  .cbar .cmid{ position:absolute; left:50%; top:0; bottom:0; width:1px; background:#cbd5e1; }
+  .cbar .cf{ position:absolute; top:2px; bottom:2px; border-radius:3px; }
+  .cbar .cv{ text-align:right; font-variant-numeric:tabular-nums; color:#475569; }
+  .freqbar{ display:grid; grid-template-columns:56px 1fr 92px; align-items:center; gap:8px; margin:3px 0; font-size:11px; }
+  .freqbar .ft{ position:relative; height:15px; background:#f1f5f9; border-radius:5px; overflow:hidden; }
+  .freqbar .ff{ position:absolute; left:0; top:0; bottom:0; border-radius:3px; background:#4f46e5; transition:width .12s; }
+  .freqbar.on .ff{ background:#e11d48; }
+  .freqbar.on{ font-weight:800; }
+  .cmpgrid{ display:grid; grid-template-columns:1fr; gap:8px; }
+  @media(min-width:900px){ .cmpgrid{ grid-template-columns:1fr 1fr 1fr; } }
+  .cmpcard{ border:1.5px solid #e2e8f0; border-radius:12px; padding:10px 12px; }
+  .cmptag{ font-size:10px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 55</div>
+      <h1 class="text-xl font-bold">&#128260; RoPE (Rotary Position Embeddings) &mdash; self-attention is <em>order-blind</em>: the raw <span class="mono">QK&#7488;</span> scores are pure content dot-products, so a Transformer has to be <strong>told</strong> where each token sits. Day&nbsp;29&rsquo;s sinusoidal recipe <strong>adds</strong> a positional vector to every token; ALiBi (Day&nbsp;54) <strong>adds</strong> a distance bias to the scores. <strong>RoPE</strong> (Su et&nbsp;al., 2021 &mdash; <em>RoFormer</em>) does neither &mdash; it encodes position by <strong>rotating</strong> the query and key. Split each <span class="mono">d</span>-dim vector into <span class="mono">d/2</span> two-dimensional <strong>pairs</strong>, and for a token at position <span class="mono">p</span> spin pair&nbsp;<span class="mono">i</span> by an angle <span class="sk">&theta; = p&middot;&omega;<sub>i</sub></span> using a <strong>fixed per-pair frequency</strong> <span class="mono">&omega;<sub>i</sub> = base<sup>&minus;2i/d</sup></span> (a geometric ladder from fast to slow, <span class="mono">base = 10000</span> in LLaMA). The magic is a plain rotation identity: the dot product of two rotated vectors depends <em>only</em> on the <strong>difference</strong> of their angles &mdash; <span class="mono">R(m&theta)&#7488;R(n&theta) = R((n&minus;m)&theta)</span> &mdash; so the attention score <span class="mono">q<sub>m</sub>&middot;k<sub>n</sub></span> collapses to a function of the <strong>relative offset <span class="vio">m&minus;n</span> alone</strong>, even though each vector was rotated by its <em>absolute</em> position. <strong>High-frequency</strong> pairs spin fast (fine, local position); <strong>low-frequency</strong> pairs barely move (coarse, long-range) &mdash; a built-in multi-scale code, and because rotation preserves length it never rescales <span class="mono">Q</span> or <span class="mono">K</span>. That relative-offset property is why RoPE powers <strong>LLaMA, GPT-NeoX, PaLM, Mistral</strong> and kin, and why it <strong>stretches to long context</strong> so cleanly &mdash; scale the base or interpolate positions (NTK-aware / position-interpolation) and the wavelengths lengthen without meeting an unseen absolute index. Below: watch the <span class="vio">2D sub-planes</span> rotate as you slide the <span class="sk">query position m</span> and <span class="mono">key position n</span>, see the full <span class="kept">score q&middot;k</span> stay glued to constant diagonals of a <span class="mono">(m,n)</span> heatmap (it depends only on <span class="mono">m&minus;n</span>), and drag the <strong>base / head-dim</strong> across the frequency schedule <span class="mono">&omega;<sub>i</sub> = base<sup>&minus;2i/d</sup></span> &mdash; rotation and dot products implemented <strong>by hand</strong>, no libraries.</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== LOOK ===================== -->
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-6 lg:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">No added position vector &mdash; <span class="vio">rotate</span> the pairs by <span class="sk">p&middot;&omega;<sub>i</sub></span> and the score <span class="kept">q&middot;k</span> depends only on <span class="mono">m&minus;n</span>.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto text-center">Three live panels. <b>(1) The rotation:</b> each 2D sub-plane holds a <span class="vio">query</span> and a <span class="mono">key</span> arrow; the query is turned by <span class="mono">m&middot;&omega;<sub>i</sub></span>, the key by <span class="mono">n&middot;&omega;<sub>i</sub></span>, and their per-plane dot product is <span class="mono">cos</span> of the angle <em>between</em> them. <b>(2) The relative-offset property:</b> the total score over a <span class="mono">(m,n)</span> grid &mdash; it is <b>constant along every diagonal</b> because it depends only on <span class="mono">m&minus;n</span>, so <span class="mono">(5,3)</span> and <span class="mono">(7,5)</span> score the same. <b>(3) The frequency schedule:</b> the geometric ladder <span class="mono">&omega;<sub>i</sub>=base<sup>&minus;2i/d</sup></span> &mdash; fast pairs for local order, slow pairs for long range.</p>
+
+      <!-- ============ control bar ============ -->
+      <div class="bg-white rounded-xl border-2 border-slate-200 p-3 mb-4 flex items-center justify-center flex-wrap gap-4">
+        <div class="ctrl" style="min-width:190px">
+          <label>query position <span class="mono">m</span><span class="sk stat mono" id="mVal">12</span></label>
+          <input type="range" id="mSlider" min="0" max="48" step="1" value="12">
+        </div>
+        <div class="ctrl" style="min-width:190px">
+          <label>key position <span class="mono">n</span><span class="vio stat mono" id="nVal">5</span></label>
+          <input type="range" id="nSlider" min="0" max="48" step="1" value="5">
+        </div>
+        <div class="ctrl" style="min-width:180px">
+          <label>rotary base <span class="mono">b</span><span class="recomp stat mono" id="baseVal">10000</span></label>
+          <input type="range" id="baseSlider" min="1" max="4" step="0.25" value="4">
+        </div>
+        <div class="ctrl" style="min-width:150px">
+          <label>head dim <span class="mono">d</span><span class="kept stat mono" id="dimVal">8</span></label>
+          <input type="range" id="dimSlider" min="4" max="16" step="2" value="8">
+        </div>
+        <button id="lockToggle" class="preset-btn">lock offset m&minus;n</button>
+        <button id="btnReseed" class="btn-ghost">New q, k</button>
+      </div>
+
+      <!-- ============ PANEL 1 : THE ROTATION ============ -->
+      <div class="bg-white rounded-xl border-2 border-indigo-200 p-4 mb-4">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+          <div class="text-sm font-bold text-slate-800">1 &middot; <span class="mono">q<sub>m</sub> = R(m&middot;&omega;)&thinsp;q &nbsp;,&nbsp; k<sub>n</sub> = R(n&middot;&omega;)&thinsp;k</span> &mdash; rotate each 2D pair by its position</div>
+          <div class="text-[11px] text-slate-400">first <span class="mono" id="planeCount">4</span> of <span class="mono" id="pairCount">4</span> pairs shown</div>
+        </div>
+        <p class="text-[12px] text-slate-500 mb-3">Each pair <span class="mono">i</span> is its own little plane. The <span class="vio">query</span> arrow starts at the content angle of <span class="mono">(q<sub>2i</sub>,q<sub>2i+1</sub>)</span> and is <b>rotated by <span class="sk">m&middot;&omega;<sub>i</sub></span></b>; the <span class="mono">key</span> arrow (grey) is rotated by <span class="mono">n&middot;&omega;<sub>i</sub></span>. Rotation never changes a vector&rsquo;s <b>length</b>, so the per-plane dot product is just <span class="mono">|q<sub>i</sub>||k<sub>i</sub>|&middot;cos(&Delta;)</span> where <span class="mono">&Delta;</span> is the angle <em>between</em> the arrows &mdash; and that angle contains <span class="mono">(m&minus;n)&middot;&omega;<sub>i</sub></span>. High-frequency pairs (left) swing far as you move <span class="mono">m</span>; low-frequency pairs (right) barely turn.</p>
+        <div class="circlewrap mb-3"><canvas id="planeC"></canvas></div>
+        <div class="grpcard">
+          <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+            <div class="grptitle" style="color:#0f172a">per-plane contribution to <span class="mono">q<sub>m</sub>&middot;k<sub>n</sub></span></div>
+            <div class="text-[11px] text-slate-500 flex items-center gap-3">
+              <span class="flex items-center gap-1"><span class="legend-sym" style="background:#4f46e5"></span>query&nbsp;q<sub>m</sub></span>
+              <span class="flex items-center gap-1"><span class="legend-sym" style="background:#94a3b8"></span>key&nbsp;k<sub>n</sub></span>
+            </div>
+          </div>
+          <div id="contribBars"></div>
+          <div class="text-[12px] text-slate-600 mt-2" id="scoreReadout">&mdash;</div>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-4 mb-4">
+        <!-- ============ PANEL 2 : RELATIVE-OFFSET PROPERTY ============ -->
+        <div class="bg-white rounded-xl border-2 border-emerald-200 p-4">
+          <div class="text-sm font-bold text-slate-800 mb-1">2 &middot; The score is <span class="kept">Toeplitz</span> &mdash; it depends only on <span class="mono">m&minus;n</span></div>
+          <p class="text-[12px] text-slate-500 mb-3">Every cell is the full rotated score <span class="mono">q<sub>m</sub>&middot;k<sub>n</sub></span> for query row <span class="mono">m</span>, key column <span class="mono">n</span>. Because rotation makes it a function of the <b>difference</b> <span class="mono">m&minus;n</span>, the cell colour is <b>constant along every diagonal</b> (the stripes) &mdash; slide the whole window and nothing changes. The white outline is the selected <span class="mono">(m,n)</span>; the dashed cells share its offset.</p>
+          <div class="matwrap mb-3"><canvas id="toepC"></canvas></div>
+          <div class="grptitle" style="color:#059669">score vs relative offset <span class="mono">t = m&minus;n</span></div>
+          <div class="plotwrap mb-2" style="height:150px"><canvas id="offsetC"></canvas></div>
+          <div class="grpcard text-[12px] text-slate-600" id="eqReadout">&mdash;</div>
+        </div>
+
+        <!-- ============ PANEL 3 : FREQUENCY SCHEDULE ============ -->
+        <div class="bg-white rounded-xl border-2 border-rose-200 p-4">
+          <div class="text-sm font-bold text-slate-800 mb-1">3 &middot; The <span class="sk">frequency schedule</span> <span class="mono">&omega;<sub>i</sub> = base<sup>&minus;2i/d</sup></span></div>
+          <p class="text-[12px] text-slate-500 mb-3">Each pair rotates at its own fixed rate. Pair 0 turns <span class="mono">&omega;<sub>0</sub>=1</span> radian per step (fast, encodes <b>fine</b> local position); later pairs slow geometrically toward <span class="mono">base<sup>&minus;1</sup></span> (slow, long <b>wavelength</b> <span class="mono">&lambda;<sub>i</sub>=2&pi;/&omega;<sub>i</sub></span>, encodes <b>coarse</b> long-range position). Each line below is the angle a pair has turned by <b>position <span class="mono">p</span></b>; the vertical marker is the current query <span class="mono">m</span>.</p>
+          <div class="plotwrap mb-3" style="height:180px"><canvas id="freqC"></canvas></div>
+          <div id="freqBars"></div>
+          <div class="grid grid-cols-3 gap-2 text-center mt-3">
+            <div class="statcard"><div class="lab">pairs d/2</div><div class="bignum text-xl kept mt-1" id="s_pairs">4</div></div>
+            <div class="statcard"><div class="lab">fastest &lambda;</div><div class="bignum text-xl sk mt-1" id="s_lmin">&mdash;</div></div>
+            <div class="statcard"><div class="lab">slowest &lambda;</div><div class="bignum text-xl vio mt-1" id="s_lmax">&mdash;</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ CONTRAST CARD ============ -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">
+        <div class="grptitle mb-2" style="color:#0f172a">Three ways to give a Transformer position</div>
+        <div class="cmpgrid">
+          <div class="cmpcard">
+            <div class="cmptag" style="color:#d97706">Sinusoidal &middot; Day 29</div>
+            <div class="text-[12px] text-slate-600 mt-1"><b>ABSOLUTE</b>, added to the <b>inputs</b>: <span class="mono">x&#8242; = x + PE(p)</span>. A sin/cos ladder or learned table; extrapolates poorly past the trained length.</div>
+          </div>
+          <div class="cmpcard">
+            <div class="cmptag" style="color:#be123c">ALiBi &middot; Day 54</div>
+            <div class="text-[12px] text-slate-600 mt-1"><b>RELATIVE</b>, added to the <b>scores</b>: <span class="mono">&minus;m&middot;(i&minus;j)</span>. A fixed per-head bias; nothing rotates, best raw length-extrapolator.</div>
+          </div>
+          <div class="cmpcard" style="border-color:#c7d2fe;background:#eef2ff">
+            <div class="cmptag" style="color:#4f46e5">RoPE &middot; today</div>
+            <div class="text-[12px] text-slate-600 mt-1"><b>RELATIVE</b>, applied by <b>rotating Q &amp; K</b>: <span class="mono">R(p&omega;)</span>. Score becomes a function of <span class="mono">m&minus;n</span>; preserves norm; scales to long context.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-sm text-slate-600">
+        <b class="text-slate-800">What to try:</b> (1) Turn on <b>lock offset m&minus;n</b>, then drag <b>m</b> across its whole range: the arrows all spin, yet the <span class="kept">score readout stays fixed</span> and the highlighted heatmap cell slides <em>along a constant-colour diagonal</em> &mdash; that <em>is</em> the relative-position property. (2) Set <span class="mono">(m,n)=(5,3)</span> then <span class="mono">(7,5)</span>: identical score, because both have offset 2. (3) Watch panel&nbsp;1 as you move <b>m</b>: the left (high-frequency) plane whirls while the right (low-frequency) plane barely creeps &mdash; that gradient is the schedule <span class="mono">base<sup>&minus;2i/d</sup></span>. (4) Drag <b>rotary base</b> from 10 to 10000: bigger base = slower low-frequency pairs = <b>longer wavelengths</b>, the knob behind long-context (NTK) scaling. (5) Grow <b>head dim d</b>: more pairs join the ladder, finer-to-coarser coverage. (6) Note every arrow keeps its length no matter how far it turns &mdash; rotation is <b>norm-preserving</b>, so RoPE never rescales Q or K.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== UNDERSTAND ===================== -->
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">From added position vectors to a rotation on Q and K</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BUILD ===================== -->
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">RoPE is a rotation bolted onto ordinary attention: no added position vector, no learned parameters, just spin each 2D pair of Q and K by an angle set by its position. We&rsquo;ll build it up: the 2D rotation, the frequency schedule, RoPE on a whole vector, the relative-offset property that falls out of the rotation identity, the full RoPE attention, and the base-scaling trick that unlocks long context.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Rotate a 2D pair &mdash; and it keeps its length</h3></div>
+        <p class="text-sm text-slate-600 mb-3">RoPE works on 2D sub-vectors. Rotating <code>(x,y)</code> by angle <code>a</code> is the 2&times;2 rotation matrix. A rotation is orthogonal, so it <b>preserves the norm</b>: <code>|R(a)v| = |v|</code>. That is why RoPE never rescales Q or K &mdash; it only turns them.</p>
+        <div class="relative"><pre>import numpy as np
+
+def rot2(x, y, a):                 # rotate the pair (x, y) by angle a
+    c, s = np.cos(a), np.sin(a)
+    return x*c - y*s,  x*s + y*c   # R(a) @ [x, y]
+
+v = np.array([0.8, -0.3])
+w = np.array(rot2(v[0], v[1], 1.234))
+assert np.allclose(np.linalg.norm(w), np.linalg.norm(v))   # norm preserved</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">The frequency schedule &mdash; a geometric ladder</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Pair <code>i</code> rotates at its own rate <code>omega_i = base^(-2i/d)</code>. Pair 0 spins at 1 rad/step (fine, local); later pairs slow geometrically toward <code>1/base</code> (coarse, long wavelength <code>2*pi/omega</code>). <code>base = 10000</code> in the original RoPE / LLaMA.</p>
+        <div class="relative"><pre>def rope_freqs(d, base=10000.0):
+    i = np.arange(d // 2)                 # one frequency per PAIR
+    return base ** (-2.0 * i / d)         # omega_i, geometric ladder
+
+rope_freqs(8)
+# [1.0, 0.1, 0.01, 0.001]                # fast -> slow
+# wavelengths 2*pi/omega : 6.28 .. 6283  # local -> long-range</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Apply RoPE to a whole vector at position p</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Split the <code>d</code>-vector into <code>d/2</code> pairs and rotate pair <code>i</code> by <code>p * omega_i</code>. Nothing is <b>added</b> to the vector &mdash; each pair is <b>turned</b>. The same content vector at a different position is the same vector, spun by a different angle.</p>
+        <div class="relative"><pre>def rope(v, p, base=10000.0):
+    d = len(v); w = rope_freqs(d, base)
+    out = v.copy()
+    for i in range(d // 2):
+        a = p * w[i]
+        out[2*i], out[2*i+1] = rot2(v[2*i], v[2*i+1], a)
+    return out                              # q_p = R(p) v  (norm unchanged)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">The relative-offset property &mdash; the whole point</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A dot product of two rotated vectors depends only on the <b>difference</b> of their angles, because <code>R(m*t)^T R(n*t) = R((n-m)*t)</code>. So <code>rope(q,m) &middot; rope(k,n)</code> is a function of <code>m-n</code> alone &mdash; equal for <code>(5,3)</code> and <code>(7,5)</code>, though each vector was rotated by its <b>absolute</b> position.</p>
+        <div class="relative"><pre>def score(q, k, m, n, base=10000.0):
+    return rope(q, m, base) @ rope(k, n, base)
+
+q = np.random.randn(8); k = np.random.randn(8)
+assert np.allclose(score(q, k, 5, 3), score(q, k, 7, 5))   # same offset 2
+assert np.allclose(score(q, k, 9, 9), q @ k)               # offset 0 -> raw q.k</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">RoPE attention &mdash; rotate Q and K, then the usual QK&#7488;</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Rotate every query and key by its position <b>before</b> the dot products; V is untouched, and nothing is added to the inputs. The resulting score matrix is automatically relative &mdash; entry <code>(m,n)</code> only ever sees <code>m-n</code>.</p>
+        <div class="relative"><pre>def rope_attention(Q, K, V, base=10000.0):
+    N, d = Q.shape
+    Qr = np.stack([rope(Q[p], p, base) for p in range(N)])   # rotate queries
+    Kr = np.stack([rope(K[p], p, base) for p in range(N)])   # rotate keys
+    scores = (Qr @ Kr.T) / np.sqrt(d)                        # relative by construction
+    scores[np.triu_indices(N, 1)] = -np.inf                  # causal mask
+    A = np.exp(scores - scores.max(1, keepdims=True))
+    A /= A.sum(1, keepdims=True)
+    return A @ V, A</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Long context &mdash; scale the base, stretch the wavelengths</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Push a model past its trained length and the fast pairs alias. Two fixes reuse the same code: <b>position interpolation</b> squeezes positions (<code>p &rarr; p/s</code>) so old angles cover new lengths; <b>NTK-aware</b> scaling raises the base so the slow pairs stretch while the fast ones stay sharp. Both only touch the schedule &mdash; the rotation is unchanged.</p>
+        <div class="relative"><pre># position interpolation (PI): squeeze positions into the trained range
+def rope_pi(v, p, s):     return rope(v, p / s)          # s = new_len/train_len
+
+# NTK-aware: grow the base so low frequencies stretch, high stay put
+def rope_ntk(v, p, s, d, base=10000.0):
+    return rope(v, p, base * s ** (d / (d - 2)))
+
+# both keep the SAME relative-offset property, just with longer wavelengths</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 55 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2"><strong>RoPE</strong> gives a Transformer position by <em>rotation</em> instead of addition: split Q and K into <span class="mono">d/2</span> 2D pairs and spin pair <span class="mono">i</span> by <span class="mono">p&middot;&omega;<sub>i</sub></span> with the geometric schedule <span class="mono">&omega;<sub>i</sub>=base<sup>&minus;2i/d</sup></span>. Because a dot product of two rotated vectors depends only on the <em>difference</em> of their angles (<span class="mono">R(m&theta;)&#7488;R(n&theta;)=R((n&minus;m)&theta;)</span>), the score <span class="mono">q<sub>m</sub>&middot;k<sub>n</sub></span> is a function of the <strong>relative offset <span class="mono">m&minus;n</span></strong> alone &mdash; the Toeplitz stripes you saw &mdash; even though each vector was rotated by its absolute position. High-frequency pairs encode fine local order, low-frequency pairs encode coarse long-range order, and because rotation preserves norm it never rescales Q or K. Unlike <strong>sinusoidal</strong> (absolute, added to inputs) or <strong>ALiBi</strong> (relative, a bias added to scores), RoPE is relative and applied by <em>rotating</em> Q/K &mdash; which is why it powers <strong>LLaMA, GPT-NeoX, PaLM and Mistral</strong> and stretches to long context via base/position scaling (NTK, PI). <strong>&#128073; Tomorrow, Day 56:</strong> Mixture-of-Experts &mdash; route each token to a few expert MLPs for huge capacity at a cheap per-token cost.</p></div>
+  </div>
+</section>
+
+<script>
+// ---- tab switching ----
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+  if (t.dataset.tab === "look") requestAnimationFrame(() => { render(); });
+});
+</script>
+
+<script>
+// ==================================================================
+//  DAY 55 — RoPE (ROTARY POSITION EMBEDDINGS).
+//  Position by ROTATION, not addition. Split each d-dim query/key
+//  into d/2 two-dimensional pairs and rotate pair i by an angle
+//  proportional to the token's position:
+//
+//      angle_i(p) = p · ω_i ,   ω_i = base^(−2i/d)
+//      q_m = R(m·ω) q ,   k_n = R(n·ω) k
+//
+//  A dot product of two rotated vectors depends only on the
+//  DIFFERENCE of their angles, because  R(mθ)ᵀR(nθ) = R((n−m)θ):
+//
+//      q_m · k_n  =  Σ_i |q_i||k_i| cos( Δφ_i + (m−n)·ω_i )
+//
+//  → the attention score is a function of the RELATIVE offset (m−n)
+//  alone (Toeplitz), and rotation preserves norm. All rotation and
+//  dot products are BY HAND — no libraries.
+// ==================================================================
+
+// ---------- config / state ----------
+const DMAX = 16, NPOS = 48;
+let D = 8;                 // head dim (even) -> P = D/2 pairs
+let baseExp = 4;           // base = 10^baseExp   (10 .. 10000)
+let mPos = 12;             // query position m
+let nPos = 5;              // key position n
+let lockOff = false;       // lock the relative offset m−n
+let lockedT = 7;           // the locked offset value
+let seed = 7;
+let Qvec = [], Kvec = [];  // fixed content vectors (dim DMAX)
+
+function BASE(){ return Math.pow(10, baseExp); }
+function P(){ return D >> 1; }
+
+// ---------- PRNG + gaussian ----------
+function mulberry32(a){
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function randn(rnd){ let u=0,v=0; while(u===0)u=rnd(); while(v===0)v=rnd(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+
+function initVecs(s){
+  const rnd = mulberry32(s >>> 0);
+  Qvec = []; Kvec = [];
+  for (let t=0;t<DMAX;t++){ Qvec.push(randn(rnd)); Kvec.push(randn(rnd)); }
+}
+initVecs(seed);
+
+// ---------- RoPE pieces (by hand) ----------
+function freqs(){                                  // ω_i = base^(−2i/d)
+  const w = [], b = BASE();
+  for (let i=0;i<P();i++) w.push(Math.pow(b, -2*i/D));
+  return w;
+}
+function rope(vec, pos){                            // rotate each pair by pos·ω_i
+  const w = freqs(), out = vec.slice(0, D);
+  for (let i=0;i<w.length;i++){
+    const a = pos*w[i], c = Math.cos(a), s = Math.sin(a);
+    const x = vec[2*i], y = vec[2*i+1];
+    out[2*i]   = x*c - y*s;
+    out[2*i+1] = x*s + y*c;
+  }
+  return out;
+}
+function dot(a,b){ let s=0; for (let i=0;i<a.length;i++) s += a[i]*b[i]; return s; }
+function norm(a){ return Math.sqrt(dot(a,a)); }
+
+// full rotated score q_m · k_n
+function score(m,n){ return dot(rope(Qvec, m), rope(Kvec, n)); }
+
+// score as a function of the relative offset t = m−n (equivalently score(t,0))
+function scoreOffset(t){ return dot(rope(Qvec, t), rope(Kvec, 0)); }
+
+// per-plane geometry + contribution for the current (m,n)
+function planeInfo(m,n){
+  const w = freqs(), res = [];
+  for (let i=0;i<w.length;i++){
+    const qx = Qvec[2*i], qy = Qvec[2*i+1], kx = Kvec[2*i], ky = Kvec[2*i+1];
+    const qbase = Math.atan2(qy,qx), kbase = Math.atan2(ky,kx);
+    const rq = Math.hypot(qx,qy), rk = Math.hypot(kx,ky);
+    const aq = qbase + m*w[i], ak = kbase + n*w[i];
+    const contrib = rq*rk*Math.cos(aq-ak);          // = per-plane dot of rotated pair
+    res.push({ w:w[i], lam:2*Math.PI/w[i], rq, rk, aq, ak, contrib });
+  }
+  return res;
+}
+
+// ---------- colour helpers ----------
+function lerp(a,b,t){ return a + (b-a)*t; }
+function clamp(v,lo,hi){ return v<lo?lo:(v>hi?hi:v); }
+function rgb(c){ return "rgb(" + (c[0]|0) + "," + (c[1]|0) + "," + (c[2]|0) + ")"; }
+function diverge(v){                                 // v in [-1,1] : indigo − white − rose
+  v = clamp(v,-1,1);
+  const lo=[79,70,229], mid=[248,250,252], hi=[225,29,72];
+  if (v < 0){ const t=-v; return rgb([lerp(mid[0],lo[0],t), lerp(mid[1],lo[1],t), lerp(mid[2],lo[2],t)]); }
+  const t=v; return rgb([lerp(mid[0],hi[0],t), lerp(mid[1],hi[1],t), lerp(mid[2],hi[2],t)]);
+}
+
+// ---------- canvas sizing ----------
+function fitCanvas(cv){
+  const R = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 300, h = cv.clientHeight || 300;
+  const pw = Math.round(w*R), ph = Math.round(h*R);
+  if (cv.width !== pw || cv.height !== ph){ cv.width = pw; cv.height = ph; }
+}
+
+// ================= PANEL 1 : rotating sub-planes =================
+function arrow(g, cx, cy, ang, len, col, wid){
+  const ex = cx + Math.cos(ang)*len, ey = cy - Math.sin(ang)*len;  // screen y flips
+  g.strokeStyle = col; g.fillStyle = col; g.lineWidth = wid;
+  g.beginPath(); g.moveTo(cx,cy); g.lineTo(ex,ey); g.stroke();
+  const ah = wid*3;
+  g.beginPath(); g.moveTo(ex,ey);
+  g.lineTo(ex - Math.cos(ang-0.4)*ah, ey + Math.sin(ang-0.4)*ah);
+  g.lineTo(ex - Math.cos(ang+0.4)*ah, ey + Math.sin(ang+0.4)*ah);
+  g.closePath(); g.fill();
+}
+function drawPlanes(){
+  const cv = document.getElementById("planeC"); fitCanvas(cv);
+  const g = cv.getContext("2d"), W = cv.width, H = cv.height, R = window.devicePixelRatio || 1;
+  g.clearRect(0,0,W,H);
+  const info = planeInfo(mPos,nPos);
+  const nShow = Math.min(P(), 4);
+  const cellW = W / nShow;
+  const rad = Math.min(cellW*0.34, H*0.34);
+  const rmax = Math.max(1e-6, Math.max(...info.map(p => Math.max(p.rq,p.rk))));
+  for (let i=0;i<nShow;i++){
+    const cx = cellW*(i+0.5), cy = H*0.44;
+    // circle + axes
+    g.strokeStyle = "#e2e8f0"; g.lineWidth = 1*R;
+    g.beginPath(); g.arc(cx,cy,rad,0,2*Math.PI); g.stroke();
+    g.beginPath(); g.moveTo(cx-rad,cy); g.lineTo(cx+rad,cy); g.moveTo(cx,cy-rad); g.lineTo(cx,cy+rad); g.stroke();
+    // relative-angle arc between the two arrows
+    const p = info[i];
+    g.strokeStyle = "rgba(15,23,42,0.35)"; g.lineWidth = 2.5*R;
+    g.beginPath(); g.arc(cx,cy,rad*0.5, -p.ak, -p.aq, p.aq < p.ak); g.stroke();
+    // key arrow (grey), query arrow (indigo)
+    arrow(g, cx, cy, p.ak, rad*0.92*(p.rk/rmax), "#94a3b8", 2.2*R);
+    arrow(g, cx, cy, p.aq, rad*0.92*(p.rq/rmax), "#4f46e5", 3*R);
+    // labels
+    g.fillStyle = "#0f172a"; g.font = "700 " + (11*R) + "px -apple-system, sans-serif"; g.textAlign="center";
+    g.fillText("pair " + i, cx, H - 30*R);
+    g.fillStyle = "#64748b"; g.font = (10*R) + "px -apple-system, sans-serif";
+    g.fillText("ω=" + p.w.toPrecision(2), cx, H - 16*R);
+    g.fillStyle = p.contrib >= 0 ? "#059669" : "#e11d48";
+    g.fillText("q·k = " + p.contrib.toFixed(2), cx, H - 3*R);
+  }
+}
+function drawContribBars(){
+  const info = planeInfo(mPos,nPos);
+  const host = document.getElementById("contribBars"); host.innerHTML = "";
+  const mag = Math.max(1e-6, Math.max(...info.map(p => Math.abs(p.contrib))));
+  info.forEach((p,i) => {
+    const w = Math.abs(p.contrib)/mag*50;                    // half-width %
+    const pos = p.contrib >= 0;
+    const row = document.createElement("div"); row.className = "cbar";
+    row.innerHTML =
+      "<span class='barlab' style='color:#475569'>pair " + i + " <span class='mono' style='color:#94a3b8'>ω" + p.w.toPrecision(2) + "</span></span>" +
+      "<div class='ct'><div class='cmid'></div>" +
+        "<div class='cf' style='" + (pos ? "left:50%;" : ("left:" + (50-w) + "%;")) +
+          "width:" + w + "%;background:" + (pos ? "#059669" : "#e11d48") + "'></div></div>" +
+      "<span class='cv'>" + p.contrib.toFixed(3) + "</span>";
+    host.appendChild(row);
+  });
+}
+
+// ================= PANEL 2 : Toeplitz score + offset line =================
+function drawToeplitz(){
+  const cv = document.getElementById("toepC"); fitCanvas(cv);
+  const g = cv.getContext("2d"), W = cv.width, H = cv.height, R = window.devicePixelRatio || 1;
+  g.clearRect(0,0,W,H);
+  const K = NPOS + 1;                                  // positions 0..NPOS
+  const padL = 18*R, padT = 18*R;
+  const gw = W - padL - 3*R, gh = H - padT - 3*R;
+  const cw = gw / K, ch = gh / K;
+  // precompute the offset function once (score depends only on m−n)
+  let lo = Infinity, hi = -Infinity; const go = [];
+  for (let t=-NPOS;t<=NPOS;t++){ const v = scoreOffset(t); go[t+NPOS] = v; if (v<lo) lo=v; if (v>hi) hi=v; }
+  const span = Math.max(1e-6, Math.max(Math.abs(lo), Math.abs(hi)));
+  for (let m=0;m<K;m++){
+    for (let n=0;n<K;n++){
+      const v = go[(m-n)+NPOS];
+      g.fillStyle = diverge(v/span);
+      g.fillRect(padL + n*cw, padT + m*ch, cw+0.5, ch+0.5);
+    }
+  }
+  // dashed cells sharing the selected offset
+  const selT = mPos - nPos;
+  g.strokeStyle = "rgba(15,23,42,0.55)"; g.lineWidth = 1*R; g.setLineDash([3*R,3*R]);
+  for (let m=0;m<K;m++){ const n = m - selT; if (n>=0 && n<K){ g.strokeRect(padL+n*cw, padT+m*ch, cw, ch); } }
+  g.setLineDash([]);
+  // selected cell
+  g.strokeStyle = "#0f172a"; g.lineWidth = 2.4*R;
+  g.strokeRect(padL + nPos*cw, padT + mPos*ch, cw, ch);
+  // axis hints
+  g.fillStyle = "#94a3b8"; g.font = (10*R)+"px -apple-system, sans-serif";
+  g.textAlign="left";   g.fillText("n = key →", padL + 2*R, padT - 6*R);
+  g.save(); g.translate(11*R, padT + 2*R); g.rotate(Math.PI/2); g.textAlign="left"; g.fillText("m = query →", 0, 0); g.restore();
+}
+function drawOffset(){
+  const cv = document.getElementById("offsetC"); fitCanvas(cv);
+  const g = cv.getContext("2d"), W = cv.width, H = cv.height, R = window.devicePixelRatio || 1;
+  g.clearRect(0,0,W,H);
+  const pad = 26*R;
+  const tmin = -NPOS, tmax = NPOS;
+  const vals = []; let lo=Infinity, hi=-Infinity;
+  for (let t=tmin;t<=tmax;t++){ const v = scoreOffset(t); vals.push(v); if (v<lo)lo=v; if (v>hi)hi=v; }
+  const yr = Math.max(1e-6, hi-lo);
+  const sx = t => pad + (t-tmin)/(tmax-tmin)*(W-1.4*pad);
+  const sy = v => (H-pad) - (v-lo)/yr*(H-1.7*pad);
+  // zero-offset vertical + baseline
+  g.strokeStyle = "#e2e8f0"; g.lineWidth = 1*R;
+  g.beginPath(); g.moveTo(sx(0), pad*0.4); g.lineTo(sx(0), H-pad); g.stroke();
+  g.beginPath(); g.moveTo(sx(tmin), sy(lo)); g.lineTo(sx(tmax), sy(lo)); g.stroke();
+  // curve
+  g.strokeStyle = "#059669"; g.lineWidth = 2.6*R;
+  g.beginPath(); vals.forEach((v,idx) => { const t = tmin+idx; if (idx===0) g.moveTo(sx(t), sy(v)); else g.lineTo(sx(t), sy(v)); }); g.stroke();
+  // marker at current offset
+  const selT = mPos - nPos, sv = scoreOffset(selT);
+  g.fillStyle = "#e11d48"; g.beginPath(); g.arc(sx(selT), sy(sv), 4*R, 0, 2*Math.PI); g.fill();
+  g.strokeStyle = "#e11d48"; g.lineWidth = 1.4*R; g.setLineDash([4*R,3*R]);
+  g.beginPath(); g.moveTo(sx(selT), pad*0.4); g.lineTo(sx(selT), H-pad); g.stroke(); g.setLineDash([]);
+  g.fillStyle = "#94a3b8"; g.font = (10*R)+"px -apple-system, sans-serif"; g.textAlign="center";
+  g.fillText("t = m − n  (relative offset)", W/2, H - 6*R);
+  g.textAlign="left"; g.fillStyle="#e11d48";
+  g.fillText("t = " + selT + " → " + sv.toFixed(3), sx(selT)+6*R, sy(sv)-6*R);
+}
+
+// ================= PANEL 3 : frequency schedule =================
+function drawFreq(){
+  const cv = document.getElementById("freqC"); fitCanvas(cv);
+  const g = cv.getContext("2d"), W = cv.width, H = cv.height, R = window.devicePixelRatio || 1;
+  g.clearRect(0,0,W,H);
+  const w = freqs(), pad = 30*R;
+  const sx = p => pad + p/NPOS*(W-1.4*pad);
+  const angMax = Math.PI;                                 // wrap-agnostic display band
+  const sy = a => (H-pad) - a/angMax*(H-1.7*pad);
+  // axes
+  g.strokeStyle = "#e2e8f0"; g.lineWidth = 1*R;
+  g.beginPath(); g.moveTo(sx(0), sy(0)); g.lineTo(sx(NPOS), sy(0)); g.stroke();
+  g.beginPath(); g.moveTo(sx(0), sy(0)); g.lineTo(sx(0), sy(angMax)); g.stroke();
+  g.fillStyle = "#94a3b8"; g.font = (10*R)+"px -apple-system, sans-serif"; g.textAlign="center";
+  g.fillText("position p →", W/2, H - 6*R);
+  g.save(); g.translate(11*R, H/2); g.rotate(-Math.PI/2); g.fillText("angle turned (wrapped)", 0, 0); g.restore();
+  const cols = ["#e11d48","#f97316","#eab308","#22c55e","#14b8a6","#3b82f6","#6366f1","#a855f7"];
+  w.forEach((wi,i) => {
+    g.strokeStyle = cols[i % cols.length]; g.lineWidth = 2.2*R;
+    g.beginPath();
+    let first = true;
+    for (let p=0;p<=NPOS;p++){
+      let a = (p*wi) % (2*Math.PI); if (a > Math.PI) a -= 2*Math.PI;   // fold into [-π,π], plot |a|
+      const y = sy(Math.abs(a));
+      if (first){ g.moveTo(sx(p), y); first=false; } else g.lineTo(sx(p), y);
+    }
+    g.stroke();
+  });
+  // current m marker
+  g.strokeStyle = "#0f172a"; g.lineWidth = 1.4*R; g.setLineDash([4*R,3*R]);
+  g.beginPath(); g.moveTo(sx(mPos), sy(0)); g.lineTo(sx(mPos), sy(angMax)); g.stroke(); g.setLineDash([]);
+  g.fillStyle = "#0f172a"; g.font = "700 " + (10*R)+"px -apple-system, sans-serif"; g.textAlign="center";
+  g.fillText("m=" + mPos, sx(mPos), sy(angMax) - 2*R);
+}
+function drawFreqBars(){
+  const w = freqs(), host = document.getElementById("freqBars"); host.innerHTML = "";
+  const wmax = w[0];                                         // ω_0 = 1 is the largest
+  w.forEach((wi,i) => {
+    const row = document.createElement("div"); row.className = "freqbar";
+    // log-scaled width so the geometric ladder is legible
+    const frac = clamp(1 + Math.log10(wi/wmax)/Math.log10(1/BASE()+1e-12), 0.04, 1);
+    row.innerHTML =
+      "<span>pair " + i + "</span>" +
+      "<div class='ft'><div class='ff' style='width:" + (frac*100).toFixed(1) + "%'></div></div>" +
+      "<span class='mono'>λ=" + (2*Math.PI/wi).toFixed(1) + "</span>";
+    host.appendChild(row);
+  });
+}
+
+// ================= wire controls =================
+const mSlider = document.getElementById("mSlider");
+const nSlider = document.getElementById("nSlider");
+const baseSlider = document.getElementById("baseSlider");
+const dimSlider = document.getElementById("dimSlider");
+const lockToggle = document.getElementById("lockToggle");
+
+mSlider.addEventListener("input", e => {
+  mPos = +e.target.value;
+  if (lockOff){ nPos = clamp(mPos - lockedT, 0, NPOS); nSlider.value = nPos; mPos = nPos + lockedT; mSlider.value = mPos; }
+  render();
+});
+nSlider.addEventListener("input", e => {
+  nPos = +e.target.value;
+  if (lockOff){ mPos = clamp(nPos + lockedT, 0, NPOS); mSlider.value = mPos; nPos = mPos - lockedT; nSlider.value = nPos; }
+  render();
+});
+baseSlider.addEventListener("input", e => { baseExp = +e.target.value; render(); });
+dimSlider.addEventListener("input", e => { D = +e.target.value; render(); });
+lockToggle.onclick = () => {
+  lockOff = !lockOff;
+  if (lockOff) lockedT = mPos - nPos;
+  lockToggle.classList.toggle("on", lockOff);
+  lockToggle.textContent = lockOff ? ("offset locked m−n = " + lockedT) : "lock offset m−n";
+  render();
+};
+document.getElementById("btnReseed").onclick = () => { seed = (seed*1664525 + 1013904223) >>> 0; initVecs(seed); render(); };
+
+// ---------- master render ----------
+function render(){
+  const w = freqs();
+  document.getElementById("mVal").textContent = mPos;
+  document.getElementById("nVal").textContent = nPos;
+  document.getElementById("baseVal").textContent = Math.round(BASE());
+  document.getElementById("dimVal").textContent = D;
+  document.getElementById("planeCount").textContent = Math.min(P(),4);
+  document.getElementById("pairCount").textContent = P();
+  document.getElementById("s_pairs").textContent = P();
+  document.getElementById("s_lmin").textContent = (2*Math.PI/w[0]).toFixed(1);
+  document.getElementById("s_lmax").textContent = (2*Math.PI/w[w.length-1]).toFixed(0);
+
+  drawPlanes();
+  drawContribBars();
+  drawToeplitz();
+  drawOffset();
+  drawFreq();
+  drawFreqBars();
+
+  // readouts
+  const sc = score(mPos,nPos), so = scoreOffset(mPos-nPos);
+  const nq = norm(rope(Qvec,mPos)), nq0 = norm(Qvec.slice(0,D));
+  document.getElementById("scoreReadout").innerHTML =
+    "Σ over pairs → <b class='kept mono'>q<sub>m</sub>·k<sub>n</sub> = " + sc.toFixed(3) + "</b> &nbsp;·&nbsp; " +
+    "rotation is norm-preserving: <span class='mono'>|q<sub>m</sub>| = " + nq.toFixed(3) + " = |q| = " + nq0.toFixed(3) + "</span>";
+  const scA = score(5,3), scB = score(7,5);
+  document.getElementById("eqReadout").innerHTML =
+    "Selected offset <b class='mono'>t = m−n = " + (mPos-nPos) + "</b>, score <b class='kept mono'>" + sc.toFixed(3) +
+    "</b> = score-of-offset <span class='mono'>" + so.toFixed(3) + "</span>. " +
+    "Proof it depends only on the offset: <span class='mono'>score(5,3) = " + scA.toFixed(3) +
+    "</span> and <span class='mono'>score(7,5) = " + scB.toFixed(3) + "</span> " +
+    (Math.abs(scA-scB) < 1e-9 ? "<b class='kept'>✓ equal</b>" : "<b class='sk'>✗</b>") + " (both offset 2).";
+}
+
+window.addEventListener("resize", () => { if (!document.getElementById("look").classList.contains("hidden")) render(); });
+
+// ---------- go ----------
+render();
+</script>
+
+<script>
+// ===================== UNDERSTAND — 10 steps =====================
+const STEPS = [
+ { title:"1. Attention is order-blind",
+   why:"Self-attention scores are QKᵀ — pure dot products between token vectors. Permute the tokens and you permute the rows/cols of the score matrix but change nothing about the values: attention has NO built-in notion of who came first. So a Transformer must be told position somehow, or 'the dog bit the man' and 'the man bit the dog' look identical to it.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">score[m][n] = Qₘ · Kₙ<br><br>shuffle tokens → same set of scores<br><br>⇒ attention needs a POSITION signal</div>`,
+   code:"# raw attention has no order\nS = Q @ K.T            # depends only on CONTENT\n# permuting tokens permutes S the same way — no position" },
+ { title:"2. The classic fix: add a position vector",
+   why:"The original Transformer (Day 29) ADDS a positional vector to every token embedding — a sinusoidal ladder or a learned table indexed by absolute position. It works, but 'position 3000' is a code a model trained only to 1024 has literally never seen, and it is ABSOLUTE — added to the inputs, it doesn't cleanly express how far apart two tokens are.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">x'ₚ = xₚ + PE(p)      (added to the INPUT)<br><br>absolute · sin/cos ladder or learned table<br><br>positions &gt; train length = never seen</div>`,
+   code:"# absolute positional embedding (Day 29)\nX = token_emb + pos_emb[:N]   # ADD position to inputs\n# pos_emb[3000] unseen if trained to N=1024" },
+ { title:"3. The RoPE idea: rotate, don't add",
+   why:"RoPE adds NOTHING to the token vectors. Instead it ROTATES the query and key by an angle set by their position, before the dot product. Split each d-dim vector into d/2 two-dimensional pairs; a token at position p turns pair i by p·ωᵢ. Position enters as a rotation of Q and K — never as an added vector.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">qₘ = R(m·ω) q ,  kₙ = R(n·ω) k<br><br>rotate Q, K — nothing is ADDED<br>d/2 pairs, each spun by its position</div>`,
+   code:"q_m = rope(q, m)     # rotate query by its position\nk_n = rope(k, n)     # rotate key by its position\nscore = q_m @ k_n    # then the usual dot product" },
+ { title:"4. Rotating a 2D pair keeps its length",
+   why:"RoPE operates on 2D sub-vectors with the 2×2 rotation matrix R(a). A rotation is orthogonal, so R(a)ᵀR(a)=I and |R(a)v| = |v|: turning a vector never changes its norm. That is why RoPE can rotate Q and K freely without rescaling them — the magnitudes the network learned are left intact.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">R(a) = [ cos a  −sin a ]<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[ sin a   cos a ]<br><br>orthogonal ⇒ |R(a)v| = |v|<br>rotation preserves norm</div>`,
+   code:"def rot2(x, y, a):\n    c, s = cos(a), sin(a)\n    return x*c - y*s, x*s + y*c   # |output| == |(x,y)|" },
+ { title:"5. The frequency schedule ωᵢ = base^(−2i/d)",
+   why:"Each pair rotates at its own fixed rate. Pair 0 spins fast (ω₀=1 rad/step — fine, local position); later pairs slow geometrically toward 1/base (long wavelength λ=2π/ω — coarse, long-range). With d=8 the ω are 1, 0.1, 0.01, 0.001; base=10000 in the original RoPE and LLaMA. It's the same geometric idea as the sinusoidal ladder — but used to set ROTATION rates.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">ωᵢ = base^(−2i/d)<br>d=8 → 1, 0.1, 0.01, 0.001<br><br>fast pair = local · slow pair = long-range<br>wavelength λᵢ = 2π/ωᵢ</div>`,
+   code:"def rope_freqs(d, base=10000.0):\n    i = arange(d // 2)\n    return base ** (-2*i / d)     # one ω per PAIR" },
+ { title:"6. Why the relative offset falls out",
+   why:"Here's the whole trick. Rotate q by m·θ and k by n·θ; their dot product is qᵀ R(mθ)ᵀ R(nθ) k. But R(mθ)ᵀR(nθ) = R(nθ−mθ) = R((n−m)θ) — the two absolute rotations COMBINE into one rotation by their difference. So qₘ·kₙ = qᵀ R((n−m)θ) k depends only on n−m. Absolute rotations in, a RELATIVE angle out.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">qₘ·kₙ = qᵀ R(mθ)ᵀ R(nθ) k<br>R(mθ)ᵀR(nθ) = R((n−m)θ)<br><br>⇒ qₘ·kₙ = qᵀ R((n−m)θ) k<br>depends only on n − m</div>`,
+   code:"# R(a)^T R(b) = R(b - a)\n# so rope(q,m) . rope(k,n) = f(n - m)\nassert isclose(score(q,k,5,3), score(q,k,7,5))  # offset 2" },
+ { title:"7. High vs low frequency = local vs long-range",
+   why:"Because ωᵢ ranges from 1 down to 1/base, the pairs form a multi-scale code. Fast pairs complete a full turn every few tokens, so they resolve FINE relative position; slow pairs turn only a sliver over thousands of tokens, so they carry COARSE long-range position without aliasing. One rotation encodes many scales at once — for free, like the sinusoidal ladder but relative.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">fast ω (λ ~ few tokens) → fine local order<br>slow ω (λ ~ thousands)  → coarse long range<br><br>d/2 pairs span the scales at once</div>`,
+   code:"lam = 2*pi / rope_freqs(d)     # wavelengths\n# short λ pairs: sharp local distance\n# long  λ pairs: slow, long-range distance" },
+ { title:"8. RoPE vs sinusoidal vs ALiBi",
+   why:"Sinusoidal (Vaswani 2017, Day 29): ABSOLUTE, added to the inputs — extrapolates poorly. ALiBi (Day 54): RELATIVE, a fixed bias −m·(i−j) added to the scores — no rotation, best raw extrapolation. RoPE (Su 2021): RELATIVE, applied by ROTATING Q and K so their dot product depends on m−n — norm-preserving, the LLaMA/GPT-NeoX/PaLM/Mistral choice, and it scales to long context via base/position tricks.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">sinusoidal : absolute, ADD to inputs<br>ALiBi      : relative, ADD −m·(i−j) to scores<br>RoPE       : relative, ROTATE Q,K by position<br><br>RoPE = relative & norm-preserving</div>`,
+   code:"# sinusoidal: X += PE(pos)          # absolute, inputs\n# ALiBi:      scores += -m*(i-j)      # relative, scores\n# RoPE:       Q,K = rotate(Q,K, pos)  # relative, rotation" },
+ { title:"9. Long context — scale the base, stretch λ",
+   why:"Past the trained length the fast pairs alias. Two fixes reuse the same rotation: position interpolation (Chen 2023) squeezes positions p→p/s into the trained range; NTK-aware scaling raises the base so the SLOW pairs stretch while the fast stay sharp. Both only change the schedule ω, keeping the relative-offset property — which is how RoPE models reach 32k–128k context.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">PI  : p → p / s        (squeeze positions)<br>NTK : base → base·s^(d/(d−2))<br><br>longer wavelengths, same rotation<br>→ 32k … 128k context</div>`,
+   code:"# position interpolation\nq_m = rope(q, m / s)                 # s = new_len/train_len\n# NTK-aware base scaling\nq_m = rope(q, m, base * s**(d/(d-2)))" },
+ { title:"10. Recap — position as a rotation",
+   why:"RoPE is position without added vectors: split Q and K into d/2 pairs and rotate pair i by p·ωᵢ with ωᵢ=base^(−2i/d). Because R(mθ)ᵀR(nθ)=R((n−m)θ), the score qₘ·kₙ is a function of the relative offset m−n alone (the Toeplitz stripes), while rotation preserves norm. Fast pairs give fine local order, slow pairs long range, and scaling the base/positions unlocks long context. One rotation, no parameters, no table.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">qₘ = R(m·ω) q ,  ωᵢ = base^(−2i/d)<br>R(mθ)ᵀR(nθ) = R((n−m)θ) ⇒ score = f(m−n)<br>relative · norm-preserving · long-context<br><br>next: Mixture-of-Experts — route tokens to expert MLPs</div>`,
+   code:"# the whole idea:\nQr = [rope(Q[p], p) for p in range(N)]\nKr = [rope(K[p], p) for p in range(N)]\nscores = Qr @ Kr.T          # depends only on (m-n)\n# ω_i = base^(-2i/d) ; no positional embedding added" },
+];
+</script>
+
+<script>
+// ---- UNDERSTAND engine (shared pattern) ----
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s,i) => { const bn = document.createElement("button");
+  bn.className = "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm";
+  bn.innerHTML = `<div class="font-semibold">${s.title}</div>`; bn.onclick = () => show(i); stepsEl.appendChild(bn); });
+function show(i){ curS = i; const s = STEPS[i];
+  document.getElementById("concept").innerHTML = `<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML = `<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent = s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx) => { bn.className = idx===i
+    ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold"
+    : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick = () => show(Math.max(0, curS-1));
+nextB.onclick = () => show(Math.min(STEPS.length-1, curS+1));
+let tm = null;
+autoB.onclick = () => { if (tm){ clearInterval(tm); tm=null; autoB.textContent="▶ Auto-play"; return; }
+  autoB.textContent = "⏸ Pause"; show(0);
+  tm = setInterval(() => { if (curS >= STEPS.length-1){ clearInterval(tm); tm=null; autoB.textContent="▶ Replay"; return; } show(curS+1); }, 5200); };
+show(0);
+
+function copy(btn){ const pre = btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500); }
+</script>
+</body>
+</html>

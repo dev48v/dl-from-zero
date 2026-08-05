@@ -56,6 +56,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 52 — CLIP (Contrastive Language–Image Pre-training)](https://dev48v.infy.uk/dl/day52-clip.html) — `day52-clip.html`
 - [DeepLearningFromZero · Day 53 — Gated Linear Units](https://dev48v.infy.uk/dl/day53-gated-linear-units.html) — `day53-gated-linear-units.html`
 - [DeepLearningFromZero · Day 54 — ALiBi (Attention with Linear Biases)](https://dev48v.infy.uk/dl/day54-alibi.html) — `day54-alibi.html`
+- [DeepLearningFromZero · Day 55 — RoPE (Rotary Position Embeddings)](https://dev48v.infy.uk/dl/day55-rope.html) — `day55-rope.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk
