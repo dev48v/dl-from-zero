@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 57 — Sharpness-Aware Minimization</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }   /* sharp / SGD */
+  .fl { color:#047857; font-weight:700; }   /* flat / SAM */
+  .rho { color:#4f46e5; font-weight:700; }  /* rho / ball */
+  .recomp { color:#d97706; font-weight:700; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .preset-btn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:7px 12px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; transition:.12s; }
+  .preset-btn:hover{ border-color:#fda4af; }
+  .preset-btn.on{ background:#f43f5e; border-color:#f43f5e; color:#fff; }
+  canvas{ display:block; }
+  .legend-sym{ display:inline-flex; width:16px; height:16px; border-radius:5px; }
+  .btn-solid{ background:#f43f5e; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-dark{ background:#0f172a; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-ghost{ background:#fff; border:1.5px solid #e2e8f0; color:#475569; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .bignum{ font-variant-numeric:tabular-nums; font-weight:900; line-height:1; }
+  .statcard{ border-radius:12px; border:1.5px solid #e2e8f0; background:#fff; padding:10px 12px; text-align:center; }
+  .statcard .lab{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; font-weight:800; color:#94a3b8; }
+  /* SAM-specific */
+  .surfwrap{ width:100%; height:520px; border-radius:12px; border:1px solid #e2e8f0; background:#0b1020; overflow:hidden; cursor:crosshair; }
+  .surfwrap canvas{ width:100%; height:100%; }
+  .plotwrap{ width:100%; height:200px; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .plotwrap canvas{ width:100%; height:100%; }
+  .grpcard{ background:#fff; border:1.5px solid #e2e8f0; border-radius:12px; padding:10px 12px; }
+  .grptitle{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; margin-bottom:4px; }
+  .sbar{ display:grid; grid-template-columns:70px 1fr 62px; align-items:center; gap:8px; margin:7px 0; font-size:12px; }
+  .sbar .st{ position:relative; height:22px; background:#f1f5f9; border-radius:6px; overflow:hidden; }
+  .sbar .sf{ position:absolute; left:0; top:0; bottom:0; border-radius:6px; }
+  .sbar .sv{ text-align:right; font-variant-numeric:tabular-nums; color:#475569; font-weight:700; }
+  .cmpgrid{ display:grid; grid-template-columns:1fr; gap:8px; }
+  @media(min-width:900px){ .cmpgrid{ grid-template-columns:1fr 1fr 1fr; } }
+  .cmpcard{ border:1.5px solid #e2e8f0; border-radius:12px; padding:10px 12px; }
+  .cmptag{ font-size:10px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 57</div>
+      <h1 class="text-xl font-bold">&#127956; Sharpness-Aware Minimization <em>(SAM)</em> &mdash; ordinary training minimizes only the loss <span class="mono">L(w)</span> at a <strong>single point</strong> in weight space, so it happily dives into the <strong>deepest</strong> hole it finds &mdash; often a <span class="sk">sharp, narrow minimum</span> where the loss is tiny at the bottom but shoots up the instant the weights are nudged. The catch: the test loss is a slightly <em>shifted</em> copy of the train loss, and a sharp minimum sits on a knife-edge &mdash; a small shift and the loss explodes, so it <strong>generalizes badly</strong>. A <span class="fl">wide, flat minimum</span> is robust: perturb the weights and the loss barely moves, so the train and test surfaces stay close and it <strong>generalizes well</strong>. <strong>SAM</strong> (Foret et&nbsp;al., 2021) bakes that in by changing the objective from &ldquo;low loss&rdquo; to &ldquo;low loss in a whole <span class="rho">&rho;-neighbourhood</span>&rdquo;: <span class="mono">min<sub>w</sub> max<sub>&#8741;&delta;&#8741;&le;&rho;</sub> L(w+&delta;)</span>. The inner <strong>max</strong> asks &ldquo;what is the worst loss within radius &rho; of me?&rdquo; &mdash; and its first-order answer is a single step up the <span class="rho">normalized gradient</span> <span class="mono">&delta;&#770; = &rho;&middot;&nabla;L/&#8741;&nabla;L&#8741;</span>. So each SAM update is <strong>two</strong> gradient evaluations: <strong>(1)</strong> climb to the worst nearby point <span class="mono">w<sub>adv</sub> = w + &rho;&middot;g&#770;</span>, <strong>(2)</strong> take the gradient <em>there</em> and descend it from the <em>original</em> <span class="mono">w</span>. That perturbed gradient is the gradient of the <em>worst-case</em> loss, so it fights sharpness directly &mdash; it costs about <strong>2&times;</strong> a normal step and simply wraps any base optimizer (SGD, Adam). Below is a real 2-D loss landscape with a <span class="sk">sharp deep dip</span> and a <span class="fl">wide flat basin</span>: drop a start point, tune <span class="rho">&rho;</span> and the learning rate, and watch plain <span class="sk">SGD</span> fall straight into the sharp dip while <span class="fl">SAM</span>&rsquo;s worst-case step climbs the &rho;-ball, refuses the dip, and settles in the flat basin &mdash; every gradient, the normalized ascent, the two-step update and the contours computed <strong>by hand</strong>, no libraries.</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== LOOK ===================== -->
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-6 lg:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center"><span class="sk">SGD</span> minimizes the loss at a point and drops into the <span class="sk">sharp dip</span>. <span class="fl">SAM</span> minimizes the <span class="rho">worst loss in a &rho;-ball</span> and settles in the <span class="fl">flat basin</span>.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto text-center">A real 2-D loss surface with a <span class="sk">sharp, narrow minimum</span> (tight rings, high curvature) and a <span class="fl">wide, flat minimum</span> (broad rings, low curvature). Both optimizers start from the same point. Watch the <span class="rho">&rho;-ball</span> ride along <span class="fl">SAM</span>&rsquo;s path, the <span class="rho">ascent arrow</span> point at the worst nearby point, and the <b>sharpness gauge</b> below: <span class="sk">SGD</span> ends where sharpness is high, <span class="fl">SAM</span> where it is low. <b>Click the plot</b> to drop a new start.</p>
+
+      <!-- ============ control bar ============ -->
+      <div class="bg-white rounded-xl border-2 border-slate-200 p-3 mb-4 flex items-center justify-center flex-wrap gap-4">
+        <div class="ctrl" style="min-width:200px">
+          <label>neighbourhood <span class="mono">&rho;</span><span class="rho stat mono" id="rhoVal">0.55</span></label>
+          <input type="range" id="rhoSlider" min="0.1" max="1.0" step="0.05" value="0.55">
+        </div>
+        <div class="ctrl" style="min-width:190px">
+          <label>learning rate <span class="mono">lr</span><span class="recomp stat mono" id="lrVal">0.05</span></label>
+          <input type="range" id="lrSlider" min="0.01" max="0.15" step="0.01" value="0.05">
+        </div>
+        <button id="btnRun" class="btn-solid">&#9654; run</button>
+        <button id="btnStep" class="btn-dark">+1 step</button>
+        <button id="btnReset" class="btn-ghost">reset</button>
+        <span class="text-slate-300">|</span>
+        <button class="preset-btn on" data-start="-2.2,0.7">start: sharp side</button>
+        <button class="preset-btn" data-start="1.7,1.0">start: flat side</button>
+        <button class="preset-btn" data-start="-0.55,1.6">start: on the ridge</button>
+      </div>
+
+      <div class="grid lg:grid-cols-3 gap-4 mb-4">
+        <!-- ============ PANEL 1 : LOSS SURFACE ============ -->
+        <div class="bg-white rounded-xl border-2 border-indigo-200 p-4 lg:col-span-2">
+          <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+            <div class="text-sm font-bold text-slate-800">The loss landscape &mdash; <span class="sk">SGD</span> vs <span class="fl">SAM</span> trajectories, the <span class="rho">&rho;-ball</span> &amp; ascent step</div>
+            <div class="text-[11px] text-slate-400">click to drop a start &middot; step <span class="mono" id="stepReadout">0</span></div>
+          </div>
+          <div class="surfwrap mb-2"><canvas id="surfC"></canvas></div>
+          <div class="flex items-center justify-center gap-5 text-[11px] text-slate-500 flex-wrap">
+            <span class="flex items-center gap-1"><span class="legend-sym" style="background:#fb7185"></span><b class="sk">SGD</b> path</span>
+            <span class="flex items-center gap-1"><span class="legend-sym" style="background:#34d399"></span><b class="fl">SAM</b> path</span>
+            <span class="flex items-center gap-1"><span class="legend-sym" style="background:#818cf8"></span><span class="rho">&rho;-ball</span> &amp; ascent to w<sub>adv</sub></span>
+            <span class="flex items-center gap-1"><span class="legend-sym" style="background:#f8fafc;border:1px solid #cbd5e1"></span>bright = high loss</span>
+            <span class="flex items-center gap-1"><span class="legend-sym" style="background:#0f172a"></span>dark = deep minimum</span>
+          </div>
+        </div>
+
+        <!-- ============ PANEL 2 : SHARPNESS + STATS ============ -->
+        <div class="bg-white rounded-xl border-2 border-emerald-200 p-4">
+          <div class="text-sm font-bold text-slate-800 mb-1">Sharpness &mdash; <span class="mono">max<sub>&#8741;&delta;&#8741;=&rho;</sub> L(w+&delta;) &minus; L(w)</span></div>
+          <p class="text-[12px] text-slate-500 mb-2">How much the loss can <b>rise</b> within &rho; of each optimizer&rsquo;s current point &mdash; the genuine worst-case climb over the &rho;-ball. High = sharp = fragile; low = flat = robust.</p>
+          <div class="sbar">
+            <span class="sk" style="font-weight:700">SGD</span>
+            <div class="st"><div class="sf" id="sfSGD" style="background:#fb7185;width:0%"></div></div>
+            <span class="sv sk" id="svSGD">&mdash;</span>
+          </div>
+          <div class="sbar">
+            <span class="fl" style="font-weight:700">SAM</span>
+            <div class="st"><div class="sf" id="sfSAM" style="background:#34d399;width:0%"></div></div>
+            <span class="sv fl" id="svSAM">&mdash;</span>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-center mt-3">
+            <div class="statcard"><div class="lab">SGD loss</div><div class="bignum text-lg sk mt-1" id="s_lossSGD">&mdash;</div></div>
+            <div class="statcard"><div class="lab">SAM loss</div><div class="bignum text-lg fl mt-1" id="s_lossSAM">&mdash;</div></div>
+            <div class="statcard"><div class="lab">SGD basin</div><div class="bignum text-sm sk mt-1" id="s_basSGD">&mdash;</div></div>
+            <div class="statcard"><div class="lab">SAM basin</div><div class="bignum text-sm fl mt-1" id="s_basSAM">&mdash;</div></div>
+          </div>
+          <div class="grptitle mt-3" style="color:#4f46e5">loss vs step</div>
+          <div class="plotwrap"><canvas id="lossC"></canvas></div>
+          <div class="grpcard text-[12px] text-slate-600 mt-3" id="verdict">&mdash;</div>
+        </div>
+      </div>
+
+      <!-- ============ CONTRAST CARD ============ -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">
+        <div class="grptitle mb-2" style="color:#0f172a">Same low training loss, very different generalization</div>
+        <div class="cmpgrid">
+          <div class="cmpcard" style="border-color:#fecdd3;background:#fff1f2">
+            <div class="cmptag" style="color:#be123c">Sharp minimum (SGD)</div>
+            <div class="text-[12px] text-slate-600 mt-1">Deep and narrow. Loss is tiny at the bottom but <b>rockets up</b> for a tiny weight nudge. The test surface is shifted, so the test loss lands on the steep wall &mdash; <b>poor generalization</b>.</div>
+          </div>
+          <div class="cmpcard" style="border-color:#bbf7d0;background:#f0fdf4">
+            <div class="cmptag" style="color:#047857">Flat minimum (SAM)</div>
+            <div class="text-[12px] text-slate-600 mt-1">Wide and shallow-walled. Perturb the weights and the loss <b>barely moves</b>, so the shifted test surface stays near the train one &mdash; <b>better generalization</b>. This is what SAM seeks.</div>
+          </div>
+          <div class="cmpcard">
+            <div class="cmptag" style="color:#4f46e5">The min-max objective</div>
+            <div class="text-[12px] text-slate-600 mt-1"><span class="mono">min<sub>w</sub> max<sub>&#8741;&delta;&#8741;&le;&rho;</sub> L(w+&delta;)</span>. Inner max &rarr; ascend <span class="mono">&delta;&#770;=&rho;g/&#8741;g&#8741;</span>; gradient <b>there</b> is the descent direction &mdash; sharpness enters the gradient itself.</div>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-center mt-3">
+          <div class="statcard"><div class="lab">&rho; (radius)</div><div class="bignum text-lg rho mt-1" id="s_rho">0.55</div></div>
+          <div class="statcard"><div class="lab">grad evals / step</div><div class="bignum text-lg recomp mt-1">2&times;</div></div>
+          <div class="statcard"><div class="lab">&#8741;&delta;&#770;&#8741; (ascent norm)</div><div class="bignum text-lg fl mt-1" id="s_unit">&rho;</div></div>
+          <div class="statcard"><div class="lab">sharpness ratio SGD&#8725;SAM</div><div class="bignum text-lg sk mt-1" id="s_ratio">&mdash;</div></div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-sm text-slate-600">
+        <b class="text-slate-800">What to try:</b> (1) Press <b>run</b> on the default <b>sharp-side start</b>: <span class="sk">SGD</span> slides straight down into the <span class="sk">sharp dip</span> (its sharpness gauge shoots up), while <span class="fl">SAM</span>&rsquo;s worst-case step climbs the near wall, <b>steps over the ridge</b> and comes to rest in the <span class="fl">flat basin</span> with a tiny sharpness. (2) Drag <b>&rho;</b> down toward <span class="mono">0.1</span> and re-run: the &rho;-ball shrinks, SAM can no longer &ldquo;see&rdquo; over the dip&rsquo;s rim, and it gets <b>trapped alongside SGD</b> &mdash; too little sharpness-awareness. (3) Push <b>&rho;</b> up: SAM escapes ever more decisively and settles further into the flat basin (watch the ascent arrow lengthen). (4) Pick <b>start: flat side</b> &mdash; both agree, because a flat minimum is already a fixed point of both. (5) Pick <b>start: on the ridge</b> or click anywhere to see how the basin each optimizer falls into depends on where it begins. (6) Crank the <b>learning rate</b> and watch the steps overshoot &mdash; SAM stays stable because its gradient comes from the smoothed, worst-case surface.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== UNDERSTAND ===================== -->
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">From &ldquo;low loss at a point&rdquo; to &ldquo;low loss in a whole neighbourhood&rdquo;</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BUILD ===================== -->
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">SAM is a tiny wrapper around any base optimizer. We&rsquo;ll build the whole thing from scratch: a toy 2-D loss and its gradient, the normalized ascent step that solves the inner max, the two-step ascent&ndash;descent update, a plain-SGD baseline for contrast, a genuine sharpness measure, and the base-optimizer wrapper form (<code>first_step</code>&thinsp;/&thinsp;<code>second_step</code>) exactly as PyTorch SAM does it &mdash; every gradient by hand.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">The loss and its gradient</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Any differentiable loss works. Here a hand-crafted 2-D surface: a gentle bowl plus two Gaussian wells &mdash; one <b>narrow</b> (sharp) and one <b>wide</b> (flat). We take the gradient analytically, but a black-box finite-difference gradient works identically.</p>
+        <div class="relative"><pre>import numpy as np
+
+def loss(w):                       # w = [x, y]
+    x, y = w
+    bowl  = 0.04*(x*x + y*y)
+    sharp = 0.75*np.exp(-(((x+1.5)**2)+(y**2))/(2*0.26**2))   # narrow  -> sharp
+    flat  = 1.10*np.exp(-(((x-0.7)**2)+(y**2))/(2*1.50**2))   # wide    -> flat
+    return bowl - sharp - flat
+
+def grad(w):                       # analytic gradient of loss(w)
+    x, y = w
+    es = np.exp(-(((x+1.5)**2)+(y**2))/(2*0.26**2))
+    ef = np.exp(-(((x-0.7)**2)+(y**2))/(2*1.50**2))
+    gx = 0.08*x + 0.75*((x+1.5)/0.26**2)*es + 1.10*((x-0.7)/1.50**2)*ef
+    gy = 0.08*y + 0.75*( y      /0.26**2)*es + 1.10*( y      /1.50**2)*ef
+    return np.array([gx, gy])</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">The inner max &rarr; a normalized ascent step</h3></div>
+        <p class="text-sm text-slate-600 mb-3">SAM wants the <b>worst</b> point inside the &rho;-ball: <code>max<sub>&#8741;&delta;&#8741;&le;&rho;</sub> L(w+&delta;)</code>. First order, <code>L(w+&delta;)&asymp;L(w)+&delta;&middot;&nabla;L</code>, which is largest when &delta; points along &nabla;L. Normalize it to length &rho; &mdash; a single unit-norm ascent, no inner loop.</p>
+        <div class="relative"><pre>def ascent(w, rho):
+    g  = grad(w)
+    n  = np.linalg.norm(g) + 1e-12   # guard the zero-gradient case
+    eps = rho * g / n                # &#8741;eps&#8741; == rho exactly (unit dir x rho)
+    return w + eps                   # w_adv: the worst nearby point</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">The SAM update &mdash; ascend, then descend the gradient <em>there</em></h3></div>
+        <p class="text-sm text-slate-600 mb-3">The key move: climb to <code>w_adv = w + &rho;&middot;g&#770;</code>, take the gradient <b>at w_adv</b>, then step from the <b>original</b> w along that perturbed gradient. It is the gradient of the worst-case loss, so descending it flattens the neighbourhood, not just the point.</p>
+        <div class="relative"><pre>def sam_step(w, lr, rho):
+    w_adv = ascent(w, rho)           # step 1: worst point in the rho-ball
+    g_adv = grad(w_adv)              # step 2: gradient THERE (2nd eval)
+    return w - lr * g_adv            #         descend it from the ORIGINAL w</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Plain SGD &mdash; the baseline</h3></div>
+        <p class="text-sm text-slate-600 mb-3">For contrast, ordinary SGD uses the gradient <b>at</b> w (one eval) and knows nothing about the neighbourhood &mdash; so it dives into whatever minimum is nearest, sharp or not.</p>
+        <div class="relative"><pre>def sgd_step(w, lr):
+    return w - lr * grad(w)          # gradient at w; sharpness invisible</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Measuring sharpness</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Sharpness is exactly the inner max minus the centre: how far the loss can climb within &rho;. Sample the &rho;-sphere (its max lies on the boundary) &mdash; a large value means a sharp minimum, near zero means a flat one.</p>
+        <div class="relative"><pre>def sharpness(w, rho, n=180):
+    l0 = loss(w)
+    ring = [loss(w + rho*np.array([np.cos(a), np.sin(a)]))
+            for a in np.linspace(0, 2*np.pi, n, endpoint=False)]
+    return max(ring) - l0            # worst climb over the rho-ball</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">The base-optimizer wrapper form</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Real SAM wraps <b>any</b> optimizer. <code>first_step</code> perturbs the weights to <code>w_adv</code> and stashes the offset; <code>second_step</code> restores <code>w</code>, then lets the <b>base</b> optimizer (SGD, Adam, &hellip;) apply its normal update using the gradient computed at <code>w_adv</code>. Two forward/backward passes per step.</p>
+        <div class="relative"><pre>class SAM:
+    def __init__(self, params, base_opt, rho=0.05):
+        self.base, self.rho, self.e = base_opt, rho, None
+    def first_step(self, w):
+        g = grad(w)
+        self.e = self.rho * g / (np.linalg.norm(g) + 1e-12)
+        return w + self.e            # climb to w_adv; keep the offset e
+    def second_step(self, w_adv):
+        w = w_adv - self.e           # undo the climb -> back to original w
+        g_adv = grad(w_adv)          # gradient at the perturbed point
+        return self.base.update(w, g_adv)   # base optimizer's own rule
+
+# training:  w_adv = sam.first_step(w);  w = sam.second_step(w_adv)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">Train both &mdash; SGD sinks, SAM finds the flat basin</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Run both from the same start. SGD converges to the sharp dip; SAM&rsquo;s worst-case gradient keeps pushing off the steep walls, carries it over the ridge, and it comes to rest in the flat basin &mdash; a slightly higher training loss, far lower sharpness, and better generalization. That is exactly what the live demo animates.</p>
+        <div class="relative"><pre>w_sgd = w_sam = start.copy()
+for t in range(600):
+    w_sgd = sgd_step(w_sgd, lr)
+    w_sam = sam_step(w_sam, lr, rho)
+
+print("SGD :", w_sgd, "sharpness", sharpness(w_sgd, rho))  # high  (sharp dip)
+print("SAM :", w_sam, "sharpness", sharpness(w_sam, rho))  # low   (flat basin)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 57 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2"><strong>Sharpness-Aware Minimization</strong> swaps the training target from the loss at a single point to the <strong>worst loss in a &rho;-neighbourhood</strong>: <span class="mono">min<sub>w</sub> max<sub>&#8741;&delta;&#8741;&le;&rho;</sub> L(w+&delta;)</span>. The inner max is solved in closed form by one <strong>normalized ascent</strong> <span class="mono">&delta;&#770;=&rho;&middot;&nabla;L/&#8741;&nabla;L&#8741;</span>, so each step is two gradient evaluations: climb to the worst nearby point <span class="mono">w<sub>adv</sub></span>, then descend the gradient computed <em>there</em> from the original <span class="mono">w</span>. Because that perturbed gradient is the gradient of the worst-case loss, SAM is pushed away from <strong>sharp, fragile minima</strong> toward <strong>wide, flat ones</strong> that survive the train&rarr;test shift &mdash; measurably better generalization for a &asymp;2&times; compute cost, and it wraps any base optimizer (SGD, Adam). Follow-ups sharpen the idea: <strong>ASAM</strong> makes &rho; adaptive/scale-invariant, and <strong>efficient/Look-SAM</strong> variants amortize the extra pass. You watched plain SGD fall into the sharp dip while SAM stepped over the ridge into the flat basin, its sharpness gauge collapsing &mdash; the whole method built by hand. <strong>&#128073; Tomorrow, Day 58:</strong> Spectral Normalization &mdash; cap each layer&rsquo;s Lipschitz constant to stabilize GAN training.</p></div>
+  </div>
+</section>
+
+<script>
+// ---- tab switching ----
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+  if (t.dataset.tab === "look") requestAnimationFrame(() => { renderSurface(); drawFrame(); });
+});
+</script>
+
+<script>
+// ==================================================================
+//  DAY 57 — SHARPNESS-AWARE MINIMIZATION (SAM).
+//  Ordinary training minimizes L(w) at a single point, so it dives
+//  into the deepest (often SHARP, narrow) minimum it finds. A sharp
+//  minimum has low train loss but explodes under a tiny weight shift,
+//  so the shifted TEST loss is high -> poor generalization. A FLAT
+//  minimum is robust to that shift -> good generalization.
+//
+//  SAM changes the objective to the worst loss in a rho-ball:
+//        min_w  max_{||delta|| <= rho}  L(w + delta)
+//  The inner max, first order, is a single normalized ascent:
+//        delta_hat = rho * grad(w) / ||grad(w)||
+//  So each SAM step is TWO gradient evals:
+//    (1) climb to the worst nearby point  w_adv = w + rho*ghat
+//    (2) take grad THERE, descend it from the ORIGINAL w:
+//        w <- w - lr * grad(w_adv)
+//  That perturbed gradient is the gradient of the worst-case loss,
+//  so SAM is pushed off sharp walls toward flat basins. ~2x cost,
+//  wraps any base optimizer. Surface, gradients, normalized ascent,
+//  two-step update and contours are all BY HAND — no libraries.
+// ==================================================================
+
+// ---------- the toy loss surface (a bowl + two Gaussian wells) ----------
+const SHARP = { cx:-1.5, cy:0.0, D:0.75, s2:0.26*0.26 };   // narrow -> sharp
+const FLAT  = { cx: 0.7, cy:0.0, D:1.10, s2:1.50*1.50 };   // wide   -> flat
+const BOWL  = 0.04;
+const DOM   = 3.2;                                          // domain [-DOM, DOM]^2
+
+function loss(x, y){
+  const es = Math.exp(-(((x-SHARP.cx)**2)+((y-SHARP.cy)**2))/(2*SHARP.s2));
+  const ef = Math.exp(-(((x-FLAT.cx)**2)+((y-FLAT.cy)**2))/(2*FLAT.s2));
+  return BOWL*(x*x+y*y) - SHARP.D*es - FLAT.D*ef;
+}
+// analytic gradient  [dL/dx, dL/dy]
+function grad(x, y){
+  const es = Math.exp(-(((x-SHARP.cx)**2)+((y-SHARP.cy)**2))/(2*SHARP.s2));
+  const ef = Math.exp(-(((x-FLAT.cx)**2)+((y-FLAT.cy)**2))/(2*FLAT.s2));
+  const gx = 2*BOWL*x + SHARP.D*((x-SHARP.cx)/SHARP.s2)*es + FLAT.D*((x-FLAT.cx)/FLAT.s2)*ef;
+  const gy = 2*BOWL*y + SHARP.D*((y-SHARP.cy)/SHARP.s2)*es + FLAT.D*((y-FLAT.cy)/FLAT.s2)*ef;
+  return [gx, gy];
+}
+function gnorm(g){ return Math.hypot(g[0], g[1]); }
+
+// ---------- the two updates (by hand) ----------
+function sgdStep(w, lr){
+  const g = grad(w[0], w[1]);
+  return [w[0]-lr*g[0], w[1]-lr*g[1]];
+}
+// SAM: (1) ascend to worst nearby point, (2) gradient there, descend from ORIGINAL w
+function samStep(w, lr, rho){
+  const g  = grad(w[0], w[1]);
+  const n  = gnorm(g) + 1e-12;
+  const ex = g[0]/n, ey = g[1]/n;            // unit ascent direction
+  const wa = [w[0] + rho*ex, w[1] + rho*ey]; // w_adv (||eps|| == rho)
+  const ga = grad(wa[0], wa[1]);             // gradient at the worst point
+  return { w:[w[0]-lr*ga[0], w[1]-lr*ga[1]], wadv:wa, ghat:[ex,ey] };
+}
+
+// ---------- genuine sharpness = max loss on the rho-sphere - loss at w ----------
+function sharpness(w, rho, n){
+  n = n || 180;
+  const l0 = loss(w[0], w[1]); let mx = -Infinity;
+  for (let i=0;i<n;i++){
+    const a = 2*Math.PI*i/n;
+    const l = loss(w[0]+rho*Math.cos(a), w[1]+rho*Math.sin(a));
+    if (l > mx) mx = l;
+  }
+  return mx - l0;
+}
+
+// which basin does a point drain to? short plain-GD rollout, then nearest well
+function basinOf(w){
+  let p = [w[0], w[1]];
+  for (let i=0;i<500;i++){ const g = grad(p[0],p[1]); p = [p[0]-0.05*g[0], p[1]-0.05*g[1]]; }
+  const ds = Math.hypot(p[0]-SHARP.cx, p[1]-SHARP.cy);
+  const df = Math.hypot(p[0]-FLAT.cx,  p[1]-FLAT.cy);
+  return ds < df ? "SHARP" : "FLAT";
+}
+
+// ---------- state ----------
+let rho = 0.55, lr = 0.05;
+let start = [-2.2, 0.7];
+let wSGD = [...start], wSAM = [...start];
+let trajSGD = [[...start]], trajSAM = [[...start]];
+let lossSGD = [loss(start[0],start[1])], lossSAM = [loss(start[0],start[1])];
+let stepN = 0;
+let runTimer = null;
+const MAXSTEP = 600;
+
+function clamp(v,lo,hi){ return v<lo?lo:(v>hi?hi:v); }
+function resetOpt(){
+  wSGD = [...start]; wSAM = [...start];
+  trajSGD = [[...start]]; trajSAM = [[...start]];
+  lossSGD = [loss(start[0],start[1])]; lossSAM = [loss(start[0],start[1])];
+  stepN = 0;
+}
+function advance(){
+  if (stepN >= MAXSTEP) return false;
+  wSGD = sgdStep(wSGD, lr);
+  wSAM = samStep(wSAM, lr, rho).w;
+  // keep inside the domain (purely cosmetic; math is unaffected here)
+  wSGD = [clamp(wSGD[0],-DOM,DOM), clamp(wSGD[1],-DOM,DOM)];
+  wSAM = [clamp(wSAM[0],-DOM,DOM), clamp(wSAM[1],-DOM,DOM)];
+  trajSGD.push([...wSGD]); trajSAM.push([...wSAM]);
+  lossSGD.push(loss(wSGD[0],wSGD[1])); lossSAM.push(loss(wSAM[0],wSAM[1]));
+  stepN++;
+  return true;
+}
+
+// ---------- canvas sizing + world<->pixel mapping (uniform, square) ----------
+let SC, mapScale, mapCx, mapCy;
+function fitCanvas(cv){
+  const R = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 300, h = cv.clientHeight || 300;
+  const pw = Math.round(w*R), ph = Math.round(h*R);
+  if (cv.width !== pw || cv.height !== ph){ cv.width = pw; cv.height = ph; }
+  return R;
+}
+function computeMap(cv){
+  mapScale = Math.min(cv.width, cv.height) / (2*DOM) * 0.96;
+  mapCx = cv.width/2; mapCy = cv.height/2;
+}
+function W2P(x,y){ return [mapCx + x*mapScale, mapCy - y*mapScale]; }
+function P2W(px,py){ return [(px-mapCx)/mapScale, (mapCy-py)/mapScale]; }
+
+// ---------- colour ramp: dark (deep minimum) -> pale (high loss) ----------
+let Llo = 0, Lhi = 1;
+function computeRange(){
+  Llo = Infinity; Lhi = -Infinity;
+  for (let i=0;i<=80;i++) for (let j=0;j<=80;j++){
+    const x = -DOM + 2*DOM*i/80, y = -DOM + 2*DOM*j/80;
+    const l = loss(x,y); if (l<Llo) Llo=l; if (l>Lhi) Lhi=l;
+  }
+}
+function ramp(t){                                  // t in [0,1]
+  t = clamp(t,0,1);
+  const lo=[15,23,42], mid=[76,29,149], hi=[248,250,252];   // slate900 -> violet900 -> slate50
+  let c;
+  if (t < 0.5){ const u=t/0.5;      c=[lo[0]+(mid[0]-lo[0])*u, lo[1]+(mid[1]-lo[1])*u, lo[2]+(mid[2]-lo[2])*u]; }
+  else        { const u=(t-0.5)/0.5;c=[mid[0]+(hi[0]-mid[0])*u, mid[1]+(hi[1]-mid[1])*u, mid[2]+(hi[2]-mid[2])*u]; }
+  return "rgb("+(c[0]|0)+","+(c[1]|0)+","+(c[2]|0)+")";
+}
+
+// ---------- render the (static) contour surface to an offscreen cache ----------
+let surfCache = null, surfKey = "";
+function renderSurface(){
+  const cv = document.getElementById("surfC"); if (!cv) return;
+  const R = fitCanvas(cv); computeMap(cv);
+  const key = cv.width+"x"+cv.height;
+  if (surfKey === key && surfCache) return;          // already cached at this size
+  surfKey = key;
+  surfCache = document.createElement("canvas");
+  surfCache.width = cv.width; surfCache.height = cv.height;
+  const g = surfCache.getContext("2d");
+  const NB = 15;                                     // contour bands
+  const CELL = Math.max(2, Math.round(3*R));
+  const cols = Math.ceil(cv.width/CELL), rows = Math.ceil(cv.height/CELL);
+  const band = new Array(cols*rows);
+  for (let i=0;i<cols;i++) for (let j=0;j<rows;j++){
+    const px = i*CELL + CELL/2, py = j*CELL + CELL/2;
+    const [x,y] = P2W(px,py);
+    const t = (loss(x,y)-Llo)/(Lhi-Llo);
+    const b = Math.min(NB-1, Math.max(0, Math.floor(t*NB)));
+    band[i*rows+j] = b;
+    g.fillStyle = ramp((b+0.5)/NB);
+    g.fillRect(i*CELL, j*CELL, CELL+1, CELL+1);
+  }
+  // contour lines = band boundaries (thin, subtle)
+  g.strokeStyle = "rgba(226,232,240,0.28)"; g.lineWidth = 1;
+  for (let i=1;i<cols;i++) for (let j=0;j<rows;j++){
+    if (band[i*rows+j] !== band[(i-1)*rows+j]){ g.beginPath(); g.moveTo(i*CELL, j*CELL); g.lineTo(i*CELL,(j+1)*CELL); g.stroke(); }
+  }
+  for (let i=0;i<cols;i++) for (let j=1;j<rows;j++){
+    if (band[i*rows+j] !== band[i*rows+(j-1)]){ g.beginPath(); g.moveTo(i*CELL, j*CELL); g.lineTo((i+1)*CELL, j*CELL); g.stroke(); }
+  }
+  // minima markers + labels
+  drawMin(g, SHARP.cx, SHARP.cy, "#fb7185", "SHARP minimum", R);
+  drawMin(g, FLAT.cx,  FLAT.cy,  "#34d399", "FLAT minimum",  R);
+}
+function drawMin(g, x, y, col, label, R){
+  const [px,py] = W2P(x,y);
+  g.strokeStyle = col; g.lineWidth = 2*R;
+  g.beginPath(); g.arc(px,py, 7*R, 0, 2*Math.PI); g.stroke();
+  g.beginPath(); g.moveTo(px-4*R,py); g.lineTo(px+4*R,py); g.moveTo(px,py-4*R); g.lineTo(px,py+4*R); g.stroke();
+  g.fillStyle = col; g.font = "700 "+(11*R)+"px -apple-system, sans-serif"; g.textAlign="center";
+  g.fillText(label, px, py - 12*R);
+}
+
+// ---------- draw one animation frame: surface + trajectories + rho-ball ----------
+function drawFrame(){
+  const cv = document.getElementById("surfC"); if (!cv) return;
+  const R = fitCanvas(cv); computeMap(cv);
+  if (!surfCache || surfCache.width !== cv.width) renderSurface();
+  const g = cv.getContext("2d");
+  g.clearRect(0,0,cv.width,cv.height);
+  g.drawImage(surfCache, 0, 0);
+
+  // trajectories
+  drawPath(g, trajSGD, "#fb7185", R);
+  drawPath(g, trajSAM, "#34d399", R);
+
+  // SAM rho-ball + ascent arrow at the current SAM point
+  const s = samStep(wSAM, lr, rho);
+  const [cx,cy] = W2P(wSAM[0], wSAM[1]);
+  g.strokeStyle = "rgba(129,140,248,0.9)"; g.setLineDash([5*R,4*R]); g.lineWidth = 1.6*R;
+  g.beginPath(); g.arc(cx, cy, rho*mapScale, 0, 2*Math.PI); g.stroke(); g.setLineDash([]);
+  const [ax,ay] = W2P(s.wadv[0], s.wadv[1]);
+  arrow(g, cx, cy, ax, ay, "#818cf8", R);            // ascent to w_adv
+
+  // start marker
+  const [sx,sy] = W2P(start[0], start[1]);
+  g.fillStyle = "#e2e8f0"; g.strokeStyle="#0f172a"; g.lineWidth=1.5*R;
+  g.beginPath(); g.arc(sx,sy,4.5*R,0,2*Math.PI); g.fill(); g.stroke();
+
+  // heads
+  head(g, wSGD, "#fb7185", "SGD", R);
+  head(g, wSAM, "#34d399", "SAM", R);
+
+  updateStats();
+}
+function drawPath(g, tr, col, R){
+  if (tr.length < 2) return;
+  g.strokeStyle = col; g.lineWidth = 2.4*R; g.lineJoin="round";
+  g.beginPath();
+  for (let i=0;i<tr.length;i++){ const [px,py]=W2P(tr[i][0],tr[i][1]); if(i===0)g.moveTo(px,py); else g.lineTo(px,py); }
+  g.stroke();
+}
+function head(g, w, col, label, R){
+  const [px,py] = W2P(w[0],w[1]);
+  g.fillStyle = col; g.strokeStyle="#0b1020"; g.lineWidth=1.5*R;
+  g.beginPath(); g.arc(px,py,5.5*R,0,2*Math.PI); g.fill(); g.stroke();
+  g.fillStyle = "#fff"; g.font="800 "+(9*R)+"px -apple-system"; g.textAlign="center";
+  g.fillText(label, px, py - 9*R);
+}
+function arrow(g, x0,y0,x1,y1, col, R){
+  g.strokeStyle=col; g.fillStyle=col; g.lineWidth=2*R;
+  g.beginPath(); g.moveTo(x0,y0); g.lineTo(x1,y1); g.stroke();
+  const a = Math.atan2(y1-y0, x1-x0), h=6*R;
+  g.beginPath(); g.moveTo(x1,y1);
+  g.lineTo(x1-h*Math.cos(a-0.4), y1-h*Math.sin(a-0.4));
+  g.lineTo(x1-h*Math.cos(a+0.4), y1-h*Math.sin(a+0.4));
+  g.closePath(); g.fill();
+}
+
+// ---------- loss-vs-step trace ----------
+function drawLoss(){
+  const cv = document.getElementById("lossC"); if (!cv) return;
+  const R = fitCanvas(cv); const g = cv.getContext("2d");
+  const W2 = cv.width, H = cv.height; g.clearRect(0,0,W2,H);
+  const pad = 22*R;
+  const n = Math.max(lossSGD.length, lossSAM.length);
+  const lo = Llo, hi = Lhi*0.5;                      // most action is in the lower half
+  const sx = i => pad + (n<=1?0:i/(n-1))*(W2-1.5*pad);
+  const sy = v => (H-pad) - (clamp(v,lo,hi)-lo)/(hi-lo)*(H-1.7*pad);
+  g.strokeStyle="#e2e8f0"; g.lineWidth=1*R;
+  g.beginPath(); g.moveTo(pad,sy(lo)); g.lineTo(W2-0.5*pad,sy(lo)); g.stroke();
+  function trace(arr, col){
+    if (arr.length<1) return;
+    g.strokeStyle=col; g.lineWidth=2.2*R; g.beginPath();
+    arr.forEach((v,i)=>{ const x=sx(i), y=sy(v); if(i===0)g.moveTo(x,y); else g.lineTo(x,y); });
+    g.stroke();
+  }
+  trace(lossSGD, "#fb7185"); trace(lossSAM, "#34d399");
+  g.fillStyle="#94a3b8"; g.font=(9*R)+"px -apple-system"; g.textAlign="left";
+  g.fillText("loss", pad, 11*R);
+  g.textAlign="center"; g.fillText("step →", W2/2, H-5*R);
+}
+
+// ---------- stats / verdict ----------
+function updateStats(){
+  const shSGD = sharpness(wSGD, rho), shSAM = sharpness(wSAM, rho);
+  const lSGD = loss(wSGD[0],wSGD[1]), lSAM = loss(wSAM[0],wSAM[1]);
+  const bSGD = basinOf(wSGD), bSAM = basinOf(wSAM);
+  const shMax = Math.max(shSGD, shSAM, 1e-6);
+  document.getElementById("sfSGD").style.width = (shSGD/shMax*100).toFixed(1)+"%";
+  document.getElementById("sfSAM").style.width = (shSAM/shMax*100).toFixed(1)+"%";
+  document.getElementById("svSGD").textContent = shSGD.toFixed(3);
+  document.getElementById("svSAM").textContent = shSAM.toFixed(3);
+  document.getElementById("s_lossSGD").textContent = lSGD.toFixed(3);
+  document.getElementById("s_lossSAM").textContent = lSAM.toFixed(3);
+  document.getElementById("s_basSGD").textContent = bSGD;
+  document.getElementById("s_basSAM").textContent = bSAM;
+  document.getElementById("stepReadout").textContent = stepN;
+  document.getElementById("s_rho").textContent = rho.toFixed(2);
+  document.getElementById("s_unit").textContent = rho.toFixed(2);
+  const ratio = shSAM > 1e-4 ? (shSGD/shSAM) : Infinity;
+  document.getElementById("s_ratio").textContent = isFinite(ratio) ? ratio.toFixed(1)+"×" : "∞";
+
+  const flatter = shSAM < shSGD - 1e-3;
+  document.getElementById("verdict").innerHTML =
+    "SGD sits in the <b class='"+(bSGD==="SHARP"?"sk":"fl")+"'>"+bSGD+"</b> minimum (sharpness <b class='sk mono'>"+shSGD.toFixed(3)+"</b>); " +
+    "SAM sits in the <b class='"+(bSAM==="SHARP"?"sk":"fl")+"'>"+bSAM+"</b> minimum (sharpness <b class='fl mono'>"+shSAM.toFixed(3)+"</b>). " +
+    (bSAM==="FLAT" && bSGD==="SHARP"
+       ? "SAM <b class='fl'>stepped over the ridge into the flat basin</b> while SGD stayed trapped in the sharp dip."
+       : (flatter
+            ? "SAM&rsquo;s point is <b class='fl'>"+(isFinite(ratio)?ratio.toFixed(1)+"× flatter":"far flatter")+"</b> than SGD&rsquo;s."
+            : (rho < 0.4
+                 ? "&rho; is too small &mdash; SAM can&rsquo;t see over the dip&rsquo;s rim, so it&rsquo;s trapped alongside SGD. Raise &rho; and re-run."
+                 : "Both landed in the same basin from this start.")));
+}
+
+// ---------- controls ----------
+function stopRun(){ if (runTimer){ clearInterval(runTimer); runTimer=null; document.getElementById("btnRun").innerHTML="&#9654; run"; } }
+document.getElementById("rhoSlider").addEventListener("input", e => { rho = +e.target.value; document.getElementById("rhoVal").textContent = rho.toFixed(2); drawFrame(); });
+document.getElementById("lrSlider").addEventListener("input", e => { lr = +e.target.value; document.getElementById("lrVal").textContent = lr.toFixed(2); });
+document.getElementById("btnRun").onclick = () => {
+  if (runTimer){ stopRun(); return; }
+  if (stepN >= MAXSTEP) resetOpt();
+  document.getElementById("btnRun").innerHTML = "&#9208; pause";
+  runTimer = setInterval(() => {
+    let alive = false;
+    for (let k=0;k<2;k++) alive = advance() || alive;   // 2 steps / tick
+    drawFrame(); drawLoss();
+    if (!alive) stopRun();
+  }, 45);
+};
+document.getElementById("btnStep").onclick = () => { stopRun(); advance(); drawFrame(); drawLoss(); };
+document.getElementById("btnReset").onclick = () => { stopRun(); resetOpt(); drawFrame(); drawLoss(); };
+document.querySelectorAll(".preset-btn").forEach(b => b.onclick = () => {
+  stopRun();
+  document.querySelectorAll(".preset-btn").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on");
+  const p = b.dataset.start.split(",").map(Number);
+  start = [p[0], p[1]]; resetOpt(); drawFrame(); drawLoss();
+});
+// click the plot to drop a start
+document.getElementById("surfC").addEventListener("click", e => {
+  stopRun();
+  const cv = e.currentTarget; const rect = cv.getBoundingClientRect();
+  const R = window.devicePixelRatio || 1;
+  const px = (e.clientX-rect.left)*R, py = (e.clientY-rect.top)*R;
+  const [x,y] = P2W(px,py);
+  start = [clamp(x,-DOM,DOM), clamp(y,-DOM,DOM)];
+  document.querySelectorAll(".preset-btn").forEach(x=>x.classList.remove("on"));
+  resetOpt(); drawFrame(); drawLoss();
+});
+window.addEventListener("resize", () => {
+  if (!document.getElementById("look").classList.contains("hidden")){ surfCache=null; renderSurface(); drawFrame(); drawLoss(); }
+});
+
+// ---------- go ----------
+computeRange();
+renderSurface();
+drawFrame();
+drawLoss();
+</script>
+
+<script>
+// ===================== UNDERSTAND — 10 steps =====================
+const STEPS = [
+ { title:"1. Two minima, two fates: sharp vs flat",
+   why:"A loss surface can have many minima with almost the same training loss but very different SHAPES. A sharp minimum is a deep, narrow spike; a flat minimum is a wide, gentle basin. They score the same on the training set — but they are not equally good, and ordinary training can't tell them apart.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">train loss:  sharp ≈ flat  (both low)<br>shape:       sharp = spike | flat = basin<br><br>SGD only sees the value, not the shape</div>`,
+   code:"# both minima reach low TRAIN loss:\n# loss(sharp_w) ≈ loss(flat_w) ≈ 0\n# but their curvature (Hessian) is wildly different" },
+ { title:"2. Why flatness = generalization",
+   why:"The test loss is a slightly SHIFTED copy of the train loss (different sample of data). Sitting at a sharp minimum, that shift lands you on a steep wall — test loss explodes. At a flat minimum the same shift barely changes the loss. So a flatter minimum generalizes better; empirically, flatness correlates with the train→test gap.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">test surface = train surface + small shift<br>sharp: tiny shift → loss ↑↑   (bad)<br>flat : tiny shift → loss ≈    (good)</div>`,
+   code:"# test ≈ train shifted by δ_data\n# sharp: L_test(w*) ≫ L_train(w*)\n# flat : L_test(w*) ≈ L_train(w*)   <- we want this" },
+ { title:"3. Flatness = robustness to weight perturbation",
+   why:"Make it operational: a minimum is flat if perturbing the WEIGHTS by a small amount hardly raises the loss. That turns a vague geometric idea into something you can optimize — measure the worst loss within a small ball around w and try to make THAT small.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">flat  ⇔  max_{||δ||≤ρ} L(w+δ) is small<br>sharp ⇔  that max is large<br><br>sharpness(w) = max_ball L(w+δ) − L(w)</div>`,
+   code:"def sharpness(w, rho):\n    ring = [loss(w + rho*u) for u in unit_dirs]\n    return max(ring) - loss(w)   # worst climb in the ball" },
+ { title:"4. The min-max objective",
+   why:"SAM replaces 'minimize the loss at w' with 'minimize the WORST loss in a ρ-ball around w'. Formally min_w max_{||δ||≤ρ} L(w+δ). Minimizing the worst-nearby loss forces w into a region where the whole neighbourhood is low — a flat minimum by construction.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">min<sub>w</sub>  max<sub>||δ||≤ρ</sub>  L(w + δ)<br><br>inner max = adversary picks worst δ<br>outer min = we pick a flat w</div>`,
+   code:"# objective:  min_w  max_{||delta||<=rho} L(w + delta)\n# inner max -> worst point in the ball (the adversary)\n# outer min -> move w so even the worst is low" },
+ { title:"5. Solving the inner max in closed form",
+   why:"The inner max looks expensive, but a first-order Taylor expansion cracks it: L(w+δ) ≈ L(w) + δ·∇L(w). A linear function on a ball is maximized at the boundary, in the gradient's direction. So the worst δ is simply the gradient, normalized to length ρ — one step, no inner loop.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">L(w+δ) ≈ L(w) + δ·∇L(w)<br>max over ||δ||≤ρ  ⇒  δ̂ = ρ · ∇L / ||∇L||<br><br>‖δ̂‖ = ρ exactly (unit dir × ρ)</div>`,
+   code:"g   = grad(w)\nghat = g / (norm(g) + 1e-12)   # unit ascent direction\ndelta = rho * ghat             # ||delta|| == rho, points UPHILL" },
+ { title:"6. The ρ-ball / neighbourhood",
+   why:"ρ is the radius of the ball SAM cares about — the scale of weight perturbation it demands robustness to. Too small and SAM ignores sharpness (it collapses to SGD); too large and it over-smooths, blurring real structure. In the demo the dashed circle IS this ball, riding along SAM's path.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">ρ small → SAM ≈ SGD  (sees nothing)<br>ρ right → avoids sharp minima<br>ρ huge  → over-smooths the surface</div>`,
+   code:"# rho sets the neighbourhood scale.\n# rho -> 0   recovers plain SGD (delta -> 0)\n# typical rho ~ 0.05 (weights); tune per model" },
+ { title:"7. The two-step update",
+   why:"Put it together: (1) ASCEND to the worst nearby point w_adv = w + ρ·ĝ — the peak of the ball. (2) Take the gradient THERE and DESCEND it from the ORIGINAL w. The gradient at w_adv is (to first order) the gradient of the worst-case loss, so following it flattens the neighbourhood, not just the point.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">1)  w_adv = w + ρ · ĝ        (climb)<br>2)  w ← w − lr · ∇L(w_adv)  (descend that)<br><br>gradient from the PEAK, applied at the base</div>`,
+   code:"w_adv = w + rho * grad(w)/norm(grad(w))  # step 1: climb\ng_adv = grad(w_adv)                       # step 2: grad THERE\nw     = w - lr * g_adv                     #         descend from w" },
+ { title:"8. Why the gradient at w_adv, not at w?",
+   why:"∇L(w_adv) ≈ ∇ of max_ball L — the sharpness-aware gradient. Near a sharp minimum the ascent lands high on a steep wall, so ∇L(w_adv) is large and points strongly OUT of the sharp basin. Near a flat minimum the ascent barely changes anything, so ∇L(w_adv) ≈ ∇L(w) and SAM behaves like SGD. Sharpness enters the update itself.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">sharp basin: ∇L(w_adv) big, points OUT<br>flat basin : ∇L(w_adv) ≈ ∇L(w)  (gentle)<br><br>∇L(w_adv) ≈ ∇ [ max_{ball} L ]</div>`,
+   code:"# g_adv differs most from g exactly where the\n# surface is SHARP -> that difference pushes w\n# off the sharp wall toward flatter ground" },
+ { title:"9. Cost ≈ 2×, and it wraps any optimizer",
+   why:"Each SAM step needs TWO gradient evaluations — one at w for the ascent, one at w_adv for the descent — so about 2× the compute of a normal step. But it is optimizer-agnostic: first_step perturbs to w_adv, second_step restores w and hands g(w_adv) to the BASE optimizer (SGD, Adam, ...), which applies its usual rule.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">step = 2 forward/backward passes  (≈ 2×)<br><br>first_step  : w → w_adv  (perturb)<br>second_step : restore w, base.update(g_adv)</div>`,
+   code:"w_adv = sam.first_step(w)     # perturb (1st grad)\ng_adv = grad(w_adv)           # 2nd grad\nw     = sam.second_step(g_adv) # base opt uses g_adv" },
+ { title:"10. Recap — seek flat, generalize better",
+   why:"SAM = min_w max_{||δ||≤ρ} L(w+δ), solved by one normalized ascent (δ̂ = ρ∇L/‖∇L‖) then a descent using the gradient at the perturbed point. It steers away from sharp, fragile minima toward wide flat ones that survive the train→test shift — better generalization for ≈2× compute. ASAM makes ρ scale-invariant; efficient variants cut the extra pass. Exactly the escape you watched: SGD into the sharp dip, SAM over the ridge into the flat basin.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">ascend ρ·ĝ → grad there → descend from w<br>⇒ flat minimum ⇒ better generalization<br><br>Foret+ 2021 · ASAM · efficient-SAM<br>next: Spectral Normalization</div>`,
+   code:"# the whole method:\nfor t in range(T):\n    g     = grad(w)\n    w_adv = w + rho * g / (norm(g)+1e-12)   # ascend\n    w     = w - lr * grad(w_adv)            # descend grad THERE\n# -> converges to a FLAT minimum" },
+];
+</script>
+
+<script>
+// ---- UNDERSTAND engine (shared pattern) ----
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s,i) => { const bn = document.createElement("button");
+  bn.className = "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm";
+  bn.innerHTML = `<div class="font-semibold">${s.title}</div>`; bn.onclick = () => show(i); stepsEl.appendChild(bn); });
+function show(i){ curS = i; const s = STEPS[i];
+  document.getElementById("concept").innerHTML = `<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML = `<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent = s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx) => { bn.className = idx===i
+    ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold"
+    : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick = () => show(Math.max(0, curS-1));
+nextB.onclick = () => show(Math.min(STEPS.length-1, curS+1));
+let tm = null;
+autoB.onclick = () => { if (tm){ clearInterval(tm); tm=null; autoB.textContent="▶ Auto-play"; return; }
+  autoB.textContent = "⏸ Pause"; show(0);
+  tm = setInterval(() => { if (curS >= STEPS.length-1){ clearInterval(tm); tm=null; autoB.textContent="▶ Replay"; return; } show(curS+1); }, 5200); };
+show(0);
+
+function copy(btn){ const pre = btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500); }
+</script>
+</body>
+</html>
