@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 56 — Mixture-of-Experts Layer</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .sk { color:#be123c; font-weight:700; }
+  .kept { color:#059669; font-weight:700; }
+  .recomp { color:#d97706; font-weight:700; }
+  .vio { color:#4f46e5; font-weight:700; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .preset-btn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:7px 12px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; transition:.12s; }
+  .preset-btn:hover{ border-color:#fda4af; }
+  .preset-btn.on{ background:#f43f5e; border-color:#f43f5e; color:#fff; }
+  .metric{ font-variant-numeric:tabular-nums; }
+  canvas{ display:block; }
+  .kvrow{ display:flex; justify-content:space-between; gap:10px; font-size:12px; padding:3px 0; border-bottom:1px dashed #e2e8f0; }
+  .kvrow span:first-child{ color:#64748b; }
+  .legend-sym{ display:inline-flex; width:16px; height:16px; border-radius:5px; }
+  .btn-solid{ background:#f43f5e; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-dark{ background:#0f172a; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-ghost{ background:#fff; border:1.5px solid #e2e8f0; color:#475569; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .bignum{ font-variant-numeric:tabular-nums; font-weight:900; line-height:1; }
+  .statcard{ border-radius:12px; border:1.5px solid #e2e8f0; background:#fff; padding:10px 12px; text-align:center; }
+  .statcard .lab{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; font-weight:800; color:#94a3b8; }
+  /* MoE-specific */
+  .routewrap{ width:100%; height:360px; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .routewrap canvas{ width:100%; height:100%; }
+  .heatwrap{ width:100%; height:230px; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .heatwrap canvas{ width:100%; height:100%; }
+  .plotwrap{ width:100%; height:190px; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .plotwrap canvas{ width:100%; height:100%; }
+  .grpcard{ background:#fff; border:1.5px solid #e2e8f0; border-radius:12px; padding:10px 12px; }
+  .grptitle{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; margin-bottom:4px; }
+  /* per-expert load bars: attempts stacked, capacity line, overflow */
+  .lbar{ display:grid; grid-template-columns:74px 1fr 74px; align-items:center; gap:8px; margin:5px 0; font-size:11px; }
+  .lbar .lt{ position:relative; height:20px; background:#f1f5f9; border-radius:5px; overflow:hidden; }
+  .lbar .lkept{ position:absolute; left:0; top:0; bottom:0; background:#10b981; }
+  .lbar .lover{ position:absolute; top:0; bottom:0; background:repeating-linear-gradient(45deg,#f43f5e,#f43f5e 4px,#fb7185 4px,#fb7185 8px); }
+  .lbar .lcap{ position:absolute; top:-2px; bottom:-2px; width:2px; background:#0f172a; z-index:3; }
+  .lbar .lv{ text-align:right; font-variant-numeric:tabular-nums; color:#475569; }
+  .cmpgrid{ display:grid; grid-template-columns:1fr; gap:8px; }
+  @media(min-width:900px){ .cmpgrid{ grid-template-columns:1fr 1fr 1fr; } }
+  .cmpcard{ border:1.5px solid #e2e8f0; border-radius:12px; padding:10px 12px; }
+  .cmptag{ font-size:10px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 56</div>
+      <h1 class="text-xl font-bold">&#128101; Mixture-of-Experts <em>Layer</em> &mdash; a dense Transformer runs <strong>every</strong> token through the <strong>same</strong> feed-forward block, so capacity (parameters) and cost (FLOPs) are welded together: to get a smarter model you pay more per token. An <strong>MoE layer</strong> (Shazeer 2017; Switch, Fedus 2021; Mixtral, 2023) breaks that weld. It replaces the one shared FFN with <span class="vio">N&nbsp;independent expert MLPs</span> plus a tiny <span class="sk">gating network</span> &mdash; a single linear layer whose <span class="mono">softmax</span> over the experts says how much each token wants each expert. The trick is <strong>sparsity</strong>: instead of running all N experts, keep only the <span class="kept">top-k</span> (k&nbsp;=&nbsp;1 in Switch, k&nbsp;=&nbsp;2 in Mixtral), <strong>renormalize</strong> those k gate weights, and combine only those experts&rsquo; outputs &mdash; <span class="mono">y = &Sigma;<sub>e&isin;top-k</sub> g&#771;<sub>e</sub>&middot;E<sub>e</sub>(x)</span>. So total <strong>parameters scale with N</strong> (a Mixtral-8x7B holds ~47B params) while the <strong>FLOPs per token stay fixed</strong> at k experts (~13B active) &mdash; <em>more knowledge, same compute</em>. But real hardware wants dense, equal-sized batches per expert, so each expert gets a fixed <span class="recomp">capacity</span> <span class="mono">C = f&middot;(T&middot;k / N)</span>; tokens routed to an already-full expert <strong>overflow and are dropped</strong> (they skip the layer via the residual). And a raw gate is unstable: whichever experts get picked early get trained more, get picked more &mdash; a rich-get-richer <span class="sk">collapse</span> onto a few experts while the rest die. The fix is an <strong>auxiliary load-balancing loss</strong> <span class="mono">L<sub>aux</sub> = N&middot;&Sigma;<sub>e</sub> f<sub>e</sub>&middot;P<sub>e</sub></span> (fraction of tokens dispatched &times; mean router probability) added to the training loss to <em>encourage uniform expert usage</em>. Below: feed a live stream of tokens through a real gate, watch the <span class="kept">top-k routing</span>, the per-expert <span class="recomp">capacity + dropped tokens</span>, and toggle the <span class="sk">aux loss</span> to watch a collapsed router genuinely rebalance as the loss falls &mdash; softmax, top-k, capacity dispatch and the aux-loss gradient all implemented <strong>by hand</strong>, no libraries.</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== LOOK ===================== -->
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-6 lg:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">One gate, <span class="vio">N experts</span>, keep only the <span class="kept">top-k</span> &mdash; and an <span class="sk">aux loss</span> that stops the router collapsing.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto text-center">A live MoE layer. Each token&rsquo;s <span class="mono">softmax</span> gate is shown as a row; it is routed to its <span class="kept">top-k experts</span> (weights renormalized), each expert has a fixed <span class="recomp">capacity</span> so overflow tokens are <span class="sk">dropped</span>, and the <span class="sk">auxiliary loss</span> <span class="mono">N&middot;&Sigma; f<sub>e</sub>P<sub>e</sub></span> measures how lop-sided the routing is. Turn the aux loss <b>on</b> and press <b>auto-train</b>: the router genuinely rebalances by gradient descent and the loss falls toward its floor of <span class="mono">1</span>.</p>
+
+      <!-- ============ control bar ============ -->
+      <div class="bg-white rounded-xl border-2 border-slate-200 p-3 mb-4 flex items-center justify-center flex-wrap gap-4">
+        <div class="ctrl" style="min-width:170px">
+          <label>experts <span class="mono">N</span><span class="vio stat mono" id="neVal">4</span></label>
+          <input type="range" id="neSlider" min="2" max="8" step="1" value="4">
+        </div>
+        <div class="ctrl" style="min-width:150px">
+          <label>top-k <span class="mono">k</span><span class="kept stat mono" id="kVal">1</span></label>
+          <input type="range" id="kSlider" min="1" max="4" step="1" value="1">
+        </div>
+        <div class="ctrl" style="min-width:190px">
+          <label>capacity factor <span class="mono">f</span><span class="recomp stat mono" id="capVal">1.25</span></label>
+          <input type="range" id="capSlider" min="0.25" max="2" step="0.25" value="1.25">
+        </div>
+        <button id="auxToggle" class="preset-btn on">aux loss: ON</button>
+        <button id="btnTrain" class="btn-solid">&#9654; auto-train</button>
+        <button id="btnStep" class="btn-dark">+1 step</button>
+        <button id="btnReset" class="btn-ghost">reset router</button>
+        <button id="btnReseed" class="btn-ghost">new tokens</button>
+      </div>
+
+      <!-- ============ PANEL 1 : ROUTING GRAPH ============ -->
+      <div class="bg-white rounded-xl border-2 border-indigo-200 p-4 mb-4">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+          <div class="text-sm font-bold text-slate-800">1 &middot; <span class="mono">gate = softmax(W<sub>g</sub>&middot;x)</span> &rarr; route each token to its <span class="kept">top-k</span> experts (edge = renormalized gate weight)</div>
+          <div class="text-[11px] text-slate-400"><span class="mono" id="tokCount">20</span> tokens &middot; capacity <span class="mono recomp" id="capReadout">7</span>/expert</div>
+        </div>
+        <p class="text-[12px] text-slate-500 mb-3">Left: a stream of <span class="mono">T</span> tokens. Right: the <span class="vio">N expert MLPs</span>. Each token sends an edge to the <span class="kept">top-k</span> experts its gate prefers, thickness &prop; the renormalized gate weight. An expert only accepts up to <span class="recomp">C</span> tokens; once full, further tokens <b>overflow</b> and their edges turn <span class="sk">red-dashed</span> (dropped &mdash; that token skips the layer via the residual). Watch a collapsed router pile onto one expert and drop the overflow.</p>
+        <div class="routewrap mb-1"><canvas id="routeC"></canvas></div>
+        <div class="flex items-center justify-center gap-5 text-[11px] text-slate-500 flex-wrap">
+          <span class="flex items-center gap-1"><span class="legend-sym" style="background:#4f46e5"></span>token</span>
+          <span class="flex items-center gap-1"><span class="legend-sym" style="background:#10b981"></span>kept route</span>
+          <span class="flex items-center gap-1"><span class="legend-sym" style="background:#f43f5e"></span>dropped (over capacity)</span>
+          <span class="flex items-center gap-1"><span class="legend-sym" style="background:#1e293b"></span>expert (fill = load / capacity)</span>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-4 mb-4">
+        <!-- ============ PANEL 2 : GATE HEATMAP + LOAD BARS ============ -->
+        <div class="bg-white rounded-xl border-2 border-emerald-200 p-4">
+          <div class="text-sm font-bold text-slate-800 mb-1">2 &middot; The <span class="kept">gate</span> matrix and per-expert <span class="recomp">load vs capacity</span></div>
+          <p class="text-[12px] text-slate-500 mb-2">Heatmap: row = token, column = expert, cell = <span class="mono">softmax</span> gate probability (each <b>row sums to 1</b>). The <span class="kept">top-k</span> cell(s) of each row are outlined &mdash; those are the experts it is dispatched to. Below, each bar is an expert&rsquo;s <b>attempted</b> load; the black tick is capacity <span class="mono">C</span>; the <span class="sk">hatched</span> part past it is dropped.</p>
+          <div class="heatwrap mb-3"><canvas id="gateC"></canvas></div>
+          <div class="grptitle" style="color:#d97706">expert load (attempts) &mdash; green kept, hatched dropped, tick = capacity</div>
+          <div id="loadBars"></div>
+          <div class="grid grid-cols-3 gap-2 text-center mt-3">
+            <div class="statcard"><div class="lab">capacity C</div><div class="bignum text-xl recomp mt-1" id="s_cap">7</div></div>
+            <div class="statcard"><div class="lab">dropped tokens</div><div class="bignum text-xl sk mt-1" id="s_drop">0</div></div>
+            <div class="statcard"><div class="lab">dropped routes</div><div class="bignum text-xl sk mt-1" id="s_dropA">0</div></div>
+          </div>
+        </div>
+
+        <!-- ============ PANEL 3 : AUX LOSS + BALANCE ============ -->
+        <div class="bg-white rounded-xl border-2 border-rose-200 p-4">
+          <div class="text-sm font-bold text-slate-800 mb-1">3 &middot; The <span class="sk">auxiliary load-balancing loss</span> <span class="mono">L<sub>aux</sub> = N&middot;&Sigma;<sub>e</sub> f<sub>e</sub>P<sub>e</sub></span></div>
+          <p class="text-[12px] text-slate-500 mb-2"><span class="mono">f<sub>e</sub></span> = fraction of routed tokens sent to expert e, <span class="mono">P<sub>e</sub></span> = mean router probability for e. Perfectly uniform routing gives the <b>minimum</b> <span class="mono">L<sub>aux</sub> = 1</span>; total collapse onto one expert gives <span class="mono">&asymp; N</span>. With aux <b>on</b>, gradient descent on the gate pushes overused experts down &mdash; watch the trace fall and the load bars even out.</p>
+          <div class="plotwrap mb-2"><canvas id="auxC"></canvas></div>
+          <div class="grid grid-cols-3 gap-2 text-center mb-2">
+            <div class="statcard"><div class="lab">aux loss</div><div class="bignum text-xl sk mt-1" id="s_aux">&mdash;</div></div>
+            <div class="statcard"><div class="lab">max/mean load</div><div class="bignum text-xl vio mt-1" id="s_imb">&mdash;</div></div>
+            <div class="statcard"><div class="lab">train step</div><div class="bignum text-xl kept mt-1" id="s_step">0</div></div>
+          </div>
+          <div class="grpcard text-[12px] text-slate-600" id="auxReadout">&mdash;</div>
+        </div>
+      </div>
+
+      <!-- ============ CONTRAST CARD ============ -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">
+        <div class="grptitle mb-2" style="color:#0f172a">Sparse MoE = more parameters, roughly the same FLOPs per token</div>
+        <div class="cmpgrid">
+          <div class="cmpcard">
+            <div class="cmptag" style="color:#334155">Dense FFN</div>
+            <div class="text-[12px] text-slate-600 mt-1"><b>Every</b> token runs the <b>one</b> shared MLP. Params = 1 FFN; FLOPs/token = 1 FFN. Capacity and cost are the same knob.</div>
+          </div>
+          <div class="cmpcard" style="border-color:#c7d2fe;background:#eef2ff">
+            <div class="cmptag" style="color:#4f46e5">MoE &middot; today</div>
+            <div class="text-[12px] text-slate-600 mt-1">N experts, route top-k. Params &prop; <b>N</b>, FLOPs/token &prop; <b>k</b>. Decouples <b>how much it knows</b> from <b>how much it computes</b>.</div>
+          </div>
+          <div class="cmpcard">
+            <div class="cmptag" style="color:#be123c">Switch / Mixtral</div>
+            <div class="text-[12px] text-slate-600 mt-1"><b>Switch:</b> k=1, thousands of experts. <b>Mixtral-8x7B:</b> N=8, k=2 &rarr; ~47B params but only ~13B <b>active</b> per token.</div>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-center mt-3">
+          <div class="statcard"><div class="lab">total experts N</div><div class="bignum text-lg vio mt-1" id="s_N">4</div></div>
+          <div class="statcard"><div class="lab">active / token k</div><div class="bignum text-lg kept mt-1" id="s_k">1</div></div>
+          <div class="statcard"><div class="lab">param multiplier</div><div class="bignum text-lg mt-1" id="s_pmul">4&times;</div></div>
+          <div class="statcard"><div class="lab">FLOPs vs dense</div><div class="bignum text-lg recomp mt-1" id="s_flop">1&times;</div></div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-sm text-slate-600">
+        <b class="text-slate-800">What to try:</b> (1) Leave <b>k=1</b>, turn the <b>aux loss OFF</b>, and press <b>new tokens</b> a few times: the router <b>collapses</b> &mdash; one expert hogs the traffic, its bar shoots past the capacity tick and a pile of tokens is <span class="sk">dropped</span>, while other experts sit idle (<span class="mono">max/mean load</span> &raquo; 1, aux loss near <span class="mono">N</span>). (2) Now flip <b>aux loss ON</b> and hit <b>auto-train</b>: the gradient pushes the overused expert down, the bars level off, dropped tokens fall to zero and the <span class="sk">aux-loss trace</span> slides toward <span class="mono">1</span> &mdash; that <em>is</em> load balancing. (3) Raise <b>k</b> from 1&rarr;2 (Mixtral&rsquo;s setting): each token now blends two experts and the FLOPs/token doubles while params are unchanged. (4) Shrink the <b>capacity factor</b> toward 0.25: even balanced routing starts dropping tokens because no expert can hold its share &mdash; capacity is a hardware budget, not a correctness knob. (5) Grow <b>N</b>: more parameters for the same k active per token &mdash; the whole point of sparsity.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== UNDERSTAND ===================== -->
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">From one shared FFN to N experts, a gate, and a balancing loss</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BUILD ===================== -->
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">An MoE layer is a dense FFN split into N experts plus a tiny gate that routes each token to a few of them. We&rsquo;ll build it end to end: the softmax gate, top-k selection with renormalized weights, the sparse forward that only runs the chosen experts, the fixed per-expert capacity that drops overflow, the auxiliary load-balancing loss that keeps the gate from collapsing, and one gradient step that proves it rebalances &mdash; softmax, top-k, dispatch and the aux gradient all by hand.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">The gate &mdash; a softmax over the experts</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The gate is a single linear layer <code>W_g</code> that maps a token to one logit per expert, then <code>softmax</code> turns those into a distribution: how much this token wants each expert. Numerically-stable softmax subtracts the max first; the result sums to 1.</p>
+        <div class="relative"><pre>import numpy as np
+
+def softmax(z):
+    z = z - z.max()                 # stability, doesn't change the result
+    e = np.exp(z)
+    return e / e.sum()              # sums to 1
+
+def gate(x, Wg):                    # Wg: (N_experts, d)
+    return softmax(Wg @ x)          # p[e] = P(expert e | token x)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Top-k routing &mdash; keep the k largest, renormalize</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Sparsity is the whole point: don&rsquo;t run all N experts, keep only the <b>top-k</b> gate entries (k=1 Switch, k=2 Mixtral). Renormalize just those k weights so they sum to 1 again &mdash; they become the mixing coefficients for combining the chosen experts&rsquo; outputs.</p>
+        <div class="relative"><pre>def top_k(p, k):
+    idx = np.argsort(p)[::-1][:k]   # indices of the k largest gate probs
+    w   = p[idx]
+    w   = w / w.sum()               # renormalize over the kept experts
+    return idx, w                   # experts to run + their weights
+
+# argsort picks the k largest; renorm makes the kept weights sum to 1</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Sparse forward &mdash; run only the chosen experts</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Each expert is an ordinary MLP. For one token, run only its k experts and take the gate-weighted sum. Because k is fixed, the FLOPs per token stay constant no matter how many experts N you add &mdash; params grow, compute does not.</p>
+        <div class="relative"><pre>def moe_token(x, Wg, experts, k):
+    p        = gate(x, Wg)
+    idx, w   = top_k(p, k)
+    y = np.zeros_like(x)
+    for e, we in zip(idx, w):
+        y += we * experts[e](x)     # only k experts actually run
+    return y                        # cost ~ k experts, not N</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Capacity &mdash; a fixed slot count that drops overflow</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Hardware wants equal, fixed-size batches per expert, so each expert gets <code>C = f * (T*k / N)</code> slots. Dispatch tokens in order; once an expert is full, extra tokens <b>overflow</b> and are dropped &mdash; they skip the layer through the residual connection. <code>f</code> (capacity factor) buys slack against imbalance.</p>
+        <div class="relative"><pre>def dispatch(idxs, T, k, N, f=1.25):
+    C = int(np.ceil(f * T * k / N))     # slots per expert
+    load = np.zeros(N, int); kept = []
+    for token_experts in idxs:          # tokens in arrival order
+        keep = []
+        for e in token_experts:
+            if load[e] &lt; C:
+                load[e] += 1; keep.append(e)   # accepted
+            # else: OVERFLOW -> dropped, token uses the residual
+        kept.append(keep)
+    return kept, load, C</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">The auxiliary load-balancing loss</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A raw gate collapses: a few experts win, get trained more, win more. Switch adds <code>L_aux = N * &Sigma; f_e * P_e</code> to the training loss &mdash; <code>f_e</code> is the fraction of tokens dispatched to e (a hard count), <code>P_e</code> the mean soft router probability for e. It is minimized (=1) exactly when usage is uniform, so it pulls the gate toward balance.</p>
+        <div class="relative"><pre>def aux_loss(P_soft, dispatch_counts, T, k, N):
+    f = dispatch_counts / (T * k)   # fraction of routed tokens per expert
+    P = P_soft.mean(axis=0)         # mean router prob per expert (soft)
+    return N * np.sum(f * P)        # = 1 when uniform, ~N when collapsed</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">One gradient step &mdash; the gate rebalances</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The gradient flows through the <b>soft</b> <code>P_e</code> (the hard count <code>f_e</code> is detached). Through the softmax Jacobian it reduces to a clean rule: push the logit of an over-used expert (large <code>f_e</code>) down. Take a step and the aux loss falls &mdash; that is exactly what the live demo runs.</p>
+        <div class="relative"><pre># dL/dlogit_e = (N/T) * &Sigma;_t p_t[e] * (f_e - &Sigma;_j f_j p_t[j])
+def aux_grad_step(logits, f, lr):
+    P = np.stack([softmax(z) for z in logits])     # (T, N)
+    S = P @ f                                       # per-token &Sigma;_j f_j p_t[j]
+    g = (P * (f[None,:] - S[:,None])).sum(0) * (len(f)/len(P))
+    return logits - lr * g          # over-used expert's logit decreases</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">The whole MoE layer</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Put it together for a batch: gate every token, take top-k, dispatch under capacity, run the kept experts, gate-weight the outputs, and add the aux loss to the main loss during training. Total params scale with N; FLOPs per token scale with k.</p>
+        <div class="relative"><pre>def moe_layer(X, Wg, experts, k, f=1.25, train=False):
+    T, N = len(X), len(experts)
+    P = np.stack([gate(x, Wg) for x in X])          # (T, N) soft gate
+    routes = [top_k(P[t], k) for t in range(T)]     # (idx, w) per token
+    kept, load, C = dispatch([r[0] for r in routes], T, k, N, f)
+    Y = np.zeros_like(X)
+    for t,(idx,w) in enumerate(routes):
+        for e, we in zip(idx, w):
+            if e in kept[t]:                        # respect capacity
+                Y[t] += we * experts[e](X[t])
+        # dropped tokens just keep the residual (Y[t] stays 0 here)
+    L_aux = aux_loss(P, load, T, k, N) if train else 0.0
+    return Y, L_aux                                 # add &lambda;&middot;L_aux to the loss</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 56 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2">A <strong>Mixture-of-Experts layer</strong> replaces one shared FFN with <span class="mono">N</span> expert MLPs and a tiny <span class="mono">softmax</span> gate. Each token is routed to only its <strong>top-k</strong> experts (k=1 Switch, k=2 Mixtral), their gate weights renormalized and their outputs blended &mdash; so <strong>parameters scale with N</strong> while <strong>FLOPs per token scale with k</strong>, decoupling capacity from compute. Real hardware imposes a fixed per-expert <strong>capacity</strong> <span class="mono">C = f&middot;T&middot;k/N</span>, and tokens that overflow a full expert are <strong>dropped</strong> to the residual. Left alone a gate <strong>collapses</strong> onto a few experts, so an <strong>auxiliary load-balancing loss</strong> <span class="mono">N&middot;&Sigma; f<sub>e</sub>P<sub>e</sub></span> (minimized at 1 for uniform usage) is added to the training loss and its gradient pushes over-used experts down &mdash; exactly the rebalancing you watched the trace perform. That sparsity is how <strong>Switch Transformer</strong> and <strong>Mixtral-8x7B</strong> pack tens of billions of parameters while paying for only a fraction per token. <strong>&#128073; Tomorrow, Day 57:</strong> Sharpness-Aware Minimization &mdash; seek flat minima to generalize better.</p></div>
+  </div>
+</section>
+
+<script>
+// ---- tab switching ----
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+  if (t.dataset.tab === "look") requestAnimationFrame(() => { render(); });
+});
+</script>
+
+<script>
+// ==================================================================
+//  DAY 56 — MIXTURE-OF-EXPERTS LAYER.
+//  A dense Transformer FFN runs EVERY token through ONE shared MLP:
+//  params and FLOPs are the same knob. An MoE layer swaps that for
+//  N expert MLPs + a tiny gate, and keeps only the top-k per token:
+//
+//     p      = softmax(W_g · x)           gate distribution over experts
+//     top-k  = k largest of p, renormed   -> mixing weights g~_e
+//     y      = Σ_{e∈top-k} g~_e · E_e(x)   sparse combine
+//
+//  → PARAMS scale with N, FLOPs/token scale with k (decoupled).
+//  Hardware forces a fixed CAPACITY C = f·T·k/N per expert; tokens
+//  that overflow a full expert are DROPPED (skip via residual).
+//  A raw gate COLLAPSES onto a few experts, so an AUX LOAD-BALANCE
+//  loss is added to training:
+//
+//     L_aux = N · Σ_e f_e · P_e   (f_e dispatch fraction, P_e mean prob)
+//
+//  minimized (=1) at uniform usage. Its gradient (through the soft
+//  P_e, f_e detached) pushes over-used experts down. softmax, top-k,
+//  capacity dispatch and the aux gradient are all BY HAND — no libs.
+// ==================================================================
+
+// ---------- config / state ----------
+const T = 20;            // tokens per batch (the "stream")
+const DMODEL = 6;        // token feature dim feeding the gate
+const CONTENT = 0.6;     // weight on the content term vs the popularity skew
+let NE = 4;              // number of experts N
+let K = 1;               // top-k
+let capFactor = 1.25;    // capacity factor f
+let auxOn = true;        // aux loss enabled?
+let step = 0;            // training step counter
+let auxHist = [];        // aux-loss trace
+let seed = 3;
+
+let X = [];              // T token feature vectors (DMODEL)
+let W = [];              // NE expert gate weight rows (DMODEL) — fixed content
+let pop = [];            // per-expert popularity skew (induces collapse)
+let b = [];              // per-expert learnable gate bias (init 0) — trained
+
+// ---------- PRNG + gaussian ----------
+function mulberry32(a){
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function randn(rnd){ let u=0,v=0; while(u===0)u=rnd(); while(v===0)v=rnd(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+
+// build tokens + a fixed content router with a popularity skew that,
+// left unbalanced, makes a couple of experts dominate (collapse).
+function initModel(s){
+  const rnd = mulberry32(s >>> 0);
+  X = [];
+  for (let t=0;t<T;t++){ const v=[]; for(let d=0;d<DMODEL;d++) v.push(randn(rnd)); X.push(v); }
+  W = [];
+  for (let e=0;e<8;e++){ const v=[]; for(let d=0;d<DMODEL;d++) v.push(randn(rnd)*0.9); W.push(v); }
+  // popularity skew: expert 0 most attractive, decaying — the collapse pull
+  pop = [];
+  for (let e=0;e<8;e++) pop.push((7-e)*2.2 + randn(rnd)*0.15);
+  b = new Array(8).fill(0);      // learnable balancing bias, starts at 0
+  step = 0; auxHist = [];
+}
+initModel(seed);
+
+// ---------- gate math (by hand) ----------
+function logitsFor(t){                          // W_g·x + pop + learned bias
+  const out = [];
+  for (let e=0;e<NE;e++){
+    let s = pop[e] + b[e];
+    for (let d=0;d<DMODEL;d++) s += X[t][d]*W[e][d]*CONTENT;
+    out.push(s);
+  }
+  return out;
+}
+function softmax(z){
+  let mx = -Infinity; for (const v of z) if (v>mx) mx=v;
+  let s = 0; const out = [];
+  for (const v of z){ const e = Math.exp(v-mx); out.push(e); s += e; }
+  for (let i=0;i<out.length;i++) out[i] /= s;
+  return out;
+}
+function topkIdx(p, k){                          // indices of k largest, descending
+  const idx = p.map((v,i)=>i).sort((a,bb)=>p[bb]-p[a]);
+  return idx.slice(0, Math.min(k, p.length));
+}
+
+// ---------- full layer compute for the current state ----------
+function compute(){
+  const Pmean = new Array(NE).fill(0);           // mean router prob per expert
+  const attempt = new Array(NE).fill(0);         // router top-k counts (pre-capacity)
+  const tokProb = [], tokTopk = [], tokGate = [];
+  for (let t=0;t<T;t++){
+    const p = softmax(logitsFor(t)); tokProb.push(p);
+    for (let e=0;e<NE;e++) Pmean[e] += p[e];
+    const tk = topkIdx(p, K); tokTopk.push(tk);
+    let z = 0; for (const j of tk) z += p[j];
+    tokGate.push(tk.map(j => p[j]/z));           // renormalized gate weights
+    for (const j of tk) attempt[j]++;
+  }
+  for (let e=0;e<NE;e++) Pmean[e] /= T;
+  const f = attempt.map(a => a/(T*K));           // dispatch fraction (Σ f = 1)
+  let aux = 0; for (let e=0;e<NE;e++) aux += f[e]*Pmean[e]; aux *= NE;
+
+  // capacity dispatch in arrival order
+  const C = Math.max(1, Math.ceil(capFactor * T * K / NE));
+  const load = new Array(NE).fill(0);            // kept load per expert
+  const keptFlags = [];                          // per token, per its top-k
+  let droppedRoutes = 0, droppedTokens = 0;
+  for (let t=0;t<T;t++){
+    const tk = tokTopk[t]; const flags = []; let anyKept = false;
+    for (let j=0;j<tk.length;j++){
+      const e = tk[j];
+      if (load[e] < C){ load[e]++; flags.push(true); anyKept = true; }
+      else { flags.push(false); droppedRoutes++; }
+    }
+    keptFlags.push(flags);
+    if (!anyKept) droppedTokens++;
+  }
+  const meanA = T*K/NE;
+  let maxA = 0; for (let e=0;e<NE;e++) if (attempt[e]>maxA) maxA=attempt[e];
+  const imbalance = maxA/meanA;
+  return { Pmean, attempt, f, aux, C, load, keptFlags, tokProb, tokTopk, tokGate, droppedRoutes, droppedTokens, imbalance };
+}
+
+// ---------- one aux-loss gradient step on the gate bias b ----------
+// dL/db_e = (N/T) Σ_t p_t[e] ( f_e − Σ_j f_j p_t[j] ) ,  f detached
+function trainStep(lr){
+  const r = compute();
+  const grad = new Array(NE).fill(0);
+  for (let t=0;t<T;t++){
+    const p = r.tokProb[t];
+    let S = 0; for (let e=0;e<NE;e++) S += r.f[e]*p[e];
+    for (let e=0;e<NE;e++) grad[e] += p[e]*(r.f[e] - S);
+  }
+  for (let e=0;e<NE;e++){ grad[e] *= NE/T; b[e] -= lr*grad[e]; }
+  step++;
+}
+
+// ---------- colour helpers ----------
+function lerp(a,bb,t){ return a + (bb-a)*t; }
+function clamp(v,lo,hi){ return v<lo?lo:(v>hi?hi:v); }
+function rgb(c){ return "rgb(" + (c[0]|0) + "," + (c[1]|0) + "," + (c[2]|0) + ")"; }
+function seq(v){                                 // v in [0,1] : white -> rose
+  v = clamp(v,0,1);
+  const lo=[248,250,252], hi=[225,29,72];
+  return rgb([lerp(lo[0],hi[0],v), lerp(lo[1],hi[1],v), lerp(lo[2],hi[2],v)]);
+}
+const EXPCOL = ["#4f46e5","#e11d48","#0891b2","#d97706","#059669","#7c3aed","#db2777","#0d9488"];
+
+// ---------- canvas sizing ----------
+function fitCanvas(cv){
+  const R = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 300, h = cv.clientHeight || 300;
+  const pw = Math.round(w*R), ph = Math.round(h*R);
+  if (cv.width !== pw || cv.height !== ph){ cv.width = pw; cv.height = ph; }
+}
+
+// ================= PANEL 1 : routing bipartite graph =================
+function drawRoute(r){
+  const cv = document.getElementById("routeC"); fitCanvas(cv);
+  const g = cv.getContext("2d"), W2 = cv.width, H = cv.height, R = window.devicePixelRatio || 1;
+  g.clearRect(0,0,W2,H);
+  const padT = 24*R, padB = 14*R;
+  const lx = W2*0.16, rx = W2*0.74;
+  const tokY = t => padT + (H-padT-padB) * (T===1?0.5:t/(T-1));
+  const expH = (H-padT-padB) / NE, expY = e => padT + expH*(e+0.5);
+  const ew = W2*0.16, eh = Math.min(expH*0.7, 40*R);
+
+  // headers
+  g.fillStyle = "#94a3b8"; g.font = "700 " + (11*R) + "px -apple-system, sans-serif"; g.textAlign="center";
+  g.fillText("tokens (stream)", lx, 14*R);
+  g.fillText("experts", rx + ew*0.5, 14*R);
+
+  // edges first (under nodes)
+  for (let t=0;t<T;t++){
+    const tk = r.tokTopk[t], gw = r.tokGate[t], flags = r.keptFlags[t];
+    for (let j=0;j<tk.length;j++){
+      const e = tk[j], kept = flags[j];
+      const y0 = tokY(t), y1 = expY(e);
+      g.beginPath(); g.moveTo(lx+3*R, y0);
+      g.bezierCurveTo((lx+rx)/2, y0, (lx+rx)/2, y1, rx-1*R, y1);
+      if (kept){
+        g.strokeStyle = "rgba(16,185,129," + (0.25+0.6*gw[j]).toFixed(3) + ")";
+        g.lineWidth = (0.6 + 2.6*gw[j])*R; g.setLineDash([]);
+      } else {
+        g.strokeStyle = "rgba(244,63,94,0.8)";
+        g.lineWidth = 1.4*R; g.setLineDash([4*R,3*R]);
+      }
+      g.stroke(); g.setLineDash([]);
+    }
+  }
+  // token nodes
+  for (let t=0;t<T;t++){
+    const y = tokY(t);
+    g.fillStyle = "#4f46e5"; g.beginPath(); g.arc(lx, y, 3.4*R, 0, 2*Math.PI); g.fill();
+  }
+  // expert nodes with load/capacity fill
+  for (let e=0;e<NE;e++){
+    const y = expY(e), x = rx;
+    g.fillStyle = "#f1f5f9"; g.strokeStyle = "#1e293b"; g.lineWidth = 1.5*R;
+    roundRect(g, x, y-eh/2, ew, eh, 7*R); g.fill(); g.stroke();
+    const fillFrac = clamp(r.load[e]/r.C, 0, 1);
+    g.fillStyle = EXPCOL[e % EXPCOL.length];
+    roundRect(g, x, y-eh/2, ew*fillFrac, eh, 7*R); g.fill();
+    // over-capacity marker
+    if (r.attempt[e] > r.C){
+      g.fillStyle = "#f43f5e"; g.font = "700 " + (9*R)+"px -apple-system"; g.textAlign="left";
+      g.fillText("+" + (r.attempt[e]-r.C) + " dropped", x+ew+4*R, y+3*R);
+    }
+    g.fillStyle = "#fff"; g.font = "700 " + (10*R)+"px -apple-system, sans-serif"; g.textAlign="center";
+    g.fillText("E" + e, x+ew*0.5, y+3.5*R);
+    g.fillStyle = "#475569"; g.font = (9*R)+"px -apple-system"; g.textAlign="left";
+    g.fillText(r.load[e] + "/" + r.C, x-0.5*R, y - eh/2 - 3*R);
+  }
+}
+function roundRect(g,x,y,w,h,rr){
+  rr = Math.min(rr, w/2, h/2); if (w<=0){ g.beginPath(); return; }
+  g.beginPath();
+  g.moveTo(x+rr,y); g.arcTo(x+w,y,x+w,y+h,rr); g.arcTo(x+w,y+h,x,y+h,rr);
+  g.arcTo(x,y+h,x,y,rr); g.arcTo(x,y,x+w,y,rr); g.closePath();
+}
+
+// ================= PANEL 2 : gate heatmap =================
+function drawGate(r){
+  const cv = document.getElementById("gateC"); fitCanvas(cv);
+  const g = cv.getContext("2d"), W2 = cv.width, H = cv.height, R = window.devicePixelRatio || 1;
+  g.clearRect(0,0,W2,H);
+  const padL = 30*R, padT = 16*R, padB = 6*R, padR = 6*R;
+  const gw = W2-padL-padR, gh = H-padT-padB;
+  const cw = gw/NE, ch = gh/T;
+  for (let t=0;t<T;t++){
+    for (let e=0;e<NE;e++){
+      const p = r.tokProb[t][e];
+      g.fillStyle = seq(p);
+      g.fillRect(padL + e*cw, padT + t*ch, cw+0.5, ch+0.5);
+    }
+    // outline top-k cells (kept solid, dropped red)
+    const tk = r.tokTopk[t], flags = r.keptFlags[t];
+    for (let j=0;j<tk.length;j++){
+      const e = tk[j];
+      g.strokeStyle = flags[j] ? "#0f172a" : "#f43f5e"; g.lineWidth = 1.6*R;
+      if (!flags[j]) g.setLineDash([3*R,2*R]);
+      g.strokeRect(padL + e*cw + 1*R, padT + t*ch + 1*R, cw-2*R, ch-2*R);
+      g.setLineDash([]);
+    }
+  }
+  // labels
+  g.fillStyle = "#94a3b8"; g.font = "700 " + (9*R)+"px -apple-system"; g.textAlign="center";
+  for (let e=0;e<NE;e++) g.fillText("E"+e, padL + (e+0.5)*cw, 11*R);
+  g.save(); g.translate(10*R, padT + gh/2); g.rotate(-Math.PI/2); g.textAlign="center";
+  g.fillText("token →", 0, 0); g.restore();
+}
+
+// ================= PANEL 2 : load bars (HTML) =================
+function drawLoadBars(r){
+  const host = document.getElementById("loadBars"); host.innerHTML = "";
+  let maxAtt = r.C; for (let e=0;e<NE;e++) if (r.attempt[e]>maxAtt) maxAtt=r.attempt[e];
+  maxAtt = Math.max(maxAtt, 1);
+  for (let e=0;e<NE;e++){
+    const att = r.attempt[e], kept = Math.min(att, r.C), over = Math.max(0, att - r.C);
+    const keptW = kept/maxAtt*100, overW = over/maxAtt*100, capX = r.C/maxAtt*100;
+    const row = document.createElement("div"); row.className = "lbar";
+    row.innerHTML =
+      "<span style='color:" + EXPCOL[e%EXPCOL.length] + ";font-weight:700'>expert " + e + "</span>" +
+      "<div class='lt'>" +
+        "<div class='lkept' style='width:" + keptW.toFixed(1) + "%'></div>" +
+        "<div class='lover' style='left:" + keptW.toFixed(1) + "%;width:" + overW.toFixed(1) + "%'></div>" +
+        "<div class='lcap' style='left:" + capX.toFixed(1) + "%'></div>" +
+      "</div>" +
+      "<span class='lv'>" + kept + (over>0 ? " +<b class='sk'>"+over+"</b>" : "") + "</span>";
+    host.appendChild(row);
+  }
+}
+
+// ================= PANEL 3 : aux-loss trace =================
+function drawAux(){
+  const cv = document.getElementById("auxC"); fitCanvas(cv);
+  const g = cv.getContext("2d"), W2 = cv.width, H = cv.height, R = window.devicePixelRatio || 1;
+  g.clearRect(0,0,W2,H);
+  const pad = 26*R;
+  const lo = 1, hi = Math.max(NE, 1.05);           // aux in [1, N]
+  const n = auxHist.length;
+  const sx = i => pad + (n<=1?0:i/(n-1))*(W2-1.4*pad);
+  const sy = v => (H-pad) - (v-lo)/(hi-lo)*(H-1.7*pad);
+  // floor + ceil guides
+  g.strokeStyle = "#e2e8f0"; g.lineWidth = 1*R;
+  g.beginPath(); g.moveTo(pad, sy(lo)); g.lineTo(W2-0.4*pad, sy(lo)); g.stroke();
+  g.beginPath(); g.moveTo(pad, sy(hi)); g.lineTo(W2-0.4*pad, sy(hi)); g.stroke();
+  g.fillStyle = "#94a3b8"; g.font = (9*R)+"px -apple-system"; g.textAlign="left";
+  g.fillText("collapse ≈ N = " + NE, pad+2*R, sy(hi)+11*R);
+  g.fillText("uniform = 1 (min)", pad+2*R, sy(lo)-4*R);
+  if (n >= 1){
+    g.strokeStyle = "#e11d48"; g.lineWidth = 2.4*R; g.beginPath();
+    auxHist.forEach((v,i)=>{ const x=sx(i), y=sy(clamp(v,lo,hi)); if(i===0)g.moveTo(x,y); else g.lineTo(x,y); });
+    g.stroke();
+    const lastV = auxHist[n-1];
+    g.fillStyle = "#e11d48"; g.beginPath(); g.arc(sx(n-1), sy(clamp(lastV,lo,hi)), 3.5*R, 0, 2*Math.PI); g.fill();
+  }
+  g.fillStyle = "#94a3b8"; g.font = (9*R)+"px -apple-system"; g.textAlign="center";
+  g.fillText("training step →", W2/2, H-6*R);
+}
+
+// ================= wire controls =================
+const neSlider = document.getElementById("neSlider");
+const kSlider = document.getElementById("kSlider");
+const capSlider = document.getElementById("capSlider");
+const auxToggle = document.getElementById("auxToggle");
+let trainTimer = null;
+
+function stopTrain(){ if (trainTimer){ clearInterval(trainTimer); trainTimer=null; document.getElementById("btnTrain").innerHTML="&#9654; auto-train"; } }
+
+neSlider.addEventListener("input", e => {
+  stopTrain(); NE = +e.target.value;
+  if (K > NE){ K = NE; kSlider.value = K; }
+  kSlider.max = NE;
+  b = new Array(8).fill(0); step = 0; auxHist = [];   // topology changed → reset training
+  render();
+});
+kSlider.addEventListener("input", e => { stopTrain(); K = Math.min(+e.target.value, NE); step=0; auxHist=[]; render(); });
+capSlider.addEventListener("input", e => { capFactor = +e.target.value; render(); });
+auxToggle.onclick = () => {
+  auxOn = !auxOn;
+  auxToggle.classList.toggle("on", auxOn);
+  auxToggle.textContent = "aux loss: " + (auxOn ? "ON" : "OFF");
+  if (!auxOn){ stopTrain(); b = new Array(8).fill(0); step = 0; auxHist = []; }  // OFF → collapsed baseline
+  render();
+};
+document.getElementById("btnStep").onclick = () => { if (auxOn){ trainStep(6); render(); } };
+document.getElementById("btnTrain").onclick = () => {
+  if (trainTimer){ stopTrain(); return; }
+  if (!auxOn){ auxOn = true; auxToggle.classList.add("on"); auxToggle.textContent = "aux loss: ON"; }
+  document.getElementById("btnTrain").innerHTML = "&#9208; pause";
+  trainTimer = setInterval(() => { trainStep(6); render(); if (step > 120) stopTrain(); }, 90);
+};
+document.getElementById("btnReset").onclick = () => { stopTrain(); b = new Array(8).fill(0); step = 0; auxHist = []; render(); };
+document.getElementById("btnReseed").onclick = () => { stopTrain(); seed = (seed*1664525 + 1013904223) >>> 0; initModel(seed); render(); };
+
+// ---------- master render ----------
+function render(){
+  const r = compute();
+  auxHist.push(r.aux);
+  if (auxHist.length > 240) auxHist.shift();
+
+  document.getElementById("neVal").textContent = NE;
+  document.getElementById("kVal").textContent = K;
+  document.getElementById("capVal").textContent = capFactor.toFixed(2);
+  document.getElementById("tokCount").textContent = T;
+  document.getElementById("capReadout").textContent = r.C;
+  document.getElementById("s_cap").textContent = r.C;
+  document.getElementById("s_drop").textContent = r.droppedTokens;
+  document.getElementById("s_dropA").textContent = r.droppedRoutes;
+  document.getElementById("s_aux").textContent = r.aux.toFixed(3);
+  document.getElementById("s_imb").textContent = r.imbalance.toFixed(2) + "×";
+  document.getElementById("s_step").textContent = step;
+  document.getElementById("s_N").textContent = NE;
+  document.getElementById("s_k").textContent = K;
+  document.getElementById("s_pmul").textContent = NE + "×";
+  document.getElementById("s_flop").textContent = K + "×";
+
+  drawRoute(r);
+  drawGate(r);
+  drawLoadBars(r);
+  drawAux();
+
+  const balanced = r.imbalance < 1.35;
+  document.getElementById("auxReadout").innerHTML =
+    "L<sub>aux</sub> = N·Σ f<sub>e</sub>P<sub>e</sub> = <b class='sk mono'>" + r.aux.toFixed(3) + "</b> " +
+    "(floor <span class='mono'>1</span>, collapse ≈ <span class='mono'>" + NE + "</span>). " +
+    "Busiest expert carries <b class='vio mono'>" + r.imbalance.toFixed(2) + "×</b> its fair share; " +
+    (r.droppedTokens>0
+      ? "<b class='sk'>" + r.droppedTokens + "</b> token(s) overflowed capacity and were dropped."
+      : "<b class='kept'>no tokens dropped</b> — every route fit under capacity.") +
+    (auxOn
+      ? (balanced ? " Routing is <b class='kept'>balanced</b>." : " Press <b>auto-train</b> to balance it.")
+      : " Aux loss is <b class='sk'>OFF</b> — the gate follows raw content and collapses.");
+}
+
+window.addEventListener("resize", () => { if (!document.getElementById("look").classList.contains("hidden")) render(); });
+
+// ---------- go ----------
+render();
+</script>
+
+<script>
+// ===================== UNDERSTAND — 10 steps =====================
+const STEPS = [
+ { title:"1. The dense FFN welds capacity to compute",
+   why:"In a normal Transformer block every token passes through the SAME feed-forward MLP. To make the model 'know' more you widen or deepen that MLP — but then every token pays the extra FLOPs. Parameters (capacity) and compute (FLOPs per token) move together; you cannot add knowledge cheaply.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">dense block: y = FFN(x)  for EVERY token<br><br>more params ⇒ more FLOPs per token<br>capacity and cost are the SAME knob</div>`,
+   code:"# dense FFN — one shared block, run on every token\nY = FFN(X)          # params scale = FLOPs scale\n# to add capacity you widen FFN -> every token pays" },
+ { title:"2. Replace it with N experts + a gate",
+   why:"An MoE layer keeps N separate expert MLPs and a tiny gating network — one linear layer whose softmax over the experts says how much each token wants each expert. Nothing is sparse yet: this is just 'N candidate FFNs and a chooser'.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">experts E₀ … E_{N-1}  (each an MLP)<br>gate p = softmax(W_g · x)   (Σ p = 1)<br><br>p[e] = how much token x wants expert e</div>`,
+   code:"experts = [MLP() for _ in range(N)]     # N expert FFNs\ndef gate(x, Wg):\n    return softmax(Wg @ x)              # p[e] over experts" },
+ { title:"3. Sparsity: keep only the top-k experts",
+   why:"The whole payoff is running FEW experts per token. Take the top-k gate entries (k=1 in Switch, k=2 in Mixtral), renormalize just those weights so they sum to 1, and combine only those experts' outputs. Now params scale with N but FLOPs per token scale with k — decoupled at last.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">idx = top-k(p) ; g̃ = p[idx] / Σ p[idx]<br>y = Σ_{e∈idx} g̃_e · E_e(x)<br><br>params ∝ N   ·   FLOPs/token ∝ k</div>`,
+   code:"idx = argsort(p)[::-1][:k]      # k largest gate probs\nw   = p[idx] / p[idx].sum()     # renormalize the kept weights\ny   = sum(w[j] * experts[idx[j]](x) for j in range(k))" },
+ { title:"4. Why top-k picks exactly the k largest",
+   why:"Routing is a hard selection: sort the gate probabilities and take the k highest. Because softmax is monotonic in the logits, the top-k of the probabilities equals the top-k of the raw logits — the gate just ranks experts and cuts after k. Everything below the cut is not run at all.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">p = [.05 .62 .08 .25]  → top-2 = {1,3}<br>renorm: [.62 .25]/.87 = [.71 .29]<br><br>experts 0 and 2 are never executed</div>`,
+   code:"# top-k = the k largest; softmax is monotonic so\n# argsort(p) == argsort(logits)\nidx = argsort(p)[::-1][:k]      # {1,3} in the example above" },
+ { title:"5. Capacity — a fixed slot budget per expert",
+   why:"GPUs need dense, equal-sized batches, so each expert gets a fixed number of slots: C = f · (T·k / N). f is the capacity factor (slack). If routing were perfectly uniform every expert would get exactly T·k/N tokens; f>1 leaves headroom for the inevitable wobble.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">C = f · (T · k / N)   slots per expert<br>uniform load = T·k/N   ·   f = slack<br><br>C is a HARDWARE budget, fixed ahead of time</div>`,
+   code:"C = ceil(f * T * k / N)     # slots per expert this batch\n# f = 1.0 exact fair share; f = 1.25 leaves 25% headroom" },
+ { title:"6. Overflow → dropped tokens",
+   why:"Tokens are dispatched in order; once an expert hits C, any further token routed to it OVERFLOWS and is dropped from that expert — it just takes the residual path and skips the layer. A collapsed router sends far more than C tokens to its favourite expert, so many are dropped: capacity turns imbalance into lost computation.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">expert full (load = C) → next token OVERFLOWS<br>dropped token: y = x  (residual only)<br><br>collapse ⇒ one expert overflows, many drops</div>`,
+   code:"if load[e] < C: load[e]+=1; run expert e   # accepted\nelse:            pass                       # OVERFLOW: dropped\n# dropped token keeps only its residual connection" },
+ { title:"7. Expert collapse — the rich get richer",
+   why:"Left to itself a gate is unstable: an expert that gets picked slightly more gets trained more, so it gets better, so it gets picked even more. The distribution collapses onto a handful of experts while the rest receive almost nothing and never learn — you paid for N experts but effectively use a few.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">pick more → train more → pick even more<br><br>load: [■■■■■■■■  ·  ·  · ]<br>a few experts hog, the rest die</div>`,
+   code:"# no balancing pressure:\n# argmax gate concentrates on a few experts\n# under-used experts get ~no gradient -> stay bad -> unused" },
+ { title:"8. The auxiliary load-balancing loss",
+   why:"The fix is a soft penalty added to the training loss: L_aux = N · Σ_e f_e · P_e, where f_e is the fraction of tokens dispatched to e (a hard count) and P_e is the mean router probability for e (soft). The product of 'how often chosen' and 'how strongly preferred' is minimized exactly when both are uniform — so L_aux = 1 at perfect balance and rises toward N as it collapses.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">L_aux = N · Σ_e f_e · P_e<br>f_e = dispatch fraction · P_e = mean prob<br><br>uniform ⇒ L_aux = 1   ·   collapse ⇒ ≈ N</div>`,
+   code:"f = counts / (T*k)          # dispatch fraction per expert\nP = probs.mean(0)           # mean soft router prob per expert\nL_aux = N * (f * P).sum()   # =1 uniform, ~N collapsed" },
+ { title:"9. Its gradient pushes over-used experts down",
+   why:"The gradient flows through the SOFT P_e (the hard count f_e is detached). Through the softmax Jacobian it becomes: for each expert, (N/T)·Σ_t p_t[e]·(f_e − Σ_j f_j p_t[j]). An expert with a large dispatch fraction f_e gets a positive gradient on its logit, so descent lowers it — the busy expert becomes less attractive and traffic spreads out. That is the rebalancing the live trace performs.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">∂L/∂logit_e = (N/T) Σ_t p_t[e]·(f_e − S_t)<br>S_t = Σ_j f_j p_t[j]<br><br>large f_e ⇒ logit_e ↓ ⇒ expert used less</div>`,
+   code:"S = P @ f                       # per-token Σ_j f_j p_t[j]\ng = (P * (f - S[:,None])).sum(0) * (N/T)\nlogits -= lr * g                # busy expert's logit decreases" },
+ { title:"10. Recap — sparse capacity, balanced routing",
+   why:"An MoE layer = N expert MLPs + a softmax gate, run only top-k per token, so params scale with N while FLOPs scale with k. A fixed capacity C = f·T·k/N drops overflow tokens to the residual, and an auxiliary loss N·Σ f_e P_e (min 1 at uniform) with its logit-lowering gradient keeps the gate from collapsing. That is exactly how Switch Transformer (k=1) and Mixtral-8x7B (N=8, k=2, ~47B params / ~13B active) buy huge capacity at a fraction of the compute.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">gate → top-k → capacity drop → weighted sum<br>+ L_aux = N·Σ f_e P_e keeps it balanced<br><br>params ∝ N · FLOPs ∝ k · Switch / Mixtral<br>next: Sharpness-Aware Minimization</div>`,
+   code:"# the whole layer:\nP    = softmax(Wg @ X.T).T          # gate, (T, N)\nidx  = top_k(P, k)                  # sparse routing\nkept = dispatch(idx, C=f*T*k/N)     # capacity drop\nY    = weighted_sum(kept, experts)  # run only k per token\nloss = task_loss + lam * N*(f*P.mean(0)).sum()   # + aux" },
+];
+</script>
+
+<script>
+// ---- UNDERSTAND engine (shared pattern) ----
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s,i) => { const bn = document.createElement("button");
+  bn.className = "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm";
+  bn.innerHTML = `<div class="font-semibold">${s.title}</div>`; bn.onclick = () => show(i); stepsEl.appendChild(bn); });
+function show(i){ curS = i; const s = STEPS[i];
+  document.getElementById("concept").innerHTML = `<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML = `<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent = s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx) => { bn.className = idx===i
+    ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold"
+    : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick = () => show(Math.max(0, curS-1));
+nextB.onclick = () => show(Math.min(STEPS.length-1, curS+1));
+let tm = null;
+autoB.onclick = () => { if (tm){ clearInterval(tm); tm=null; autoB.textContent="▶ Auto-play"; return; }
+  autoB.textContent = "⏸ Pause"; show(0);
+  tm = setInterval(() => { if (curS >= STEPS.length-1){ clearInterval(tm); tm=null; autoB.textContent="▶ Replay"; return; } show(curS+1); }, 5200); };
+show(0);
+
+function copy(btn){ const pre = btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500); }
+</script>
+</body>
+</html>
