@@ -59,6 +59,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 55 — RoPE (Rotary Position Embeddings)](https://dev48v.infy.uk/dl/day55-rope.html) — `day55-rope.html`
 - [DeepLearningFromZero · Day 56 — Mixture-of-Experts Layer](https://dev48v.infy.uk/dl/day56-mixture-of-experts.html) — `day56-mixture-of-experts.html`
 - [DeepLearningFromZero · Day 57 — Sharpness-Aware Minimization](https://dev48v.infy.uk/dl/day57-sharpness-aware-minimization.html) — `day57-sharpness-aware-minimization.html`
+- [DeepLearningFromZero · Day 58 — Spectral Normalization](https://dev48v.infy.uk/dl/day58-spectral-normalization.html) — `day58-spectral-normalization.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk

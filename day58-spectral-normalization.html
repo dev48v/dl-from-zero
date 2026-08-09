@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 58 — Spectral Normalization</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f43f5e; }
+  .raw { color:#be123c; font-weight:700; }   /* unnormalized -> sigma blows up */
+  .sn  { color:#047857; font-weight:700; }   /* spectral-normalized -> 1-Lipschitz */
+  .sig { color:#4f46e5; font-weight:700; }   /* sigma / power iteration */
+  .recomp { color:#d97706; font-weight:700; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .preset-btn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:7px 12px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; transition:.12s; }
+  .preset-btn:hover{ border-color:#fda4af; }
+  .preset-btn.on{ background:#f43f5e; border-color:#f43f5e; color:#fff; }
+  canvas{ display:block; }
+  .legend-sym{ display:inline-flex; width:16px; height:16px; border-radius:5px; }
+  .btn-solid{ background:#f43f5e; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-dark{ background:#0f172a; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-ghost{ background:#fff; border:1.5px solid #e2e8f0; color:#475569; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .bignum{ font-variant-numeric:tabular-nums; font-weight:900; line-height:1; }
+  .statcard{ border-radius:12px; border:1.5px solid #e2e8f0; background:#fff; padding:10px 12px; text-align:center; }
+  .statcard .lab{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; font-weight:800; color:#94a3b8; }
+  /* SN-specific */
+  .mapwrap{ width:100%; height:520px; border-radius:12px; border:1px solid #e2e8f0; background:#0b1020; overflow:hidden; cursor:crosshair; }
+  .mapwrap canvas{ width:100%; height:100%; }
+  .plotwrap{ width:100%; height:200px; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .plotwrap canvas{ width:100%; height:100%; }
+  .grpcard{ background:#fff; border:1.5px solid #e2e8f0; border-radius:12px; padding:10px 12px; }
+  .grptitle{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; margin-bottom:4px; }
+  .cmpgrid{ display:grid; grid-template-columns:1fr; gap:8px; }
+  @media(min-width:900px){ .cmpgrid{ grid-template-columns:1fr 1fr 1fr; } }
+  .cmpcard{ border:1.5px solid #e2e8f0; border-radius:12px; padding:10px 12px; }
+  .cmptag{ font-size:10px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; }
+  .wgrid{ display:grid; grid-template-columns:repeat(2,54px); gap:6px; }
+  .wgrid input{ width:54px; text-align:center; font-variant-numeric:tabular-nums; border:1.5px solid #e2e8f0; border-radius:8px; padding:6px 4px; font-weight:700; font-size:13px; color:#0f172a; }
+  .wgrid input:focus{ outline:none; border-color:#f43f5e; }
+  .matbrace{ display:flex; align-items:center; gap:6px; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-rose-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-rose-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 58</div>
+      <h1 class="text-xl font-bold">&#127752; Spectral Normalization <em>(SN)</em> &mdash; a linear layer <span class="mono">y = Wx</span> can <strong>stretch</strong> its input by a factor that depends on direction, and the <em>worst-case</em> stretch &mdash; the largest <span class="mono">&#8741;Wx&#8741;/&#8741;x&#8741;</span> over all <span class="mono">x</span> &mdash; is exactly the <span class="sig">spectral norm</span> <span class="mono">&sigma;(W)</span>, the <strong>largest singular value</strong> of <span class="mono">W</span>, and it is the layer&rsquo;s <strong>Lipschitz constant</strong>. In a <strong>GAN</strong> the discriminator is trained adversarially and its weights keep growing, so <span class="raw">&sigma; blows up</span>, gradients explode, and training collapses; WGAN patched this with crude <strong>weight-clipping</strong> (kills capacity) then a <strong>gradient penalty</strong> (an extra backward pass). <strong>Spectral Normalization</strong> (Miyato et&nbsp;al., 2018) is the cheap, direct fix: <em>divide every weight matrix by its own spectral norm</em>, <span class="mono">W<sub>SN</sub> = W / &sigma;(W)</span>, so each layer is <strong>exactly 1-Lipschitz</strong> (<span class="sn">&sigma; = 1</span>) &mdash; and a stack of 1-Lipschitz maps is itself 1-Lipschitz. Computing a full SVD every step would be far too slow, so SN estimates <span class="mono">&sigma;</span> with a single step of <span class="sig">power iteration</span> per forward pass, warm-started from the previous step&rsquo;s singular vector: <span class="mono">u &larr; Wv/&#8741;Wv&#8741;</span>, <span class="mono">v &larr; W&#7488;u/&#8741;W&#7488;u&#8741;</span>, <span class="mono">&sigma; &asymp; u&#7488;Wv</span> &mdash; almost free. Below, edit a small weight matrix <span class="mono">W</span>, watch power iteration&rsquo;s <span class="sig">u,&nbsp;v</span> and its <span class="mono">&sigma;</span>-estimate <strong>converge to the true singular value</strong> by hand; see <span class="mono">W</span> map the <strong>unit circle</strong> to an <span class="raw">ellipse</span> whose longest semi-axis is exactly <span class="mono">&sigma;</span>, while <span class="mono">W/&sigma;</span> maps it to an <span class="sn">ellipse that fits <em>inside</em> the unit circle</span> (1-Lipschitz); then drive a mock training loop and watch an unnormalized <span class="raw">&sigma; explode</span> while SN pins it at <span class="sn">1</span> &mdash; every matrix op, the power iteration, the singular values and the mappings computed <strong>by hand</strong>, no libraries.</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== LOOK ===================== -->
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-6 lg:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">The <span class="sig">spectral norm</span> <span class="mono">&sigma;(W)</span> is the longest semi-axis of the <span class="raw">ellipse</span> <span class="mono">W</span> makes of the unit circle. <span class="sn">W/&sigma;</span> shrinks it <em>inside</em> the circle &mdash; a <span class="sn">1-Lipschitz</span> layer.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto text-center">Edit <span class="mono">W</span>, then step <span class="sig">power iteration</span>: the vectors <span class="sig">v</span> (input) and <span class="sig">u</span> (output) swing onto the top singular direction while the <span class="mono">&sigma;</span>-estimate climbs to the <b>true</b> largest singular value. Watch <span class="mono">W</span> stretch the unit circle into the <span class="raw">rose ellipse</span> (tip = <span class="mono">&sigma;</span>) and <span class="mono">W/&sigma;</span> pull it into the <span class="sn">emerald ellipse</span> that just kisses the unit circle. Then run the <b>mock training loop</b> below.</p>
+
+      <!-- ============ control bar ============ -->
+      <div class="bg-white rounded-xl border-2 border-slate-200 p-3 mb-4 flex items-center justify-center flex-wrap gap-4">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-bold text-slate-500 uppercase tracking-wide">W =</span>
+          <div class="matbrace">
+            <div class="wgrid">
+              <input id="wA" type="number" step="0.1" value="1">
+              <input id="wB" type="number" step="0.1" value="2">
+              <input id="wC" type="number" step="0.1" value="3">
+              <input id="wD" type="number" step="0.1" value="4">
+            </div>
+          </div>
+        </div>
+        <span class="text-slate-300">|</span>
+        <button id="piStepBtn" class="btn-dark">+1 power-iter</button>
+        <button id="piRunBtn" class="btn-solid">&#9654; run to converge</button>
+        <button id="piResetBtn" class="btn-ghost">reset v</button>
+        <span class="text-slate-300">|</span>
+        <button class="preset-btn on" data-w="1,2,3,4">stretchy</button>
+        <button class="preset-btn" data-w="3,0,0,0.5">diagonal</button>
+        <button class="preset-btn" data-w="0.7071,-0.7071,0.7071,0.7071">rotation (&sigma;=1)</button>
+        <button class="preset-btn" data-w="1.4,0.3,-0.2,1.1">mild</button>
+      </div>
+
+      <div class="grid lg:grid-cols-3 gap-4 mb-4">
+        <!-- ============ PANEL 1 : THE MAPPING ============ -->
+        <div class="bg-white rounded-xl border-2 border-indigo-200 p-4 lg:col-span-2">
+          <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+            <div class="text-sm font-bold text-slate-800">Unit circle &rarr; <span class="raw">W&middot;circle</span> (ellipse, tip=&sigma;) &amp; <span class="sn">(W/&sigma;)&middot;circle</span> &mdash; with power-iteration <span class="sig">u, v</span></div>
+            <div class="text-[11px] text-slate-400">power-iter step <span class="mono" id="iterReadout">0</span></div>
+          </div>
+          <div class="mapwrap mb-2"><canvas id="mapC"></canvas></div>
+          <div class="flex items-center justify-center gap-5 text-[11px] text-slate-500 flex-wrap">
+            <span class="flex items-center gap-1"><span class="legend-sym" style="background:#64748b"></span>unit circle (&#8741;x&#8741;=1)</span>
+            <span class="flex items-center gap-1"><span class="legend-sym" style="background:#fb7185"></span><b class="raw">W&middot;circle</b> ellipse</span>
+            <span class="flex items-center gap-1"><span class="legend-sym" style="background:#34d399"></span><b class="sn">(W/&sigma;)&middot;circle</b> (inside)</span>
+            <span class="flex items-center gap-1"><span class="legend-sym" style="background:#818cf8"></span><span class="sig">v</span> input dir &middot; <span class="sig">Wv=&sigma;u</span> output</span>
+          </div>
+        </div>
+
+        <!-- ============ PANEL 2 : POWER ITERATION ============ -->
+        <div class="bg-white rounded-xl border-2 border-emerald-200 p-4">
+          <div class="text-sm font-bold text-slate-800 mb-1">Power iteration &rarr; <span class="mono">&sigma;(W)</span></div>
+          <p class="text-[12px] text-slate-500 mb-2">Each step: <span class="mono">u&larr;Wv/&#8741;Wv&#8741;</span>, <span class="mono">v&larr;W&#7488;u/&#8741;W&#7488;u&#8741;</span>. The estimate <span class="mono">&sigma;=&#8741;Wv&#8741;</span> climbs to the <b>true</b> top singular value (dashed).</p>
+          <div class="plotwrap" style="height:150px"><canvas id="piC"></canvas></div>
+          <div class="grid grid-cols-2 gap-2 text-center mt-3">
+            <div class="statcard"><div class="lab">&sigma; estimate</div><div class="bignum text-lg sig mt-1" id="s_est">&mdash;</div></div>
+            <div class="statcard"><div class="lab">&sigma; true (SVD)</div><div class="bignum text-lg mt-1" id="s_true" style="color:#0f172a">&mdash;</div></div>
+            <div class="statcard"><div class="lab">|error|</div><div class="bignum text-sm recomp mt-1" id="s_err">&mdash;</div></div>
+            <div class="statcard"><div class="lab">iterations</div><div class="bignum text-sm sig mt-1" id="s_iter">0</div></div>
+          </div>
+          <div class="grpcard text-[12px] text-slate-600 mt-3">
+            <div class="grptitle" style="color:#047857">1-Lipschitz check</div>
+            <div>&sigma;(W) = <b class="sig mono" id="c_sig">&mdash;</b> &rarr; divide: <span class="mono">&sigma;(W/&sigma;)</span> = <b class="sn mono" id="c_lip">&mdash;</b>. Longest semi-axis of the <span class="raw">W</span>-ellipse = <b class="raw mono" id="c_axis">&mdash;</b> (matches &sigma;), the <span class="sn">W/&sigma;</span>-ellipse fits <b>inside</b> the unit circle.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ TRAINING BLOW-UP CARD ============ -->
+      <div class="bg-white rounded-xl border-2 border-rose-200 p-4 mb-4">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+          <div class="text-sm font-bold text-slate-800">Mock GAN-discriminator training &mdash; <span class="raw">&sigma; without SN</span> explodes, <span class="sn">&sigma; with SN</span> pinned at 1</div>
+          <div class="ctrl" style="min-width:240px">
+            <label>training step <span class="recomp stat mono" id="trVal">0</span></label>
+            <input type="range" id="trSlider" min="0" max="25" step="1" value="0">
+          </div>
+        </div>
+        <p class="text-[12px] text-slate-500 mb-2">Adversarial updates keep growing the weights (here <span class="mono">W &larr; G&middot;W</span> each step). <span class="raw">Un-normalized</span>, the layer&rsquo;s Lipschitz constant &sigma; grows geometrically &mdash; exploding gradients. <span class="sn">Spectral-normalized</span>, we re-divide by &sigma; every forward pass, so the layer stays exactly 1-Lipschitz forever.</p>
+        <div class="plotwrap" style="height:220px"><canvas id="trainC"></canvas></div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-center mt-3">
+          <div class="statcard"><div class="lab">&sigma; @ step (no SN)</div><div class="bignum text-lg raw mt-1" id="t_raw">&mdash;</div></div>
+          <div class="statcard"><div class="lab">&sigma; @ step (SN)</div><div class="bignum text-lg sn mt-1" id="t_sn">&mdash;</div></div>
+          <div class="statcard"><div class="lab">blow-up factor</div><div class="bignum text-lg raw mt-1" id="t_fac">&mdash;</div></div>
+          <div class="statcard"><div class="lab">extra cost of SN</div><div class="bignum text-sm sn mt-1">1 power-iter</div></div>
+        </div>
+      </div>
+
+      <!-- ============ CONTRAST CARD ============ -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">
+        <div class="grptitle mb-2" style="color:#0f172a">Three ways to make a discriminator 1-Lipschitz</div>
+        <div class="cmpgrid">
+          <div class="cmpcard" style="border-color:#fde68a;background:#fffbeb">
+            <div class="cmptag" style="color:#b45309">Weight clipping (WGAN)</div>
+            <div class="text-[12px] text-slate-600 mt-1">Clamp every weight into <span class="mono">[&minus;c, c]</span> after each step. Cheap but blunt: it caps the wrong quantity, wastes capacity, and pushes weights to the clip bounds &mdash; hard to tune, poor gradients.</div>
+          </div>
+          <div class="cmpcard" style="border-color:#bfdbfe;background:#eff6ff">
+            <div class="cmptag" style="color:#1d4ed8">Gradient penalty (WGAN-GP)</div>
+            <div class="text-[12px] text-slate-600 mt-1">Add a penalty pushing <span class="mono">&#8741;&nabla;D&#8741;&rarr;1</span> on interpolated samples. Enforces Lipschitz softly and well, but needs an <b>extra backward pass</b> &mdash; noticeably more compute per step.</div>
+          </div>
+          <div class="cmpcard" style="border-color:#bbf7d0;background:#f0fdf4">
+            <div class="cmptag" style="color:#047857">Spectral normalization</div>
+            <div class="text-[12px] text-slate-600 mt-1"><span class="mono">W/&sigma;(W)</span> makes each layer <b>exactly</b> 1-Lipschitz &mdash; a hard guarantee, no capacity loss, no extra backward pass. One power-iteration step per forward is all it costs.</div>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-center mt-3">
+          <div class="statcard"><div class="lab">&sigma; = Lipschitz const</div><div class="bignum text-lg sig mt-1" id="s_lip2">&mdash;</div></div>
+          <div class="statcard"><div class="lab">target after SN</div><div class="bignum text-lg sn mt-1">1.00</div></div>
+          <div class="statcard"><div class="lab">SVD cost</div><div class="bignum text-sm raw mt-1">O(d&sup3;)</div></div>
+          <div class="statcard"><div class="lab">power-iter cost</div><div class="bignum text-sm sn mt-1">O(d&sup2;)</div></div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-sm text-slate-600">
+        <b class="text-slate-800">What to try:</b> (1) With the default <b>stretchy</b> <span class="mono">W=[[1,2],[3,4]]</span>, press <b>reset v</b> then tap <b>+1 power-iter</b>: the <span class="sig">v</span> and <span class="sig">u</span> arrows snap onto the ellipse&rsquo;s long axis within a few steps and the <span class="mono">&sigma;</span>-estimate locks onto the true value <span class="mono">&asymp;5.465</span> &mdash; <b>|error|</b> collapses to ~0. (2) Note the <span class="raw">rose ellipse</span>&rsquo;s longest semi-axis <b>equals &sigma;</b>, and the <span class="sn">emerald</span> <span class="mono">W/&sigma;</span> ellipse sits <b>inside</b> the unit circle, touching it only at <span class="sig">u</span> &mdash; that tangency is the layer being <b>exactly 1-Lipschitz</b>. (3) Pick the <b>rotation</b> preset: it&rsquo;s already <span class="mono">&sigma;=1</span>, so the ellipse <b>is</b> the unit circle and SN changes nothing. (4) Pick <b>diagonal</b> <span class="mono">[[3,0],[0,0.5]]</span>: v aligns with the x-axis, &sigma;=3. (5) Drag the <b>training step</b> slider: the <span class="raw">no-SN</span> curve rockets up (a discriminator whose Lipschitz constant is exploding) while the <span class="sn">SN</span> curve is a flat line at 1 &mdash; that flatness is exactly why SN stabilizes GAN training.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== UNDERSTAND ===================== -->
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">From &ldquo;bound the Lipschitz constant&rdquo; to one power-iteration step per forward pass</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-rose-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-rose-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-rose-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BUILD ===================== -->
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">Spectral normalization is a tiny wrapper around a weight matrix. We&rsquo;ll build the whole thing from scratch: matrix&ndash;vector products, the power-iteration estimate of the top singular value, the <code>W/&sigma;</code> divide that makes a layer 1-Lipschitz, the forward-pass wrapper that runs <b>one</b> warm-started power-iteration step per call exactly as the SNGAN paper does, and a check against a real SVD &mdash; every operation by hand.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">A linear layer&rsquo;s Lipschitz constant IS its spectral norm</h3></div>
+        <p class="text-sm text-slate-600 mb-3">For <code>y = Wx</code>, the largest possible stretch <code>&#8741;Wx&#8741;/&#8741;x&#8741;</code> over all <code>x</code> is the <b>top singular value</b> <code>&sigma;(W)</code>. That worst-case stretch is precisely the Lipschitz constant of the layer w.r.t. the L2 norm.</p>
+        <div class="relative"><pre>import numpy as np
+
+W = np.array([[1., 2.],
+              [3., 4.]])            # a (flattened) layer weight matrix
+
+# Lipschitz(y=Wx) w.r.t. L2  ==  sigma(W)  ==  max singular value
+#     ||W x|| <= sigma(W) * ||x||     for EVERY x
+def matvec(W, x):  return W @ x     # forward map (by hand: sum_j W_ij x_j)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Power iteration &mdash; the top singular value, cheaply</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A full SVD is <code>O(d&sup3;)</code> &mdash; too slow to run every step. Power iteration finds only the <b>top</b> singular pair by alternately mapping through <code>W</code> and <code>W&#7488;</code> and re-normalizing. Each pass is a couple of matrix&ndash;vector products, <code>O(d&sup2;)</code>.</p>
+        <div class="relative"><pre>def spectral_norm(W, v, n_iter=1):
+    for _ in range(n_iter):
+        u = W @ v;   u /= np.linalg.norm(u) + 1e-12   # left  singular vec
+        v = W.T @ u; v /= np.linalg.norm(v) + 1e-12   # right singular vec
+    sigma = u @ (W @ v)          # u^T W v  ->  top singular value
+    return sigma, u, v</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Normalize: divide by &sigma; &rarr; a 1-Lipschitz layer</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Divide the whole matrix by its spectral norm. The result has <code>&sigma;(W/&sigma;) = 1</code>, so <code>&#8741;(W/&sigma;)x&#8741; &le; &#8741;x&#8741;</code> for every <code>x</code> &mdash; the layer can no longer stretch, only rotate/shrink.</p>
+        <div class="relative"><pre>def sn_weight(W, v):
+    sigma, u, v = spectral_norm(W, v, n_iter=1)
+    return W / sigma, v          # W_SN: sigma == 1  ->  exactly 1-Lipschitz</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">The SN forward-pass wrapper (SNGAN)</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The real trick: run only <b>one</b> power-iteration step per forward pass, warm-started from the vector <code>v</code> stashed on the last pass. Because <code>W</code> barely changes between steps, that single step tracks <code>&sigma;</code> accurately &mdash; SN is essentially free.</p>
+        <div class="relative"><pre>class SNLinear:
+    def __init__(self, W):
+        self.W = W
+        self.v = np.random.randn(W.shape[1])      # persistent estimate
+        self.v /= np.linalg.norm(self.v)
+    def forward(self, x):
+        u = self.W @ self.v;  u /= np.linalg.norm(u) + 1e-12
+        v = self.W.T @ u;     v /= np.linalg.norm(v) + 1e-12
+        self.v = v                                 # WARM-START next call
+        sigma = u @ (self.W @ v)                   # 1-step sigma estimate
+        W_sn  = self.W / sigma                     # 1-Lipschitz weight
+        return W_sn @ x                            # spectrally-normed layer</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Verify against a real SVD</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Power iteration should converge to the true top singular value, and <code>W/&sigma;</code> should have top singular value exactly 1. Check both against NumPy&rsquo;s SVD &mdash; the same checks the live demo runs.</p>
+        <div class="relative"><pre>sigma_true = np.linalg.svd(W, compute_uv=False)[0]   # largest singular value
+sigma_pi, u, v = spectral_norm(W, v0, n_iter=50)
+assert abs(sigma_pi - sigma_true) < 1e-6             # PI converges to truth
+W_sn, _ = sn_weight(W, v0)
+assert abs(np.linalg.svd(W_sn, compute_uv=False)[0] - 1.0) < 1e-6   # 1-Lipschitz</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">A 1-Lipschitz discriminator &mdash; why the GAN stays stable</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Wrap every layer. Because a composition of 1-Lipschitz maps is 1-Lipschitz, the <b>whole</b> discriminator is 1-Lipschitz &mdash; its gradients w.r.t. the input are bounded, so the adversarial min&ndash;max game can&rsquo;t send &sigma; (and the gradients) to infinity. No capacity-killing weight clip, no extra backward pass.</p>
+        <div class="relative"><pre>D = [SNLinear(W1), relu, SNLinear(W2), relu, SNLinear(W3)]
+
+for real, fake in batches:              # standard GAN training
+    loss = d_loss(D, real, fake)        # each forward does 1 power-iter step
+    loss.backward(); opt.step()         # weights grow, but sigma stays ~1
+# whole D is 1-Lipschitz  ->  bounded gradients  ->  stable training</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-rose-900">&#127881; Day 58 of DeepLearningFromZero done.</h3><p class="text-sm text-rose-700 mt-2"><strong>Spectral Normalization</strong> caps a layer&rsquo;s Lipschitz constant by dividing its weight matrix by its own spectral norm <span class="mono">&sigma;(W)</span> &mdash; the largest singular value, i.e. the worst-case stretch of the unit circle into an ellipse. <span class="mono">W/&sigma;</span> makes each layer <strong>exactly 1-Lipschitz</strong> (the ellipse fits inside the unit circle), and stacking 1-Lipschitz maps keeps the whole discriminator 1-Lipschitz &mdash; bounded gradients, stable GAN training. The genius is efficiency: rather than an <span class="mono">O(d&sup3;)</span> SVD every step, SN runs a single <strong>power-iteration</strong> step per forward pass (<span class="mono">u&larr;Wv/&#8741;Wv&#8741;</span>, <span class="mono">v&larr;W&#7488;u/&#8741;W&#7488;u&#8741;</span>, <span class="mono">&sigma;&asymp;u&#7488;Wv</span>), warm-started from the previous <span class="mono">v</span>, so it&rsquo;s almost free. Unlike WGAN&rsquo;s <strong>weight clipping</strong> (kills capacity) or <strong>gradient penalty</strong> (extra backward pass), SN is a hard 1-Lipschitz guarantee at essentially no cost &mdash; which is why SNGAN and countless GANs since use it by default. You watched power iteration&rsquo;s <span class="sig">u,v</span> converge to the true singular value, the <span class="raw">W</span>-ellipse&rsquo;s long axis match <span class="mono">&sigma;</span>, and an unnormalized <span class="raw">&sigma; explode</span> while SN pinned it at <span class="sn">1</span> &mdash; built entirely by hand. <strong>&#128073; Tomorrow, Day 59:</strong> Dilated Convolutions &mdash; grow the receptive field fast without losing resolution.</p></div>
+  </div>
+</section>
+
+<script>
+// ---- tab switching ----
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+  if (t.dataset.tab === "look") requestAnimationFrame(() => { drawMap(); drawPI(); drawTrain(); });
+});
+</script>
+
+<script>
+// ==================================================================
+//  DAY 58 — SPECTRAL NORMALIZATION (SN).
+//  A linear layer y = Wx stretches its input; the WORST-CASE stretch
+//  max ||Wx||/||x|| is the spectral norm sigma(W) = the largest
+//  singular value of W = the layer's Lipschitz constant.
+//
+//  In a GAN the discriminator's weights grow during adversarial
+//  training, so sigma blows up -> exploding gradients -> collapse.
+//  Spectral Normalization (Miyato+ 2018) divides every weight by its
+//  spectral norm:   W_SN = W / sigma(W)   -> sigma == 1 -> 1-Lipschitz.
+//  A stack of 1-Lipschitz maps is 1-Lipschitz.
+//
+//  A full SVD every step is too slow, so SN estimates sigma with ONE
+//  step of POWER ITERATION per forward pass, warm-started:
+//        u <- W v / ||W v|| ,   v <- W^T u / ||W^T u|| ,   sigma = u^T W v
+//  Below: matrix ops, power iteration, the unit-circle -> ellipse
+//  mapping, and a mock training blow-up — all BY HAND, no libraries.
+// ==================================================================
+
+// ---------- 2x2 matrix math (row-major W = [a, b, c, d]) ----------
+function matvec(W, x){ return [W[0]*x[0] + W[1]*x[1], W[2]*x[0] + W[3]*x[1]]; }        // W x
+function matTvec(W, x){ return [W[0]*x[0] + W[2]*x[1], W[1]*x[0] + W[3]*x[1]]; }       // W^T x
+function matmul(A, B){ return [                                                        // A B
+  A[0]*B[0] + A[1]*B[2], A[0]*B[1] + A[1]*B[3],
+  A[2]*B[0] + A[3]*B[2], A[2]*B[1] + A[3]*B[3] ]; }
+function scale(W, s){ return [W[0]*s, W[1]*s, W[2]*s, W[3]*s]; }
+function norm2(x){ return Math.hypot(x[0], x[1]); }
+function dot(a, b){ return a[0]*b[0] + a[1]*b[1]; }
+function normalize(x){ const n = norm2(x) + 1e-12; return [x[0]/n, x[1]/n]; }
+
+// ---------- true singular values of a 2x2 (analytic SVD, by hand) ----------
+// eigenvalues of A = W^T W give the squared singular values.
+function trueSigmas(W){
+  const a=W[0], b=W[1], c=W[2], d=W[3];
+  const A00 = a*a + c*c, A11 = b*b + d*d, A01 = a*b + c*d;      // A = W^T W
+  const tr = A00 + A11, det = A00*A11 - A01*A01;
+  const disc = Math.sqrt(Math.max(0, tr*tr - 4*det));
+  const l1 = (tr + disc)/2, l2 = (tr - disc)/2;                 // eigenvalues
+  return [Math.sqrt(Math.max(0, l1)), Math.sqrt(Math.max(0, l2))];
+}
+function trueSigma1(W){ return trueSigmas(W)[0]; }
+
+// ---------- power iteration (the star of the show), by hand ----------
+// one step: u = normalize(W v);  v = normalize(W^T u);  sigma_est = ||W v||
+function estSigma(W, v){ return norm2(matvec(W, v)); }           // ||W v||, = sigma when v = top right s.v.
+function piStep(){
+  const u = normalize(matvec(W, piV));                          // left  singular vec
+  piV = normalize(matTvec(W, u));                               // right singular vec (updated)
+  piIter++;
+  piHist.push(estSigma(W, piV));
+}
+
+// ---------- state ----------
+let W = [1, 2, 3, 4];
+const V0 = normalize([0.6, 0.8]);       // deterministic start (not aligned w/ a s.v.)
+let piV = [...V0];
+let piIter = 0;
+let piHist = [estSigma(W, piV)];
+let piTimer = null;
+const PI_MAX = 30;
+
+// training blow-up series
+const GROW = 1.15, GROT = 0.18, MAXT = 25;
+let sigRaw = [], sigSN = [];
+function buildTrainSeries(){
+  sigRaw = []; sigSN = [];
+  let Wt = [...W];
+  const c = GROW*Math.cos(GROT), s = GROW*Math.sin(GROT);
+  const G = [c, -s, s, c];               // per-step growth (scale 1.15 + small rotation)
+  for (let t=0; t<=MAXT; t++){
+    const sr = trueSigma1(Wt);
+    sigRaw.push(sr);
+    sigSN.push(trueSigma1(scale(Wt, 1/(sr + 1e-12))));    // genuinely ~1
+    Wt = matmul(G, Wt);
+  }
+}
+
+function resetPI(){ piV = [...V0]; piIter = 0; piHist = [estSigma(W, piV)]; }
+function rebuildAll(){ resetPI(); buildTrainSeries(); drawMap(); drawPI(); drawTrain(); updateStats(); }
+
+// ---------- canvas sizing + world<->pixel mapping (uniform, square) ----------
+function fitCanvas(cv){
+  const R = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 300, h = cv.clientHeight || 300;
+  const pw = Math.round(w*R), ph = Math.round(h*R);
+  if (cv.width !== pw || cv.height !== ph){ cv.width = pw; cv.height = ph; }
+  return R;
+}
+
+// ---------- the mapping panel: unit circle -> ellipse(s) + u,v ----------
+function drawMap(){
+  const cv = document.getElementById("mapC"); if (!cv) return;
+  const R = fitCanvas(cv); const g = cv.getContext("2d");
+  const Wd = cv.width, Hd = cv.height;
+  g.clearRect(0,0,Wd,Hd);
+
+  const s1 = trueSigma1(W);
+  const DOM = Math.max(s1*1.25, 1.35);                 // world half-extent
+  const scl = Math.min(Wd, Hd) / (2*DOM) * 0.92;
+  const cx = Wd/2, cy = Hd/2;
+  const W2P = (x,y) => [cx + x*scl, cy - y*scl];
+
+  // grid
+  g.strokeStyle = "rgba(148,163,184,0.14)"; g.lineWidth = 1*R;
+  for (let k=-Math.ceil(DOM); k<=Math.ceil(DOM); k++){
+    let [ax,ay] = W2P(k,-DOM), [bx,by] = W2P(k,DOM);
+    g.beginPath(); g.moveTo(ax,ay); g.lineTo(bx,by); g.stroke();
+    [ax,ay] = W2P(-DOM,k); [bx,by] = W2P(DOM,k);
+    g.beginPath(); g.moveTo(ax,ay); g.lineTo(bx,by); g.stroke();
+  }
+  // axes
+  g.strokeStyle = "rgba(226,232,240,0.5)"; g.lineWidth = 1.4*R;
+  let [ox,oy] = W2P(0,0);
+  g.beginPath(); g.moveTo(0,oy); g.lineTo(Wd,oy); g.moveTo(ox,0); g.lineTo(ox,Hd); g.stroke();
+
+  const N = 220;
+  // unit circle (the ||x|| = 1 bound)
+  g.strokeStyle = "rgba(148,163,184,0.9)"; g.setLineDash([5*R,4*R]); g.lineWidth = 1.6*R;
+  g.beginPath();
+  for (let i=0;i<=N;i++){ const a=2*Math.PI*i/N; const [px,py]=W2P(Math.cos(a),Math.sin(a)); i?g.lineTo(px,py):g.moveTo(px,py); }
+  g.stroke(); g.setLineDash([]);
+
+  // SN ellipse (W/sigma) . circle  — fits inside the unit circle
+  const Wsn = scale(W, 1/(s1 + 1e-12));
+  g.fillStyle = "rgba(52,211,153,0.12)"; g.strokeStyle = "#34d399"; g.lineWidth = 2*R;
+  g.beginPath();
+  for (let i=0;i<=N;i++){ const a=2*Math.PI*i/N; const p=matvec(Wsn,[Math.cos(a),Math.sin(a)]); const [px,py]=W2P(p[0],p[1]); i?g.lineTo(px,py):g.moveTo(px,py); }
+  g.closePath(); g.fill(); g.stroke();
+
+  // W . circle — the ellipse whose longest semi-axis = sigma
+  g.strokeStyle = "#fb7185"; g.lineWidth = 2.4*R;
+  g.beginPath();
+  for (let i=0;i<=N;i++){ const a=2*Math.PI*i/N; const p=matvec(W,[Math.cos(a),Math.sin(a)]); const [px,py]=W2P(p[0],p[1]); i?g.lineTo(px,py):g.moveTo(px,py); }
+  g.closePath(); g.stroke();
+
+  // power-iteration vectors
+  const u = normalize(matvec(W, piV));         // output direction
+  const Wv = matvec(W, piV);                   // = sigma * u (tip on the W-ellipse)
+  // v (input direction, unit) — dashed indigo
+  drawArrow(g, W2P, cx, cy, scl, [0,0], piV, "#818cf8", R, true);
+  // Wv = sigma u (output) — solid indigo, touches the rose ellipse tip
+  drawArrow(g, W2P, cx, cy, scl, [0,0], Wv, "#6366f1", R, false);
+  // u for SN (length 1) touches the emerald ellipse & the unit circle
+  drawArrow(g, W2P, cx, cy, scl, [0,0], u, "#34d399", R, false);
+
+  // labels
+  g.font = "700 "+(12*R)+"px -apple-system, sans-serif"; g.textAlign = "left";
+  let lp = W2P(Wv[0], Wv[1]);
+  g.fillStyle = "#a5b4fc"; g.fillText("Wv = σ·u", lp[0]+6*R, lp[1]-4*R);
+  lp = W2P(piV[0], piV[1]);
+  g.fillStyle = "#818cf8"; g.fillText("v", lp[0]+6*R, lp[1]+4*R);
+  g.fillStyle = "#fb7185"; g.textAlign="right"; g.fillText("σ = "+s1.toFixed(3), Wd-8*R, 18*R);
+}
+function drawArrow(g, W2P, cx, cy, scl, from, to, col, R, dashed){
+  const [x0,y0] = W2P(from[0], from[1]);
+  const [x1,y1] = W2P(to[0], to[1]);
+  g.strokeStyle = col; g.fillStyle = col; g.lineWidth = 2.4*R;
+  if (dashed) g.setLineDash([5*R,4*R]);
+  g.beginPath(); g.moveTo(x0,y0); g.lineTo(x1,y1); g.stroke();
+  g.setLineDash([]);
+  const a = Math.atan2(y1-y0, x1-x0), h = 8*R;
+  g.beginPath(); g.moveTo(x1,y1);
+  g.lineTo(x1 - h*Math.cos(a-0.4), y1 - h*Math.sin(a-0.4));
+  g.lineTo(x1 - h*Math.cos(a+0.4), y1 - h*Math.sin(a+0.4));
+  g.closePath(); g.fill();
+}
+
+// ---------- power-iteration convergence plot ----------
+function drawPI(){
+  const cv = document.getElementById("piC"); if (!cv) return;
+  const R = fitCanvas(cv); const g = cv.getContext("2d");
+  const Wd = cv.width, Hd = cv.height; g.clearRect(0,0,Wd,Hd);
+  const pad = 24*R;
+  const st = trueSigma1(W);
+  const n = Math.max(piHist.length, PI_MAX*0.4);
+  const hi = Math.max(st, ...piHist) * 1.15 + 1e-6, lo = 0;
+  const sx = i => pad + (n<=1?0:i/(n-1))*(Wd - 1.4*pad);
+  const sy = v => (Hd-pad) - (v-lo)/(hi-lo)*(Hd - 1.7*pad);
+  // axis
+  g.strokeStyle = "#e2e8f0"; g.lineWidth = 1*R;
+  g.beginPath(); g.moveTo(pad, sy(lo)); g.lineTo(Wd-0.4*pad, sy(lo)); g.stroke();
+  // true sigma line (dashed)
+  g.strokeStyle = "#0f172a"; g.setLineDash([5*R,4*R]); g.lineWidth = 1.6*R;
+  g.beginPath(); g.moveTo(pad, sy(st)); g.lineTo(Wd-0.4*pad, sy(st)); g.stroke(); g.setLineDash([]);
+  // estimate trace
+  g.strokeStyle = "#4f46e5"; g.lineWidth = 2.4*R; g.beginPath();
+  piHist.forEach((v,i)=>{ const x=sx(i), y=sy(v); i?g.lineTo(x,y):g.moveTo(x,y); });
+  g.stroke();
+  // dots
+  g.fillStyle = "#4f46e5";
+  piHist.forEach((v,i)=>{ g.beginPath(); g.arc(sx(i), sy(v), 2.6*R, 0, 2*Math.PI); g.fill(); });
+  // labels
+  g.fillStyle = "#64748b"; g.font = (9*R)+"px -apple-system"; g.textAlign="left";
+  g.fillText("σ estimate", pad, 12*R);
+  g.fillStyle = "#0f172a"; g.textAlign="right"; g.fillText("true σ = "+st.toFixed(3), Wd-0.4*pad, sy(st)-4*R);
+  g.fillStyle = "#94a3b8"; g.textAlign="center"; g.fillText("power-iteration step →", Wd/2, Hd-5*R);
+}
+
+// ---------- training blow-up plot ----------
+function drawTrain(){
+  const cv = document.getElementById("trainC"); if (!cv) return;
+  const R = fitCanvas(cv); const g = cv.getContext("2d");
+  const Wd = cv.width, Hd = cv.height; g.clearRect(0,0,Wd,Hd);
+  const pad = 30*R;
+  const t = +document.getElementById("trSlider").value;
+  const hi = Math.max(...sigRaw) * 1.08 + 1e-6, lo = 0;
+  const sx = i => pad + i/MAXT*(Wd - 1.5*pad);
+  const sy = v => (Hd-pad) - (v-lo)/(hi-lo)*(Hd - 1.8*pad);
+  // gridlines + y ticks
+  g.strokeStyle = "#eef2f7"; g.lineWidth = 1*R; g.fillStyle = "#94a3b8"; g.font = (9*R)+"px -apple-system"; g.textAlign="right";
+  for (let k=0;k<=4;k++){ const val = hi*k/4; const y = sy(val); g.beginPath(); g.moveTo(pad,y); g.lineTo(Wd-0.5*pad,y); g.stroke(); g.fillText(val.toFixed(1), pad-4*R, y+3*R); }
+  // sigma = 1 reference
+  g.strokeStyle = "rgba(4,120,87,0.35)"; g.setLineDash([4*R,3*R]); g.lineWidth = 1.4*R;
+  g.beginPath(); g.moveTo(pad, sy(1)); g.lineTo(Wd-0.5*pad, sy(1)); g.stroke(); g.setLineDash([]);
+  // traces
+  function trace(arr, col, w){ g.strokeStyle=col; g.lineWidth=w*R; g.beginPath(); arr.forEach((v,i)=>{ const x=sx(i), y=sy(v); i?g.lineTo(x,y):g.moveTo(x,y); }); g.stroke(); }
+  trace(sigRaw, "#fb7185", 2.6);
+  trace(sigSN,  "#34d399", 2.6);
+  // current-step marker
+  g.strokeStyle = "rgba(15,23,42,0.35)"; g.lineWidth = 1.2*R; g.setLineDash([3*R,3*R]);
+  g.beginPath(); g.moveTo(sx(t), pad*0.4); g.lineTo(sx(t), Hd-pad); g.stroke(); g.setLineDash([]);
+  g.fillStyle = "#fb7185"; g.beginPath(); g.arc(sx(t), sy(sigRaw[t]), 3.4*R, 0, 2*Math.PI); g.fill();
+  g.fillStyle = "#34d399"; g.beginPath(); g.arc(sx(t), sy(sigSN[t]),  3.4*R, 0, 2*Math.PI); g.fill();
+  // labels
+  g.fillStyle = "#be123c"; g.font = "700 "+(10*R)+"px -apple-system"; g.textAlign="left";
+  g.fillText("no SN — σ explodes", sx(MAXT*0.55), sy(sigRaw[Math.floor(MAXT*0.55)])-6*R);
+  g.fillStyle = "#047857"; g.fillText("SN — σ = 1", sx(1), sy(1)-6*R);
+  g.fillStyle = "#94a3b8"; g.font = (9*R)+"px -apple-system"; g.textAlign="center";
+  g.fillText("training step →", Wd/2, Hd-6*R);
+}
+
+// ---------- stats ----------
+function updateStats(){
+  const est = estSigma(W, piV);
+  const st = trueSigma1(W);
+  const err = Math.abs(est - st);
+  document.getElementById("s_est").textContent  = est.toFixed(4);
+  document.getElementById("s_true").textContent = st.toFixed(4);
+  document.getElementById("s_err").textContent  = err.toFixed(err<1e-3?6:4);
+  document.getElementById("s_iter").textContent = piIter;
+  document.getElementById("iterReadout").textContent = piIter;
+  // 1-Lipschitz check via true SVD of W/sigma
+  const lip = trueSigma1(scale(W, 1/(st+1e-12)));
+  document.getElementById("c_sig").textContent  = st.toFixed(3);
+  document.getElementById("c_lip").textContent  = lip.toFixed(4);
+  document.getElementById("c_axis").textContent = st.toFixed(3);
+  document.getElementById("s_lip2").textContent = st.toFixed(3);
+  // training readouts
+  const t = +document.getElementById("trSlider").value;
+  document.getElementById("trVal").textContent = t;
+  document.getElementById("t_raw").textContent = sigRaw[t].toFixed(2);
+  document.getElementById("t_sn").textContent  = sigSN[t].toFixed(3);
+  document.getElementById("t_fac").textContent = (sigRaw[t]/(sigRaw[0]+1e-12)).toFixed(1)+"×";
+}
+
+// ---------- controls ----------
+function readW(){
+  const a=parseFloat(document.getElementById("wA").value)||0;
+  const b=parseFloat(document.getElementById("wB").value)||0;
+  const c=parseFloat(document.getElementById("wC").value)||0;
+  const d=parseFloat(document.getElementById("wD").value)||0;
+  W = [a,b,c,d];
+}
+function stopPI(){ if (piTimer){ clearInterval(piTimer); piTimer=null; document.getElementById("piRunBtn").innerHTML="&#9654; run to converge"; } }
+["wA","wB","wC","wD"].forEach(id => document.getElementById(id).addEventListener("input", () => {
+  stopPI(); readW();
+  document.querySelectorAll(".preset-btn").forEach(x=>x.classList.remove("on"));
+  rebuildAll();
+}));
+document.getElementById("piStepBtn").onclick = () => { stopPI(); if (piIter<PI_MAX){ piStep(); } drawMap(); drawPI(); updateStats(); };
+document.getElementById("piRunBtn").onclick = () => {
+  if (piTimer){ stopPI(); return; }
+  if (piIter >= PI_MAX) resetPI();
+  document.getElementById("piRunBtn").innerHTML = "&#9208; pause";
+  piTimer = setInterval(() => {
+    piStep(); drawMap(); drawPI(); updateStats();
+    if (piIter >= PI_MAX) stopPI();
+  }, 320);
+};
+document.getElementById("piResetBtn").onclick = () => { stopPI(); resetPI(); drawMap(); drawPI(); updateStats(); };
+document.querySelectorAll(".preset-btn").forEach(b => b.onclick = () => {
+  stopPI();
+  document.querySelectorAll(".preset-btn").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on");
+  const p = b.dataset.w.split(",").map(Number);
+  document.getElementById("wA").value = p[0]; document.getElementById("wB").value = p[1];
+  document.getElementById("wC").value = p[2]; document.getElementById("wD").value = p[3];
+  readW(); rebuildAll();
+});
+document.getElementById("trSlider").addEventListener("input", () => { drawTrain(); updateStats(); });
+window.addEventListener("resize", () => {
+  if (!document.getElementById("look").classList.contains("hidden")){ drawMap(); drawPI(); drawTrain(); }
+});
+
+// ---------- go ----------
+readW();
+buildTrainSeries();
+drawMap(); drawPI(); drawTrain(); updateStats();
+</script>
+
+<script>
+// ===================== UNDERSTAND — 10 steps =====================
+const STEPS = [
+ { title:"1. The problem: GAN discriminators blow up",
+   why:"A GAN trains a generator and a discriminator adversarially. Nothing stops the discriminator's weights from growing, and as they grow the function it computes gets steeper and steeper — its gradients (the very signal the generator learns from) explode, and training collapses into mode collapse or divergence. We need to BOUND how steep the discriminator can be.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">D weights grow → D gets steeper<br>steeper → exploding gradients<br>exploding gradients → training collapses</div>`,
+   code:"# adversarial training keeps pushing D's weights up.\n# with no constraint, ||grad D|| -> infinity -> collapse.\n# fix: cap how fast D's output can change = its Lipschitz const." },
+ { title:"2. Steepness = the Lipschitz constant",
+   why:"A function f is K-Lipschitz if ‖f(x)−f(y)‖ ≤ K‖x−y‖ for all x,y — K is the biggest slope it ever has. Bounding a discriminator's Lipschitz constant caps its steepness everywhere, which is exactly what WGAN's theory needs (a 1-Lipschitz critic) and what keeps gradients finite.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">K-Lipschitz:  ‖f(x)−f(y)‖ ≤ K·‖x−y‖<br>K = the largest slope anywhere<br>goal: make D 1-Lipschitz (K = 1)</div>`,
+   code:"# 1-Lipschitz:  |D(x) - D(y)|  <=  ||x - y||\n# => output can't change faster than the input\n# => gradients w.r.t. input are bounded by 1" },
+ { title:"3. For a linear layer, Lipschitz = spectral norm",
+   why:"A layer y = Wx is linear, so its Lipschitz constant is the largest factor by which it can stretch a vector: max over x of ‖Wx‖/‖x‖. That maximum stretch has a name — the spectral norm σ(W) — and it equals the LARGEST SINGULAR VALUE of W. So bounding the layer's steepness = bounding σ(W).",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">Lip(Wx) = max<sub>x</sub> ‖Wx‖ / ‖x‖<br>       = σ(W)  (spectral norm)<br>       = largest singular value of W</div>`,
+   code:"# spectral norm = worst-case stretch of a linear map\n# sigma(W) = max_{||x||=1} ||W x||\n#          = sqrt( largest eigenvalue of W^T W )" },
+ { title:"4. Singular values = how W stretches the unit circle",
+   why:"Apply W to every point on the unit sphere and you get an ellipsoid. Its semi-axis lengths ARE the singular values, and the directions are the singular vectors. The longest semi-axis is σ (the top singular value) — the worst-case stretch. In 2-D the demo shows exactly this: circle in, ellipse out, long axis = σ.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">unit circle --W--> ellipse<br>semi-axes = singular values σ₁ ≥ σ₂<br>longest = σ₁ = σ(W) = spectral norm</div>`,
+   code:"# W maps the unit circle to an ellipse:\n#   longest semi-axis = sigma_1 (top singular value)\n#   its direction     = top left singular vector u\n#   pre-image direction= top right singular vector v" },
+ { title:"5. Power iteration finds σ without an SVD",
+   why:"A full SVD is O(d³) — far too slow to run every training step. Power iteration finds ONLY the top singular pair by repeatedly pushing a vector through W and Wᵀ and re-normalizing. Each pass is just matrix–vector products, O(d²), and it converges geometrically fast (rate σ₂/σ₁).",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">repeat:<br>  u ← W v / ‖W v‖<br>  v ← Wᵀu / ‖Wᵀu‖<br>then  σ ≈ uᵀ W v</div>`,
+   code:"def power_iter(W, v, n=1):\n    for _ in range(n):\n        u = W @ v;   u /= norm(u) + 1e-12\n        v = W.T @ u; v /= norm(v) + 1e-12\n    return u @ (W @ v), u, v      # sigma, u, v" },
+ { title:"6. Why it converges to the TOP pair",
+   why:"Write the start vector in the singular-vector basis. Each WᵀW pass multiplies component i by σᵢ². The largest, σ₁², dominates more and more, so after a few passes the vector points almost entirely along the top singular vector v₁ and the estimate σ = ‖Wv‖ locks onto σ₁. In the demo you watch v swing onto the ellipse's long axis.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">each pass scales comp. i by σᵢ²<br>σ₁² > σ₂² ⇒ top comp. wins<br>v → v₁,  σ_est → σ₁  (fast)</div>`,
+   code:"# v = Σ c_i v_i ;  (W^T W) v = Σ c_i σ_i² v_i\n# ratio of 2nd to 1st shrinks like (σ_2/σ_1)²\n# so v aligns with v_1 geometrically fast" },
+ { title:"7. Spectral normalization: divide by σ",
+   why:"Once you have σ(W), the fix is one line: W_SN = W / σ(W). Its top singular value is σ/σ = 1, so W_SN can no longer stretch any vector — it's EXACTLY 1-Lipschitz. Geometrically the output ellipse shrinks until its longest semi-axis is 1, tucking it just inside the unit circle.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">W_SN = W / σ(W)<br>σ(W_SN) = σ/σ = 1<br>⇒ ‖W_SN x‖ ≤ ‖x‖ for all x  (1-Lipschitz)</div>`,
+   code:"sigma, u, v = power_iter(W, v, 1)\nW_sn = W / sigma        # sigma(W_sn) == 1\n# ellipse now fits inside the unit circle" },
+ { title:"8. One power-iteration step per forward pass",
+   why:"The elegant trick from Miyato et al.: don't converge power iteration each step. Keep the vector v as a persistent buffer and run just ONE step per forward pass, warm-started from last time. Because W changes only a little between updates, that single step tracks σ accurately — SN costs essentially nothing.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">stash v between steps (warm start)<br>1 power-iter step / forward pass<br>W moves slowly ⇒ σ estimate stays sharp</div>`,
+   code:"class SNLinear:\n    def forward(self, x):\n        u = norm(self.W @ self.v)\n        self.v = norm(self.W.T @ u)   # persist v\n        s = u @ (self.W @ self.v)\n        return (self.W / s) @ x" },
+ { title:"9. A stack of 1-Lipschitz layers is 1-Lipschitz",
+   why:"Lipschitz constants MULTIPLY under composition: Lip(f∘g) ≤ Lip(f)·Lip(g). So if every linear layer is 1-Lipschitz (and the activations, like ReLU/LeakyReLU, are 1-Lipschitz too), the WHOLE discriminator is 1-Lipschitz — its input gradients are bounded, and the adversarial game can't send them to infinity.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">Lip(f∘g) ≤ Lip(f)·Lip(g)<br>each layer = 1,  ReLU = 1<br>⇒ whole D is 1-Lipschitz</div>`,
+   code:"# every SNLinear is 1-Lipschitz, ReLU is 1-Lipschitz\n# => D = L3 ∘ relu ∘ L2 ∘ relu ∘ L1 is 1-Lipschitz\n# => bounded gradients => stable GAN training" },
+ { title:"10. SN vs weight-clipping vs gradient-penalty",
+   why:"WGAN clipped weights into [−c,c] — cheap but blunt, wastes capacity and is brittle to c. WGAN-GP penalized ‖∇D‖→1 — accurate but needs an extra backward pass. Spectral normalization gives an EXACT 1-Lipschitz guarantee with no capacity loss and only one power-iteration step per forward — which is why SNGAN (Miyato 2018) and most modern GANs use it by default.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">clip:    cheap · kills capacity · brittle<br>grad-pen: accurate · extra backward pass<br>SN:      exact · free · no capacity loss ✓</div>`,
+   code:"# weight clip:  W = clip(W, -c, c)          # blunt\n# grad penalty: + λ(||∇D(x̂)|| - 1)²          # extra pass\n# spectral norm: W /= sigma(W)               # exact, ~free\n# next: Dilated Convolutions" },
+];
+</script>
+
+<script>
+// ---- UNDERSTAND engine (shared pattern) ----
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s,i) => { const bn = document.createElement("button");
+  bn.className = "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm";
+  bn.innerHTML = `<div class="font-semibold">${s.title}</div>`; bn.onclick = () => show(i); stepsEl.appendChild(bn); });
+function show(i){ curS = i; const s = STEPS[i];
+  document.getElementById("concept").innerHTML = `<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML = `<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent = s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx) => { bn.className = idx===i
+    ? "w-full text-left p-3 rounded-lg border-2 border-rose-500 bg-rose-50 text-sm font-semibold"
+    : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-rose-400 text-sm"; });
+}
+prevB.onclick = () => show(Math.max(0, curS-1));
+nextB.onclick = () => show(Math.min(STEPS.length-1, curS+1));
+let tm = null;
+autoB.onclick = () => { if (tm){ clearInterval(tm); tm=null; autoB.textContent="▶ Auto-play"; return; }
+  autoB.textContent = "⏸ Pause"; show(0);
+  tm = setInterval(() => { if (curS >= STEPS.length-1){ clearInterval(tm); tm=null; autoB.textContent="▶ Replay"; return; } show(curS+1); }, 5200); };
+show(0);
+
+function copy(btn){ const pre = btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500); }
+</script>
+</body>
+</html>
