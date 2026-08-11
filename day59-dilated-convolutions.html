@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 59 — Dilated (Atrous) Convolutions</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#06b6d4; }
+  .dil   { color:#0e7490; font-weight:700; }   /* dilated / atrous */
+  .plain { color:#b45309; font-weight:700; }   /* plain stacked conv */
+  .rf    { color:#6d28d9; font-weight:700; }   /* receptive field */
+  .gap   { color:#be123c; font-weight:700; }   /* gridding artifact / holes */
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .preset-btn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:7px 12px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; transition:.12s; }
+  .preset-btn:hover{ border-color:#67e8f9; }
+  .preset-btn.on{ background:#06b6d4; border-color:#06b6d4; color:#fff; }
+  canvas{ display:block; }
+  .legend-sym{ display:inline-flex; width:16px; height:16px; border-radius:5px; }
+  .btn-solid{ background:#06b6d4; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-dark{ background:#0f172a; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-ghost{ background:#fff; border:1.5px solid #e2e8f0; color:#475569; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .bignum{ font-variant-numeric:tabular-nums; font-weight:900; line-height:1; }
+  .statcard{ border-radius:12px; border:1.5px solid #e2e8f0; background:#fff; padding:10px 12px; text-align:center; }
+  .statcard .lab{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; font-weight:800; color:#94a3b8; }
+  /* dilation-specific */
+  .conewrap{ width:100%; height:430px; border-radius:12px; border:1px solid #e2e8f0; background:#0b1020; overflow:hidden; }
+  .conewrap canvas{ width:100%; height:100%; }
+  .plotwrap{ width:100%; height:210px; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .plotwrap canvas{ width:100%; height:100%; }
+  .gridwrap{ width:100%; height:260px; border-radius:12px; border:1px solid #e2e8f0; background:#f8fafc; overflow:hidden; }
+  .gridwrap canvas{ width:100%; height:100%; }
+  .imgwrap{ width:100%; height:180px; border-radius:12px; border:1px solid #e2e8f0; background:#0b1020; overflow:hidden; }
+  .imgwrap canvas{ width:100%; height:100%; }
+  .grpcard{ background:#fff; border:1.5px solid #e2e8f0; border-radius:12px; padding:10px 12px; }
+  .grptitle{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; margin-bottom:4px; }
+  .cmpgrid{ display:grid; grid-template-columns:1fr; gap:8px; }
+  @media(min-width:900px){ .cmpgrid{ grid-template-columns:1fr 1fr 1fr; } }
+  .cmpcard{ border:1.5px solid #e2e8f0; border-radius:12px; padding:10px 12px; }
+  .cmptag{ font-size:10px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; }
+  /* the tap strip */
+  .strip{ display:flex; gap:3px; flex-wrap:nowrap; overflow-x:auto; padding:6px 2px; }
+  .cell{ min-width:26px; height:34px; border-radius:6px; border:1.5px solid #e2e8f0; background:#fff;
+         display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700;
+         color:#94a3b8; font-variant-numeric:tabular-nums; flex:0 0 auto; }
+  .cell.win{ background:#ecfeff; border-color:#a5f3fc; color:#0e7490; }
+  .cell.tap{ background:#06b6d4; border-color:#0891b2; color:#fff; }
+  .cell.hole{ background:#fff7ed; border-color:#fed7aa; color:#c2410c; }
+  .eq{ font-family:"SFMono-Regular",Consolas,monospace; font-size:12px; color:#334155; line-height:1.7; }
+  .eq b{ color:#0e7490; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-cyan-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div>
+      <div class="text-xs text-cyan-600 font-bold uppercase tracking-wider">DeepLearningFromZero · Day 59</div>
+      <h1 class="text-xl font-bold">&#128306; Dilated (Atrous) Convolutions &mdash; every output of a CNN only ever sees a small window of the input called its <span class="rf">receptive field</span>, and stacking plain <span class="mono">3&times;3</span> layers grows that window only <strong>linearly</strong>: <span class="mono">RF = 2L + 1</span>, so 10 layers still see just <span class="plain">21</span> samples &mdash; nowhere near enough context to segment an object or model a second of audio. The classic escape was <strong>pooling / striding</strong>, but that buys context by <em>throwing away resolution</em>, which is fatal for dense per-pixel tasks. <strong>Dilated convolution</strong> (also called <em>&agrave; trous</em>, &ldquo;with holes&rdquo;) fixes it with one idea: <span class="dil">leave gaps between the kernel taps</span>. A 3-tap kernel at dilation <span class="mono">d</span> reads <span class="mono">x[i]</span>, <span class="mono">x[i+d]</span>, <span class="mono">x[i+2d]</span> instead of three neighbours &mdash; its <strong>effective size</strong> becomes <span class="mono">d(k&minus;1)+1</span> while its <strong>parameter count and FLOPs stay exactly the same</strong>. Stack layers with <em>doubling</em> rates <span class="mono">1, 2, 4, 8&hellip;</span> and the receptive field explodes <strong>exponentially</strong> &mdash; <span class="mono">RF = 2<sup>L+1</sup> &minus; 1</span>, so those same 10 layers now see <span class="dil">2047</span> samples, at <strong>full resolution</strong>, for identical cost. That single trick powers <strong>WaveNet</strong>, <strong>DeepLab/ASPP</strong> and modern <strong>TCNs</strong>. Below: run a real dilated convolution over a real signal and a real grid, watch the kernel&rsquo;s <span class="dil">sampling pattern</span> spread out, trace the actual dependency cone from one output back to every input it touches, compare <span class="dil">exponential</span> vs <span class="plain">linear</span> receptive-field growth &mdash; and see the <span class="gap">gridding artifact</span> that appears when you get the rates wrong. Every convolution, every tap index and every receptive field computed <strong>by hand</strong> in your browser, no libraries.</h1>
+    </div>
+    <div class="flex gap-2" id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== LOOK ===================== -->
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-6 lg:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">Same <span class="mono">k</span> taps, same cost &mdash; but spread them out by <span class="dil mono">d</span> and the <span class="rf">receptive field</span> grows <span class="dil">exponentially</span> instead of <span class="plain">linearly</span>.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto text-center">Pick a stack, then read the <b>dependency cone</b>: it draws the real edges from one output node down through every layer to the exact input samples that output touches. The <span class="dil">cyan</span> inputs are inside its receptive field; the <span class="plain">amber</span> bracket is what a plain (<span class="mono">d=1</span>) stack of the same depth would have seen.</p>
+
+      <!-- ============ control bar ============ -->
+      <div class="bg-white rounded-xl border-2 border-slate-200 p-3 mb-4 flex items-center justify-center flex-wrap gap-4">
+        <div class="ctrl" style="min-width:180px">
+          <label>layers <span class="dil stat mono" id="lVal">4</span></label>
+          <input type="range" id="lSlider" min="1" max="6" step="1" value="4">
+        </div>
+        <div class="ctrl" style="min-width:180px">
+          <label>kernel taps k <span class="dil stat mono" id="kVal">3</span></label>
+          <input type="range" id="kSlider" min="2" max="5" step="1" value="3">
+        </div>
+        <span class="text-slate-300">|</span>
+        <button class="preset-btn on" data-mode="exp">rates 1,2,4,8&hellip; <span style="opacity:.7">(exponential)</span></button>
+        <button class="preset-btn" data-mode="plain">rates 1,1,1,1 <span style="opacity:.7">(plain conv)</span></button>
+        <button class="preset-btn" data-mode="grid">rates 4,4,4,4 <span style="opacity:.7">(gridding)</span></button>
+        <button class="preset-btn" data-mode="hdc">rates 1,2,5,1&hellip; <span style="opacity:.7">(HDC)</span></button>
+      </div>
+
+      <div class="grid lg:grid-cols-3 gap-4 mb-4">
+        <!-- ============ PANEL 1 : DEPENDENCY CONE ============ -->
+        <div class="bg-white rounded-xl border-2 border-cyan-200 p-4 lg:col-span-2">
+          <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+            <div class="text-sm font-bold text-slate-800">Dependency cone &mdash; what <b>one</b> output really sees</div>
+            <div class="text-[11px] text-slate-400">rates <span class="mono" id="rateReadout">1, 2, 4, 8</span></div>
+          </div>
+          <div class="conewrap mb-2"><canvas id="coneC"></canvas></div>
+          <div class="flex items-center justify-center gap-5 text-[11px] text-slate-500 flex-wrap">
+            <span class="flex items-center gap-1"><span class="legend-sym" style="background:#22d3ee"></span>inputs <b class="dil">inside</b> the receptive field</span>
+            <span class="flex items-center gap-1"><span class="legend-sym" style="background:#fb7185"></span><b class="gap">skipped</b> (inside the span, never touched)</span>
+            <span class="flex items-center gap-1"><span class="legend-sym" style="background:#475569"></span>outside the receptive field</span>
+            <span class="flex items-center gap-1"><span class="legend-sym" style="background:#f59e0b"></span><b class="plain">plain d=1</b> stack for comparison</span>
+          </div>
+        </div>
+
+        <!-- ============ PANEL 2 : THE NUMBERS ============ -->
+        <div class="bg-white rounded-xl border-2 border-violet-200 p-4">
+          <div class="text-sm font-bold text-slate-800 mb-1">Receptive field, by the formula</div>
+          <p class="text-[12px] text-slate-500 mb-2">A stride-1 stack has <span class="mono">RF = 1 + &Sigma;<sub>i</sub>(k&minus;1)&middot;d<sub>i</sub></span>. Doubling the rates makes that sum a geometric series &mdash; hence the explosion.</p>
+          <div class="grid grid-cols-2 gap-2 text-center">
+            <div class="statcard"><div class="lab">RF this stack</div><div class="bignum text-2xl rf mt-1" id="s_rf">&mdash;</div></div>
+            <div class="statcard"><div class="lab">RF if plain d=1</div><div class="bignum text-2xl plain mt-1" id="s_rfp">&mdash;</div></div>
+            <div class="statcard"><div class="lab">inputs actually touched</div><div class="bignum text-lg dil mt-1" id="s_touch">&mdash;</div></div>
+            <div class="statcard"><div class="lab">skipped (holes)</div><div class="bignum text-lg gap mt-1" id="s_holes">&mdash;</div></div>
+            <div class="statcard"><div class="lab">params (both)</div><div class="bignum text-lg mt-1" id="s_par" style="color:#0f172a">&mdash;</div></div>
+            <div class="statcard"><div class="lab">plain layers to match</div><div class="bignum text-lg plain mt-1" id="s_need">&mdash;</div></div>
+          </div>
+          <div class="grpcard text-[12px] text-slate-600 mt-3">
+            <div class="grptitle" style="color:#6d28d9">the sum, term by term</div>
+            <div class="mono" id="rfMath" style="font-size:11.5px; line-height:1.6">&mdash;</div>
+          </div>
+          <div class="grpcard text-[12px] text-slate-600 mt-2">
+            <div class="grptitle" style="color:#0e7490">verified live</div>
+            <div>The cone above is built by <b>really running</b> the layers: node <span class="mono">j</span> of layer <span class="mono">i</span> is wired to nodes <span class="mono">j + t&middot;d<sub>i</sub></span> below it. The formula&rsquo;s <span class="rf mono" id="v_form">&mdash;</span> matches the traced span <span class="dil mono" id="v_trace">&mdash;</span>.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ SAMPLING PATTERN ============ -->
+      <div class="grid lg:grid-cols-2 gap-4 mb-4">
+        <div class="bg-white rounded-xl border-2 border-cyan-200 p-4">
+          <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+            <div class="text-sm font-bold text-slate-800">1-D sampling pattern &mdash; one output, one real dot product</div>
+            <div class="ctrl" style="min-width:200px">
+              <label>dilation d <span class="dil stat mono" id="dVal">2</span></label>
+              <input type="range" id="dSlider" min="1" max="8" step="1" value="2">
+            </div>
+          </div>
+          <p class="text-[12px] text-slate-500 mb-1">The <b class="dil">cyan</b> cells are the taps the kernel multiplies; the <b class="gap">peach</b> cells sit inside the kernel&rsquo;s span but are <b>skipped</b> &mdash; that is the &ldquo;hole&rdquo; in <em>&agrave; trous</em>. Slide the output position to move the window.</p>
+          <div class="ctrl mb-1" style="max-width:280px">
+            <label>output position i <span class="dil stat mono" id="pVal">6</span></label>
+            <input type="range" id="pSlider" min="0" max="30" step="1" value="6">
+          </div>
+          <div class="strip" id="strip"></div>
+          <div class="grpcard mt-2">
+            <div class="grptitle" style="color:#0e7490">the arithmetic, with the real signal values</div>
+            <div class="eq" id="eqBox">&mdash;</div>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl border-2 border-cyan-200 p-4">
+          <div class="text-sm font-bold text-slate-800 mb-1">2-D sampling pattern &mdash; a <span class="mono" id="kk2">3&times;3</span> kernel that covers <span class="mono" id="eff2">5&times;5</span></div>
+          <p class="text-[12px] text-slate-500 mb-2">Same <span class="mono" id="np2">9</span> weights, spread over a wider footprint. This is exactly DeepLab&rsquo;s <em>atrous</em> filter: more context per layer, no extra parameters, no downsampling.</p>
+          <div class="gridwrap"><canvas id="gridC"></canvas></div>
+          <div class="grid grid-cols-3 gap-2 text-center mt-3 mb-3">
+            <div class="statcard"><div class="lab">params</div><div class="bignum text-lg mt-1" id="g_par" style="color:#0f172a">9</div></div>
+            <div class="statcard"><div class="lab">effective size</div><div class="bignum text-lg dil mt-1" id="g_eff">5</div></div>
+            <div class="statcard"><div class="lab">cells covered</div><div class="bignum text-lg rf mt-1" id="g_cov">25</div></div>
+          </div>
+          <div class="grptitle" style="color:#0e7490">a real 2-D dilated convolution, run right now</div>
+          <p class="text-[12px] text-slate-500 mb-1">A vertical Sobel over a 21&times;21 image holding a <b>fine stripe texture</b> (period 4) on the left, a <b>wide bar</b> in the middle and a blob. At <span class="mono">d=1</span> the taps straddle the stripes out of phase and the texture blazes; at <span class="mono">d=2</span> the taps land 4 apart &mdash; the <b>same</b> phase &mdash; so the texture cancels to <b>exactly zero</b> and the same nine weights now see only the wide bar. Dilation is choosing a <b>scale</b>.</p>
+          <div class="imgwrap"><canvas id="imgC"></canvas></div>
+        </div>
+      </div>
+
+      <!-- ============ REAL CONVOLUTION ON A REAL SIGNAL ============ -->
+      <div class="bg-white rounded-xl border-2 border-cyan-200 p-4 mb-4">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+          <div class="text-sm font-bold text-slate-800">Real dilated convolution over a real signal &mdash; dilation picks the <b>scale</b> the filter responds to</div>
+          <div class="flex gap-2 flex-wrap">
+            <button class="preset-btn on" data-kern="edge">edge [1,0,&minus;1]</button>
+            <button class="preset-btn" data-kern="lap">laplacian [1,&minus;2,1]</button>
+            <button class="preset-btn" data-kern="smooth">smooth [&#8531;,&#8531;,&#8531;]</button>
+          </div>
+        </div>
+        <p class="text-[12px] text-slate-500 mb-2">The input (grey) is a <b>slow swell</b> with a <b>wide plateau</b> and a <b>fast ripple of period 4</b> riding on top. A <span class="mono">[1,0,&minus;1]</span> kernel differences samples <span class="mono">2d</span> apart, so its gain on a wave of frequency <span class="mono">&omega;</span> is <span class="mono">2|sin(&omega;d)|</span>. At <span class="mono">d=1</span> the ripple sits at <b>maximum</b> gain and drowns everything out. Push <span class="mono">d</span> to <b>any even number</b> and the taps land on the <b>same ripple phase</b>, so it cancels to <b>exactly zero</b> &mdash; the identical three weights now see only the slow swell and the plateau edges. Dilation is not &ldquo;more context&rdquo;; it is <b>choosing which scale to look at</b>.</p>
+        <div class="plotwrap" style="height:240px"><canvas id="sigC"></canvas></div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-center mt-3">
+          <div class="statcard"><div class="lab">output length d=1</div><div class="bignum text-lg mt-1" id="o_1" style="color:#0f172a">&mdash;</div></div>
+          <div class="statcard"><div class="lab">output length d=<span id="o_dl">2</span></div><div class="bignum text-lg dil mt-1" id="o_d">&mdash;</div></div>
+          <div class="statcard"><div class="lab">peak |response| d=1</div><div class="bignum text-lg mt-1" id="o_p1" style="color:#64748b">&mdash;</div></div>
+          <div class="statcard"><div class="lab">peak |response| d=<span id="o_pdl">2</span></div><div class="bignum text-lg dil mt-1" id="o_pd">&mdash;</div></div>
+        </div>
+      </div>
+
+      <!-- ============ RF GROWTH ============ -->
+      <div class="bg-white rounded-xl border-2 border-violet-200 p-4 mb-4">
+        <div class="text-sm font-bold text-slate-800 mb-1">Receptive field vs depth &mdash; <span class="dil">exponential</span> vs <span class="plain">linear</span> (log scale)</div>
+        <p class="text-[12px] text-slate-500 mb-2">Both curves use the same <span class="mono">k=3</span> kernel and the same cost per layer. The only difference is the dilation schedule. By layer 10 the dilated stack sees <b class="dil">2047</b> samples and the plain stack sees <b class="plain">21</b>.</p>
+        <div class="plotwrap" style="height:230px"><canvas id="rfC"></canvas></div>
+      </div>
+
+      <!-- ============ CONTRAST CARD ============ -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">
+        <div class="grptitle mb-2" style="color:#0f172a">Three ways to give a CNN more context</div>
+        <div class="cmpgrid">
+          <div class="cmpcard" style="border-color:#fde68a;background:#fffbeb">
+            <div class="cmptag" style="color:#b45309">Stack more plain layers</div>
+            <div class="text-[12px] text-slate-600 mt-1">RF grows as <span class="mono">2L+1</span> &mdash; <b>linear</b>. To see 2047 samples you need <b>1023 layers</b>. Full resolution, but the depth (and the parameters, and the compute) are absurd.</div>
+          </div>
+          <div class="cmpcard" style="border-color:#fecdd3;background:#fff1f2">
+            <div class="cmptag" style="color:#be123c">Pool / stride down</div>
+            <div class="text-[12px] text-slate-600 mt-1">RF grows fast because every unit is worth more input &mdash; but you <b>throw away resolution</b>. For segmentation or audio you then need clumsy upsampling / deconv to get the detail back.</div>
+          </div>
+          <div class="cmpcard" style="border-color:#a5f3fc;background:#ecfeff">
+            <div class="cmptag" style="color:#0e7490">Dilate the kernel</div>
+            <div class="text-[12px] text-slate-600 mt-1">RF grows as <span class="mono">2<sup>L+1</sup>&minus;1</span> &mdash; <b>exponential</b> &mdash; at <b>identical</b> parameters, identical FLOPs and <b>full resolution</b>. The one caveat: choose the rates so they don&rsquo;t leave holes.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ GRIDDING ============ -->
+      <div class="bg-white rounded-xl border-2 border-rose-200 p-4 mb-4">
+        <div class="text-sm font-bold text-slate-800 mb-1">The catch: the <span class="gap">gridding artifact</span></div>
+        <p class="text-[12px] text-slate-500 mb-2">If every layer uses the <b>same</b> rate, the tap positions all land on the same lattice, so the stack&rsquo;s receptive field is full of <b>holes</b> &mdash; the output is wide but blind to most of what it spans, and neighbouring outputs see disjoint sample sets (checkerboard artifacts). Switch the preset above to <b>4,4,4,4</b> and watch the peach cells appear; switch to <b>1,2,5</b> (Hybrid Dilated Convolution) and the coverage becomes solid again.</p>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-center">
+          <div class="statcard"><div class="lab">rates 1,2,4 &rarr; coverage</div><div class="bignum text-lg dil mt-1">15 / 15</div></div>
+          <div class="statcard"><div class="lab">rates 4,4,4 &rarr; coverage</div><div class="bignum text-lg gap mt-1">7 / 25</div></div>
+          <div class="statcard"><div class="lab">rates 2,4,8 &rarr; coverage</div><div class="bignum text-lg gap mt-1">15 / 29</div></div>
+          <div class="statcard"><div class="lab">rates 1,2,5 (HDC) &rarr;</div><div class="bignum text-lg dil mt-1">17 / 17</div></div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-sm text-slate-600">
+        <b class="text-slate-800">What to try:</b> (1) Leave the preset on <b>1,2,4,8</b> and drag <b>layers</b> from 1&rarr;6: the receptive field goes 3 &rarr; 7 &rarr; 15 &rarr; <b class="dil">31</b> &rarr; 63 &rarr; <b class="dil">127</b>, doubling every layer, while the <b class="plain">plain</b> number crawls 3, 5, 7, 9, 11, 13. (2) Flip to the <b>1,1,1,1</b> preset at 6 layers &mdash; identical parameters, identical FLOPs, receptive field <b class="plain">13</b> instead of <b class="dil">127</b>. That gap is the entire point of the technique. (3) Flip to <b>4,4,4,4</b>: the span stays wide but the cone turns <b class="gap">peach</b> &mdash; only 7 of 25 inputs are ever read. That is gridding. (4) Flip to <b>1,2,5</b> (HDC) &mdash; coverage is solid again <em>and</em> the field is still wide: rates that are not multiples of each other tile the span. (5) In the 1-D panel push <b>d</b> to 8: three weights now straddle 17 samples, and the arithmetic line shows the three (and only three) multiplies. (6) On the signal plot, set <b>d=1</b>: the response is dominated by the period-4 ripple. Now set <b>d=2</b> &mdash; the ripple vanishes <b>completely</b> (gain <span class="mono">2|sin(&pi;)| = 0</span>) and the plateau edges and slow swell appear. Set <b>d=8</b> and the slow swell peaks. Same three numbers, three different feature detectors, zero extra cost.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== UNDERSTAND ===================== -->
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2">
+      <h3 class="font-bold text-lg mb-3">From &ldquo;my filter can&rsquo;t see far enough&rdquo; to an exponentially growing receptive field at full resolution</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-cyan-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-cyan-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-cyan-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-cyan-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-cyan-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BUILD ===================== -->
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">Dilated convolution is a one-character change to the indexing of an ordinary convolution &mdash; so we&rsquo;ll write the ordinary one first, add the stride inside the kernel, prove it equals a zero-stuffed plain kernel, extend it to 2-D, derive the receptive field of a whole stack, verify that formula by actually running the layers, and finish with the gridding trap and a WaveNet-style block. Every line by hand.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-cyan-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">An ordinary 1-D convolution</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Slide a <code>k</code>-tap kernel along the signal; each output is a dot product of the kernel with <code>k</code> <b>consecutive</b> samples. Note the two things we will change: the tap offsets <code>j</code>, and nothing else.</p>
+        <div class="relative"><pre>import numpy as np
+
+def conv1d(x, w):
+    k = len(w)
+    return np.array([
+        sum(w[j] * x[i + j] for j in range(k))    # taps at i, i+1, ..., i+k-1
+        for i in range(len(x) - k + 1)            # 'valid' mode, stride 1
+    ])</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-cyan-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">Add the dilation: <code>j</code> becomes <code>j*d</code></h3></div>
+        <p class="text-sm text-slate-600 mb-3">That is the entire algorithm. The kernel now reads <code>x[i]</code>, <code>x[i+d]</code>, <code>x[i+2d]</code>&hellip; The <b>effective</b> kernel size is <code>d(k-1)+1</code>, but the number of weights &mdash; and the number of multiplies &mdash; is still <code>k</code>.</p>
+        <div class="relative"><pre>def conv1d(x, w, d=1):
+    k    = len(w)
+    eff  = d * (k - 1) + 1                 # span covered by the kernel
+    return np.array([
+        sum(w[j] * x[i + j*d] for j in range(k)),   # <-- j*d, the whole trick
+    ] for i in range(len(x) - eff + 1))
+
+# d = 1 -> the ordinary convolution.  d = 4, k = 3 -> spans 9 samples, 3 weights.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-cyan-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Prove it: dilation == a kernel stuffed with zeros</h3></div>
+        <p class="text-sm text-slate-600 mb-3">&ldquo;<em>&Agrave; trous</em>&rdquo; means &ldquo;with holes&rdquo;. Insert <code>d-1</code> zeros between every pair of taps and run a <b>plain</b> convolution &mdash; you get bit-identical output. That equivalence is why dilation needs no new math, and why a framework can implement it as pure indexing (the zeros are never actually multiplied).</p>
+        <div class="relative"><pre>def dilate_kernel(w, d):
+    out = []
+    for j, v in enumerate(w):
+        out.append(v)
+        if j < len(w) - 1:
+            out.extend([0.0] * (d - 1))        # the "holes"
+    return np.array(out)
+
+assert np.allclose(conv1d(x, w, d=4),
+                   conv1d(x, dilate_kernel(w, 4), d=1))   # identical
+# ...but the dilated version never multiplies by those zeros -> same FLOPs as d=1</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-cyan-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">2-D: the atrous filter (DeepLab)</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Exactly the same edit on both axes. A <code>3&times;3</code> kernel at <code>d=6</code> covers a <code>13&times;13</code> footprint with nine weights &mdash; that is how DeepLab gets a huge field of view for semantic segmentation while keeping the output map at the input resolution.</p>
+        <div class="relative"><pre>def conv2d(X, K, d=1):
+    kh, kw = K.shape
+    eh, ew = d*(kh-1)+1, d*(kw-1)+1
+    H,  W  = X.shape
+    out = np.zeros((H-eh+1, W-ew+1))
+    for r in range(out.shape[0]):
+        for c in range(out.shape[1]):
+            out[r, c] = sum(K[a, b] * X[r + a*d, c + b*d]
+                            for a in range(kh) for b in range(kw))
+    return out</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-cyan-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">The receptive field of a stack</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Each stride-1 layer widens the window by <code>(k-1)*d</code>, and the widenings simply add up. Doubling the rates turns that sum into a geometric series, which is where the exponent comes from.</p>
+        <div class="relative"><pre>def receptive_field(ks, ds):
+    return 1 + sum((k - 1) * d for k, d in zip(ks, ds))
+
+L  = 4
+rf_dilated = receptive_field([3]*L, [2**i for i in range(L)])   # 1 + 2*(1+2+4+8)
+rf_plain   = receptive_field([3]*L, [1]*L)                      # 1 + 2*4
+print(rf_dilated, rf_plain)          # 31   9
+# closed forms:  dilated = 2**(L+1) - 1        plain = 2L + 1</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-cyan-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Verify the formula by actually running the layers</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Don&rsquo;t trust the algebra &mdash; measure it. With &lsquo;valid&rsquo; stride-1 layers the output shrinks by exactly <code>RF-1</code>, so <code>RF = len(x) - len(y) + 1</code>. Better still, poke one input and see which outputs move: that <b>is</b> the receptive field, empirically.</p>
+        <div class="relative"><pre>def run_stack(x, ks, ds):
+    for k, d in zip(ks, ds):
+        x = conv1d(x, np.ones(k), d)
+    return x
+
+N  = 400
+rf_measured = N - len(run_stack(np.random.randn(N), [3]*4, [1,2,4,8])) + 1
+assert rf_measured == receptive_field([3]*4, [1,2,4,8]) == 31
+
+# perturbation test: which inputs move output q?
+def support(N, ks, ds, q):
+    base = run_stack(np.zeros(N), ks, ds)[q]
+    return [p for p in range(N)
+            if run_stack(np.eye(N)[p], ks, ds)[q] != base]</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-cyan-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">The gridding trap &mdash; and how to detect it</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A wide receptive field is worthless if most of it is holes. The set of inputs one output touches is the <b>Minkowski sum</b> of each layer&rsquo;s tap offsets; if its size is smaller than <code>RF</code>, you have gridding. Rates that share a common factor are the usual culprit &mdash; use co-prime / sawtooth schedules (HDC) instead.</p>
+        <div class="relative"><pre>def reachable(ks, ds):
+    S = {0}
+    for k, d in zip(ks, ds):
+        S = {p + t*d for p in S for t in range(k)}    # Minkowski sum
+    return S
+
+for ds in ([1,2,4], [4,4,4], [2,4,8], [1,2,5]):
+    rf, cov = receptive_field([3]*3, ds), len(reachable([3]*3, ds))
+    print(ds, f"RF={rf:3d}  touched={cov:3d}  {'OK' if cov == rf else 'GRIDDING'}")
+# [1,2,4] RF= 15 touched= 15 OK      [4,4,4] RF= 25 touched=  7 GRIDDING
+# [2,4,8] RF= 29 touched= 15 GRIDDING [1,2,5] RF= 17 touched= 17 OK</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-cyan-600 text-white rounded-full flex items-center justify-center font-bold">8</div><h3 class="font-bold text-lg">Put it in a real block (WaveNet / TCN / ASPP)</h3></div>
+        <p class="text-sm text-slate-600 mb-3">In practice dilation is wrapped in a residual block and the rate cycles <code>1,2,4,&hellip;,512</code> then restarts &mdash; each cycle adds field without the rate running away. Padding keeps the length fixed (causal padding on the left for audio); in vision, several rates run <b>in parallel</b> and are concatenated: that is ASPP.</p>
+        <div class="relative"><pre>import torch.nn as nn
+
+# 1-D: a TCN / WaveNet residual block — note dilation= is just an argument
+class DilatedBlock(nn.Module):
+    def __init__(self, ch, d, k=3):
+        super().__init__()
+        self.conv = nn.Conv1d(ch, ch, k, dilation=d, padding=d*(k-1)//2)
+        self.act  = nn.ReLU()
+    def forward(self, x):
+        return x + self.act(self.conv(x))          # residual keeps it trainable
+
+net = nn.Sequential(*[DilatedBlock(64, 2**i) for i in range(10)])   # RF = 2047
+
+# 2-D: ASPP — the SAME features seen at four scales, in parallel, then fused
+aspp = [nn.Conv2d(c, c, 3, dilation=r, padding=r) for r in (1, 6, 12, 18)]</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-cyan-50 border border-cyan-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-cyan-900">&#127881; Day 59 of DeepLearningFromZero done.</h3><p class="text-sm text-cyan-700 mt-2"><strong>Dilated (atrous) convolution</strong> changes one index &mdash; <span class="mono">x[i+j]</span> becomes <span class="mono">x[i+j&middot;d]</span> &mdash; so the kernel&rsquo;s taps sit <em>d</em> apart instead of adjacent. Its <strong>effective size</strong> jumps to <span class="mono">d(k&minus;1)+1</span> while its <strong>parameters and FLOPs do not move at all</strong>, and it is provably identical to convolving with a kernel stuffed with <span class="mono">d&minus;1</span> zeros (the &ldquo;holes&rdquo;). Because a stride-1 stack has <span class="mono">RF = 1 + &Sigma;(k&minus;1)d<sub>i</sub></span>, giving each layer <strong>double</strong> the previous rate turns that sum into a geometric series: <span class="mono">RF = 2<sup>L+1</sup>&minus;1</span> &mdash; <span class="dil">exponential</span> growth, where plain stacking gives only <span class="plain">2L+1</span>. Ten layers see <strong>2047</strong> samples instead of <strong>21</strong>, at the <strong>same cost and the same resolution</strong>, which is why <strong>WaveNet</strong> can model raw audio, <strong>DeepLab/ASPP</strong> can segment pixel-perfect masks without downsampling, and <strong>TCNs</strong> can replace RNNs on long sequences. The one trap is <span class="gap">gridding</span>: if the rates share a common factor the receptive field is wide but full of holes &mdash; the fix is co-prime / sawtooth schedules like <span class="mono">1,2,5</span>. You ran real dilated convolutions in 1-D and 2-D, traced the actual dependency cone from an output back to every input it touches, and watched the exponential curve pull away from the linear one &mdash; all computed by hand. <strong>&#128073; Tomorrow, Day 60:</strong> Grad-CAM &mdash; stop guessing what a CNN looked at, and get the heat-map straight out of the gradients.</p></div>
+  </div>
+</section>
+
+<script>
+// ---- tab switching ----
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+  if (t.dataset.tab === "look") requestAnimationFrame(() => { drawCone(); drawGrid(); drawImagePanel(); drawSignal(); drawRF(); });
+});
+</script>
+
+<script>
+// ==================================================================
+//  DAY 59 — DILATED (ATROUS) CONVOLUTIONS.
+//
+//  A convolution reads k CONSECUTIVE samples:   y[i] = SUM_j w[j] x[i+j]
+//  A DILATED convolution spaces the taps by d:  y[i] = SUM_j w[j] x[i+j*d]
+//
+//  That one change makes the kernel's EFFECTIVE size d*(k-1)+1 while the
+//  parameter count and the multiply count stay exactly k. It is provably
+//  identical to convolving with a kernel that has d-1 zeros stuffed
+//  between its taps ("a trous" = with holes) — but the zeros are never
+//  actually multiplied, so it is free.
+//
+//  A stride-1 stack has receptive field  RF = 1 + SUM_i (k_i - 1) * d_i.
+//  Doubling the rates 1,2,4,8,... makes that a geometric series:
+//        RF = 2^(L+1) - 1        (exponential)
+//  versus plain stacking:
+//        RF = 2L + 1             (linear)
+//  ...at the same cost, and WITHOUT losing resolution (no pooling).
+//
+//  Everything below — the convolutions, the dependency cone, the
+//  receptive fields, the coverage sets — is computed by hand.
+// ==================================================================
+
+// ---------------- the core (identical to the verified node harness) ----------------
+
+// 1-D dilated convolution, stride 1, 'valid'. Taps at i, i+d, i+2d, ...
+function conv1d(x, w, d){
+  d = d || 1;
+  const k = w.length, eff = d*(k-1)+1, n = x.length, out = [];
+  for (let i = 0; i + eff <= n; i++){
+    let s = 0;
+    for (let j = 0; j < k; j++) s += w[j] * x[i + j*d];
+    out.push(s);
+  }
+  return out;
+}
+// 2-D dilated convolution, stride 1, 'valid'.
+function conv2d(X, K, d){
+  d = d || 1;
+  const kh = K.length, kw = K[0].length;
+  const eh = d*(kh-1)+1, ew = d*(kw-1)+1;
+  const H = X.length, W = X[0].length, out = [];
+  for (let r = 0; r + eh <= H; r++){
+    const row = [];
+    for (let c = 0; c + ew <= W; c++){
+      let s = 0;
+      for (let a = 0; a < kh; a++) for (let b = 0; b < kw; b++) s += K[a][b]*X[r + a*d][c + b*d];
+      row.push(s);
+    }
+    out.push(row);
+  }
+  return out;
+}
+// effective ("a trous") kernel size, and the resulting output length
+function effK(k, d){ return d*(k-1) + 1; }
+function outLen(n, k, d){ return n - effK(k, d) + 1; }
+
+// analytic receptive field of a stride-1 stack:  RF = 1 + SUM (k_i - 1) d_i
+function rfStack(ks, ds){
+  let rf = 1;
+  for (let i = 0; i < ks.length; i++) rf += (ks[i]-1)*ds[i];
+  return rf;
+}
+// the SET of input offsets one output actually reads = Minkowski sum of tap
+// offsets. Smaller than RF  =>  gridding artifact (holes in the field).
+function reachable(ks, ds){
+  let S = new Set([0]);
+  for (let i = 0; i < ks.length; i++){
+    const T = new Set();
+    for (const p of S) for (let j = 0; j < ks[i]; j++) T.add(p + j*ds[i]);
+    S = T;
+  }
+  return S;
+}
+// prefix receptive fields: rfPre[i] = RF after i layers (rfPre[0] = 1)
+function rfPrefix(ks, ds){
+  const r = [1]; let rf = 1;
+  for (let i = 0; i < ks.length; i++){ rf += (ks[i]-1)*ds[i]; r.push(rf); }
+  return r;
+}
+// the REAL wiring: node j of level i+1 reads nodes j + t*d_i of level i.
+// Walking it down from a single output node gives the dependency cone.
+function coneLevels(ks, ds, topIdx){
+  const L = ks.length, levels = new Array(L+1);
+  levels[L] = new Set([topIdx]);
+  for (let i = L-1; i >= 0; i--){
+    const T = new Set();
+    for (const j of levels[i+1]) for (let t = 0; t < ks[i]; t++) T.add(j + t*ds[i]);
+    levels[i] = T;
+  }
+  return levels;
+}
+
+// Deterministic demo signal = a SLOW swell + a WIDE plateau + a FAST ripple of
+// period 4. The period is 4 on purpose. A [1,0,-1] kernel differences samples
+// 2d apart, so for a sinusoid its gain is 2|sin(w*d)|: the ripple (w = pi/2)
+// is at MAXIMUM gain at d=1 and lands on exactly the same phase at any EVEN d,
+// cancelling to precisely zero — while the slow swell (w = 0.18) is nearly
+// invisible at d=1 and peaks around d=8. Same three weights, opposite scales.
+function makeSignal(n){
+  const RIPPLE = [0, 0.5, 0, -0.5];             // period-4, i.e. w = pi/2
+  const x = [];
+  for (let i = 0; i < n; i++)
+    x.push(+(Math.sin(i*0.18) + (i>=18 && i<30 ? 1.1 : 0) + RIPPLE[i % 4]).toFixed(4));
+  return x;
+}
+// Deterministic 2-D demo image: a FINE vertical stripe texture (period 4) on
+// the left, one WIDE bar in the middle, a blob on the right. The period is 4
+// on purpose: a [1,0,-1] kernel at d=1 straddles it out of phase and screams,
+// while at d=2 its taps land 4 apart — the SAME phase — so the texture
+// cancels to exactly zero and only the wide bar survives. Same nine weights,
+// a different scale of feature. That is the whole idea, made measurable.
+function makeImage(n){
+  const I = [];
+  for (let r = 0; r < n; r++){
+    const row = [];
+    for (let c = 0; c < n; c++){
+      const fine = (c < 8) ? ((c % 4 < 2) ? 0.5 : 0) : 0;        // period-4 stripes
+      const bar  = (c >= 10 && c < 15) ? 1.0 : 0;                 // one wide bar
+      const blob = Math.exp(-(((r-4)*(r-4) + (c-18)*(c-18)) / 6)) * 0.8;
+      row.push(+(fine + bar + blob).toFixed(4));
+    }
+    I.push(row);
+  }
+  return I;
+}
+
+// ---------------- state ----------------
+let L = 4;                 // layers in the stack
+let K = 3;                 // taps per kernel
+let MODE = "exp";          // exp | plain | grid | hdc
+let D = 2;                 // dilation for the single-layer panels
+let POS = 6;               // output position on the tap strip
+let KERN = "edge";
+const KERNELS = { edge:[1,0,-1], lap:[1,-2,1], smooth:[1/3,1/3,1/3] };
+const SIG = makeSignal(64);
+const IMG = makeImage(21);
+
+function rates(){
+  if (MODE === "plain") return Array(L).fill(1);
+  if (MODE === "grid")  return Array(L).fill(4);
+  if (MODE === "hdc")   return Array.from({length:L}, (_,i) => [1,2,5][i % 3]);
+  return Array.from({length:L}, (_,i) => 1 << i);          // 1,2,4,8,...
+}
+function kernels(){ return Array(L).fill(K); }
+
+// ---------------- canvas sizing ----------------
+function fitCanvas(cv){
+  const R = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 300, h = cv.clientHeight || 300;
+  const pw = Math.round(w*R), ph = Math.round(h*R);
+  if (cv.width !== pw || cv.height !== ph){ cv.width = pw; cv.height = ph; }
+  return R;
+}
+
+// ---------------- PANEL 1 : the dependency cone ----------------
+function drawCone(){
+  const cv = document.getElementById("coneC"); if (!cv) return;
+  const R = fitCanvas(cv), g = cv.getContext("2d");
+  const Wd = cv.width, Hd = cv.height;
+  g.clearRect(0,0,Wd,Hd);
+
+  const ks = kernels(), ds = rates();
+  const RF = rfStack(ks, ds);
+  const N  = RF;                               // input row = exactly the field
+  const pre = rfPrefix(ks, ds);
+  const top = 0;                               // the single output node
+  const levels = coneLevels(ks, ds, top);
+  const touched = levels[0];
+
+  const padX = 26*R, padT = 24*R, padB = 56*R;
+  const innerW = Wd - 2*padX;
+  const rowH = (Hd - padT - padB) / (L + 1);
+  // input coordinate -> pixel x  (node j of level i is centred at j + (pre[i]-1)/2)
+  const X = u => padX + (N <= 1 ? innerW/2 : (u/(N-1))*innerW);
+  const Y = i => Hd - padB - i*rowH;           // level 0 (input) at the bottom
+  const nx = (i, j) => X(j + (pre[i]-1)/2);
+
+  // ---- edges, drawn level by level so deeper layers read as wider hops ----
+  const HUES = ["#22d3ee","#38bdf8","#818cf8","#c084fc","#f472b6","#fb923c"];
+  for (let i = L-1; i >= 0; i--){
+    g.strokeStyle = HUES[i % HUES.length];
+    g.globalAlpha = 0.55;
+    g.lineWidth = Math.max(0.7, 1.6 - i*0.12)*R;
+    g.beginPath();
+    for (const j of levels[i+1]){
+      const x1 = nx(i+1, j), y1 = Y(i+1);
+      for (let t = 0; t < ks[i]; t++){
+        const c = j + t*ds[i];
+        g.moveTo(x1, y1); g.lineTo(nx(i, c), Y(i));
+      }
+    }
+    g.stroke();
+  }
+  g.globalAlpha = 1;
+
+  // ---- nodes on every level above the input ----
+  for (let i = 1; i <= L; i++){
+    for (const j of levels[i]){
+      const x = nx(i, j), y = Y(i), r = (i === L ? 6.5 : 3.6)*R;
+      g.fillStyle = i === L ? "#facc15" : HUES[(i-1) % HUES.length];
+      g.beginPath(); g.arc(x, y, r, 0, 2*Math.PI); g.fill();
+    }
+    // level label
+    g.fillStyle = "#64748b"; g.font = "700 "+(10*R)+"px -apple-system"; g.textAlign = "left";
+    g.fillText("layer "+i+"  d="+ds[i-1], 4*R, Y(i)-6*R);
+  }
+
+  // ---- the input row: cyan = touched, rose = skipped hole, slate = outside ----
+  const cw = Math.max(2*R, Math.min(16*R, innerW/N * 0.82));
+  for (let u = 0; u < N; u++){
+    const x = X(u), y = Y(0);
+    g.fillStyle = touched.has(u) ? "#22d3ee" : "#fb7185";
+    g.fillRect(x - cw/2, y - 7*R, cw, 14*R);
+  }
+  g.fillStyle = "#94a3b8"; g.font = "700 "+(10*R)+"px -apple-system"; g.textAlign = "left";
+  g.fillText("input  ("+N+" samples spanned)", 4*R, Y(0)-14*R);
+
+  // ---- the plain-stack bracket, for scale ----
+  const rfP = rfStack(ks, Array(L).fill(1));
+  const lo = (RF - rfP)/2, hi = lo + rfP - 1;
+  const yB = Y(0) + 14*R;
+  g.strokeStyle = "#f59e0b"; g.lineWidth = 2*R;
+  g.beginPath();
+  g.moveTo(X(lo), yB - 5*R); g.lineTo(X(lo), yB); g.lineTo(X(hi), yB); g.lineTo(X(hi), yB - 5*R);
+  g.stroke();
+  g.fillStyle = "#b45309"; g.font = "700 "+(10*R)+"px -apple-system"; g.textAlign = "center";
+  g.fillText("plain d=1 stack would see "+rfP, X((lo+hi)/2), yB + 13*R);
+
+  // ---- headline ----
+  g.fillStyle = "#e2e8f0"; g.font = "800 "+(13*R)+"px -apple-system"; g.textAlign = "right";
+  g.fillText("RF = "+RF+"   ·   touched "+touched.size+"/"+RF, Wd - 8*R, 18*R);
+}
+
+// ---------------- PANEL : 2-D sampling pattern ----------------
+function drawGrid(){
+  const cv = document.getElementById("gridC"); if (!cv) return;
+  const R = fitCanvas(cv), g = cv.getContext("2d");
+  const Wd = cv.width, Hd = cv.height; g.clearRect(0,0,Wd,Hd);
+
+  const eff = effK(K, D);
+  const n = Math.max(eff, 9);                 // grid big enough to hold the footprint
+  const half = Math.min(Wd, Hd) * 0.92;
+  const cell = half / n;
+  const ox = (Wd - n*cell)/2, oy = (Hd - n*cell)/2;
+  const off = Math.floor((n - eff)/2);        // centre the footprint
+
+  const taps = new Set();
+  for (let a = 0; a < K; a++) for (let b = 0; b < K; b++)
+    taps.add((off + a*D) + "," + (off + b*D));
+
+  for (let r = 0; r < n; r++){
+    for (let c = 0; c < n; c++){
+      const inFoot = r >= off && r < off+eff && c >= off && c < off+eff;
+      const isTap  = taps.has(r + "," + c);
+      g.fillStyle = isTap ? "#06b6d4" : (inFoot ? "#fff7ed" : "#f1f5f9");
+      g.fillRect(ox + c*cell + 1*R, oy + r*cell + 1*R, cell - 2*R, cell - 2*R);
+      g.strokeStyle = isTap ? "#0891b2" : (inFoot ? "#fed7aa" : "#e2e8f0");
+      g.lineWidth = 1*R;
+      g.strokeRect(ox + c*cell + 1*R, oy + r*cell + 1*R, cell - 2*R, cell - 2*R);
+    }
+  }
+  // footprint outline
+  g.strokeStyle = "#0e7490"; g.lineWidth = 2*R; g.setLineDash([4*R,3*R]);
+  g.strokeRect(ox + off*cell, oy + off*cell, eff*cell, eff*cell);
+  g.setLineDash([]);
+  g.fillStyle = "#0e7490"; g.font = "800 "+(11*R)+"px -apple-system"; g.textAlign = "left";
+  g.fillText(K+"×"+K+" weights over "+eff+"×"+eff, ox, oy - 4*R);
+}
+
+// ---------------- PANEL : a REAL 2-D dilated convolution ----------------
+// Vertical Sobel over the demo image at d=1 vs the current d. Same nine
+// weights; only the tap spacing changes — and the feature it detects changes
+// with it (fine texture at d=1, the wide bar's edges at large d).
+const SOBEL = [[1,0,-1],[2,0,-2],[1,0,-1]];
+function drawImagePanel(){
+  const cv = document.getElementById("imgC"); if (!cv) return;
+  const R = fitCanvas(cv), g = cv.getContext("2d");
+  const Wd = cv.width, Hd = cv.height; g.clearRect(0,0,Wd,Hd);
+
+  const maps = [
+    { m: IMG,                  t: "input 21×21",  signed:false },
+    { m: conv2d(IMG, SOBEL, 1), t: "d=1 response", signed:true  },
+    { m: conv2d(IMG, SOBEL, D), t: "d="+D+" response", signed:true }
+  ];
+  const padT = 16*R, padB = 6*R, gapX = 12*R;
+  const boxW = (Wd - 4*gapX)/3, boxH = Hd - padT - padB;
+  maps.forEach((mp, idx) => {
+    const rows = mp.m.length, cols = mp.m[0].length;
+    const cell = Math.min(boxW/cols, boxH/rows);
+    const ox = gapX + idx*(boxW + gapX) + (boxW - cols*cell)/2;
+    const oy = padT + (boxH - rows*cell)/2;
+    let mx = 0;
+    for (const row of mp.m) for (const v of row) mx = Math.max(mx, Math.abs(v));
+    mx = mx || 1;
+    for (let r = 0; r < rows; r++){
+      for (let c = 0; c < cols; c++){
+        const v = mp.m[r][c];
+        if (mp.signed){
+          const t = Math.abs(v)/mx;
+          g.fillStyle = v >= 0 ? "rgba(34,211,238,"+(0.10+0.90*t).toFixed(3)+")"
+                               : "rgba(251,113,133,"+(0.10+0.90*t).toFixed(3)+")";
+        } else {
+          const t = v/mx;
+          g.fillStyle = "rgba(226,232,240,"+(0.08+0.92*t).toFixed(3)+")";
+        }
+        g.fillRect(ox + c*cell, oy + r*cell, cell+0.5, cell+0.5);
+      }
+    }
+    g.strokeStyle = "rgba(148,163,184,0.35)"; g.lineWidth = 1*R;
+    g.strokeRect(ox, oy, cols*cell, rows*cell);
+    g.fillStyle = idx === 2 ? "#22d3ee" : "#94a3b8";
+    g.font = "700 "+(10*R)+"px -apple-system"; g.textAlign = "center";
+    g.fillText(mp.t + "  ("+rows+"×"+cols+")", ox + cols*cell/2, padT - 4*R);
+  });
+}
+
+// ---------------- PANEL : real convolution on a real signal ----------------
+function drawSignal(){
+  const cv = document.getElementById("sigC"); if (!cv) return;
+  const R = fitCanvas(cv), g = cv.getContext("2d");
+  const Wd = cv.width, Hd = cv.height; g.clearRect(0,0,Wd,Hd);
+
+  const w = KERNELS[KERN];
+  const y1 = conv1d(SIG, w, 1);
+  const yd = conv1d(SIG, w, D);
+  const n = SIG.length;
+  const pad = 30*R;
+  const all = SIG.concat(y1, yd);
+  const hi = Math.max(...all)*1.1 + 1e-9, lo = Math.min(...all)*1.1 - 1e-9;
+  const sx = u => pad + (u/(n-1))*(Wd - 1.6*pad);
+  const sy = v => (Hd - pad) - (v - lo)/(hi - lo)*(Hd - 1.7*pad);
+
+  // zero line + grid
+  g.strokeStyle = "#eef2f7"; g.lineWidth = 1*R;
+  for (let k = 0; k <= 4; k++){ const y = pad*0.5 + k*(Hd - 1.4*pad)/4; g.beginPath(); g.moveTo(pad,y); g.lineTo(Wd-0.6*pad,y); g.stroke(); }
+  g.strokeStyle = "#cbd5e1"; g.setLineDash([4*R,3*R]); g.lineWidth = 1.2*R;
+  g.beginPath(); g.moveTo(pad, sy(0)); g.lineTo(Wd-0.6*pad, sy(0)); g.stroke(); g.setLineDash([]);
+
+  // outputs are shorter than the input — centre them so the scales line up
+  function trace(arr, col, wid, dash){
+    const shift = (n - arr.length)/2;
+    g.strokeStyle = col; g.lineWidth = wid*R;
+    if (dash) g.setLineDash([5*R,4*R]);
+    g.beginPath();
+    arr.forEach((v,i) => { const x = sx(i + shift), yy = sy(v); i ? g.lineTo(x,yy) : g.moveTo(x,yy); });
+    g.stroke(); g.setLineDash([]);
+  }
+  trace(SIG, "#cbd5e1", 2.4, false);          // the input
+  trace(y1,  "#94a3b8", 2.0, true);           // d = 1
+  trace(yd,  "#06b6d4", 2.8, false);          // d = current
+
+  g.font = "700 "+(10*R)+"px -apple-system"; g.textAlign = "left";
+  g.fillStyle = "#94a3b8"; g.fillText("input signal", pad, 13*R);
+  g.fillStyle = "#64748b"; g.fillText("response  d=1", pad + 92*R, 13*R);
+  g.fillStyle = "#0e7490"; g.fillText("response  d="+D, pad + 196*R, 13*R);
+  g.fillStyle = "#94a3b8"; g.font = (9*R)+"px -apple-system"; g.textAlign = "center";
+  g.fillText("sample index →", Wd/2, Hd - 6*R);
+
+  const pk = a => Math.max(...a.map(Math.abs));
+  document.getElementById("o_1").textContent   = y1.length;
+  document.getElementById("o_d").textContent   = yd.length;
+  document.getElementById("o_dl").textContent  = D;
+  document.getElementById("o_pdl").textContent = D;
+  document.getElementById("o_p1").textContent  = pk(y1).toFixed(3);
+  document.getElementById("o_pd").textContent  = pk(yd).toFixed(3);
+}
+
+// ---------------- PANEL : receptive field vs depth ----------------
+function drawRF(){
+  const cv = document.getElementById("rfC"); if (!cv) return;
+  const R = fitCanvas(cv), g = cv.getContext("2d");
+  const Wd = cv.width, Hd = cv.height; g.clearRect(0,0,Wd,Hd);
+
+  const MAXL = 12, pad = 34*R;
+  const dil = [], pln = [];
+  for (let l = 1; l <= MAXL; l++){
+    dil.push(rfStack(Array(l).fill(3), Array.from({length:l}, (_,i) => 1 << i)));
+    pln.push(rfStack(Array(l).fill(3), Array(l).fill(1)));
+  }
+  const hi = Math.log10(Math.max(...dil)*1.4), lo = 0;
+  const sx = l => pad + ((l-1)/(MAXL-1))*(Wd - 1.5*pad);
+  const sy = v => (Hd - pad) - (Math.log10(Math.max(v,1)) - lo)/(hi - lo)*(Hd - 1.6*pad);
+
+  // decade gridlines
+  g.strokeStyle = "#eef2f7"; g.lineWidth = 1*R;
+  g.fillStyle = "#94a3b8"; g.font = (9*R)+"px -apple-system"; g.textAlign = "right";
+  for (let e = 0; e <= Math.ceil(hi); e++){
+    const y = sy(Math.pow(10,e));
+    g.beginPath(); g.moveTo(pad,y); g.lineTo(Wd-0.5*pad,y); g.stroke();
+    g.fillText(Math.pow(10,e).toString(), pad - 5*R, y + 3*R);
+  }
+  function trace(arr, col){
+    g.strokeStyle = col; g.lineWidth = 2.8*R; g.beginPath();
+    arr.forEach((v,i) => { const x = sx(i+1), y = sy(v); i ? g.lineTo(x,y) : g.moveTo(x,y); });
+    g.stroke();
+    g.fillStyle = col;
+    arr.forEach((v,i) => { g.beginPath(); g.arc(sx(i+1), sy(v), 2.8*R, 0, 2*Math.PI); g.fill(); });
+  }
+  trace(pln, "#f59e0b");
+  trace(dil, "#06b6d4");
+
+  // marker at the current depth
+  const cur = Math.min(L, MAXL);
+  g.strokeStyle = "rgba(15,23,42,0.3)"; g.setLineDash([3*R,3*R]); g.lineWidth = 1.2*R;
+  g.beginPath(); g.moveTo(sx(cur), pad*0.35); g.lineTo(sx(cur), Hd - pad); g.stroke(); g.setLineDash([]);
+
+  g.font = "700 "+(10*R)+"px -apple-system"; g.textAlign = "left";
+  g.fillStyle = "#0e7490"; g.fillText("dilated 1,2,4,8…  RF = 2^(L+1)−1", sx(1)+4*R, sy(dil[3])-8*R);
+  g.fillStyle = "#b45309"; g.fillText("plain d=1  RF = 2L+1", sx(6), sy(pln[5])+16*R);
+  g.fillStyle = "#94a3b8"; g.font = (9*R)+"px -apple-system"; g.textAlign = "center";
+  g.fillText("layers →", Wd/2, Hd - 6*R);
+}
+
+// ---------------- the 1-D tap strip + live arithmetic ----------------
+function drawStrip(){
+  const el = document.getElementById("strip"); if (!el) return;
+  const w = KERNELS[KERN], eff = effK(K, D);
+  const maxPos = Math.max(0, SIG.length - eff);
+  if (POS > maxPos) POS = maxPos;
+  const ps = document.getElementById("pSlider");
+  ps.max = maxPos; ps.value = POS;
+  document.getElementById("pVal").textContent = POS;
+
+  const taps = new Set();
+  for (let j = 0; j < K; j++) taps.add(POS + j*D);
+
+  const from = Math.max(0, POS - 2), to = Math.min(SIG.length, POS + eff + 2);
+  let html = "";
+  for (let i = from; i < to; i++){
+    const inWin = i >= POS && i < POS + eff;
+    const cls = taps.has(i) ? "cell tap" : (inWin ? "cell hole" : "cell");
+    html += '<div class="'+cls+'" title="x['+i+'] = '+SIG[i].toFixed(3)+'">'+SIG[i].toFixed(1)+'</div>';
+  }
+  el.innerHTML = html;
+
+  // the actual dot product, term by term, with the real signal values
+  let sum = 0, terms = [];
+  for (let j = 0; j < K; j++){
+    const idx = POS + j*D, v = SIG[idx] || 0;
+    sum += w[j]*v;
+    terms.push("<b>"+(+w[j].toFixed(3))+"</b>·x["+idx+"]");
+  }
+  let nums = [];
+  for (let j = 0; j < K; j++){
+    const idx = POS + j*D;
+    nums.push((+w[j].toFixed(3)) + "·(" + (SIG[idx]||0).toFixed(3) + ")");
+  }
+  document.getElementById("eqBox").innerHTML =
+    "y[" + POS + "] = " + terms.join(" + ") + "<br>" +
+    "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; = " + nums.join(" + ") + "<br>" +
+    "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; = <b>" + sum.toFixed(4) + "</b>" +
+    "&nbsp;&nbsp;<span style='color:#94a3b8'>— " + K + " multiplies, spanning " +
+    eff + " samples (" + (eff - K) + " skipped)</span>";
+}
+
+// ---------------- stat readouts ----------------
+function updateStats(){
+  const ks = kernels(), ds = rates();
+  const RF = rfStack(ks, ds), RFp = rfStack(ks, Array(L).fill(1));
+  const touched = reachable(ks, ds).size;
+
+  document.getElementById("lVal").textContent = L;
+  document.getElementById("kVal").textContent = K;
+  document.getElementById("dVal").textContent = D;
+  document.getElementById("rateReadout").textContent = ds.join(", ");
+  document.getElementById("s_rf").textContent    = RF;
+  document.getElementById("s_rfp").textContent   = RFp;
+  document.getElementById("s_touch").textContent = touched + " / " + RF;
+  document.getElementById("s_holes").textContent = (RF - touched);
+  document.getElementById("s_par").textContent   = (K*L);
+  document.getElementById("s_need").textContent  = Math.ceil((RF - 1)/(K - 1));
+
+  document.getElementById("rfMath").innerHTML =
+    "RF = 1 + " + ds.map(d => "(" + K + "−1)·" + d).join(" + ") +
+    "<br>&nbsp;&nbsp;&nbsp;= 1 + " + ds.map(d => (K-1)*d).join(" + ") + " = <b>" + RF + "</b>";
+  document.getElementById("v_form").textContent  = RF;
+  // trace the real cone and measure its span — must equal the formula
+  const lv = coneLevels(ks, ds, 0);
+  const arr = [...lv[0]];
+  document.getElementById("v_trace").textContent = (Math.max(...arr) - Math.min(...arr) + 1);
+
+  // 2-D pattern readouts
+  const eff = effK(K, D);
+  document.getElementById("kk2").innerHTML  = K + "×" + K;
+  document.getElementById("eff2").innerHTML = eff + "×" + eff;
+  document.getElementById("np2").textContent = K*K;
+  document.getElementById("g_par").textContent = K*K;
+  document.getElementById("g_eff").textContent = eff;
+  document.getElementById("g_cov").textContent = eff*eff;
+}
+
+function redraw(){ updateStats(); drawCone(); drawGrid(); drawImagePanel(); drawSignal(); drawRF(); drawStrip(); }
+
+// ---------------- controls ----------------
+document.getElementById("lSlider").addEventListener("input", e => { L = +e.target.value; redraw(); });
+document.getElementById("kSlider").addEventListener("input", e => { K = +e.target.value; redraw(); });
+document.getElementById("dSlider").addEventListener("input", e => { D = +e.target.value; redraw(); });
+document.getElementById("pSlider").addEventListener("input", e => { POS = +e.target.value; drawStrip(); });
+document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => {
+  document.querySelectorAll("[data-mode]").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); MODE = b.dataset.mode; redraw();
+});
+document.querySelectorAll("[data-kern]").forEach(b => b.onclick = () => {
+  document.querySelectorAll("[data-kern]").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); KERN = b.dataset.kern; drawSignal(); drawStrip();
+});
+window.addEventListener("resize", () => {
+  if (!document.getElementById("look").classList.contains("hidden")){ drawCone(); drawGrid(); drawImagePanel(); drawSignal(); drawRF(); }
+});
+
+// ---------------- go ----------------
+redraw();
+</script>
+
+<script>
+// ===================== UNDERSTAND — 11 steps =====================
+const STEPS = [
+ { title:"1. The problem: a filter can only see so far",
+   why:"Every unit in a CNN is computed from a small patch of the input called its receptive field, and that patch is all the evidence it has. A 3×3 kernel sees 3 pixels across — fine for an edge, useless for 'is this pixel part of a bus or a building?', which needs context from far outside the patch. The same problem bites in audio: one second of 16 kHz speech is 16,000 samples, and a filter that sees 3 of them knows nothing about the word being spoken. So the central design question in any convolutional architecture is: how do I make each output see MORE input, without paying for it? Everything on this page is one answer to that question.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">3×3 kernel  →  sees 3 samples across<br>segmentation needs ~500<br>1 s of audio  =  16,000 samples<br><b>how do we see further?</b></div>`,
+   code:"# a 3-tap kernel sees exactly 3 inputs.\n# y[i] = w0*x[i] + w1*x[i+1] + w2*x[i+2]\n# no amount of training changes WHAT it can see —\n# only the architecture can." },
+ { title:"2. Receptive field: what one output actually sees",
+   why:"The receptive field of an output unit is the set of input positions that can change its value — poke any one of them and the output moves; poke anything else and it does not. It is a purely structural property: it depends only on the kernel sizes, strides and dilations, never on the learned weights. That makes it something you can compute exactly before training, and something you should compute, because a model whose receptive field is smaller than the structures it must recognise cannot possibly work. On the LOOK tab the dependency cone draws this set by literally walking the wiring from one output down to the inputs.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">RF(y) = { x positions that can change y }<br>structural, not learned<br>computable before training<br>too small ⇒ the task is impossible</div>`,
+   code:"# empirical definition — poke and see:\ndef support(x_len, stack, q):\n    base = stack(zeros(x_len))[q]\n    return [p for p in range(x_len)\n            if stack(onehot(p))[q] != base]   # the receptive field" },
+ { title:"3. Plain stacking grows it only LINEARLY",
+   why:"Each extra stride-1 layer of kernel size k widens the window by exactly k−1, because the layer below must supply k−1 extra neighbours. Stack L such layers and RF = 1 + L(k−1); for the usual k=3 that is just 2L+1. Ten layers see 21 samples. Thirty layers see 61. To reach the ~2000-sample context a WaveNet needs you would have to stack about a thousand layers — which is not a depth problem so much as a compute, memory and optimisation catastrophe. Linear growth is simply the wrong curve.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">each layer adds (k−1)<br>RF = 1 + L·(k−1)  =  2L+1  for k=3<br>L=10 → 21 &nbsp;·&nbsp; L=30 → 61<br>RF 2047 would need <b>1023 layers</b></div>`,
+   code:"rf = 1\nfor _ in range(L):\n    rf += (k - 1)          # every layer adds the SAME amount\n# k=3: rf = 2L + 1   (linear — the curve is the problem)" },
+ { title:"4. The old fix: pooling — context bought with resolution",
+   why:"Downsampling grows the receptive field fast because after a 2× pool every unit is worth two input units, so the field doubles per stage. That is why classifiers pool aggressively: they only need one label at the end, so losing spatial detail costs nothing. But for dense prediction — semantic segmentation, depth, super-resolution, per-sample audio — the output must be the same size and the same sharpness as the input, and pooling destroys exactly the detail you are being graded on. Encoder–decoder tricks (unpooling, transposed convolution, skip connections) try to reconstruct what was thrown away, but you cannot recover information you deleted.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">pool ×2  →  RF doubles &nbsp;✓<br>pool ×2  →  resolution halves &nbsp;✗<br>4 pools: 64 samples → 4<br>dense tasks need BOTH</div>`,
+   code:"# pooling: field grows fast, detail is gone\nx = maxpool2(x)     # 64 -> 32\nx = maxpool2(x)     # 32 -> 16\nx = maxpool2(x)     # 16 ->  8\nx = maxpool2(x)     #  8 ->  4   (16x resolution lost)" },
+ { title:"5. Dilation: put gaps between the taps",
+   why:"Instead of reading k consecutive samples, read k samples spaced d apart: y[i] = Σ w[j]·x[i + j·d]. The kernel now straddles a much wider stretch of input while still holding exactly k weights and doing exactly k multiplies. The name à trous is French for 'with holes' — the taps are the same, the gaps between them are new. Setting d=1 recovers the ordinary convolution exactly, so dilation is a strict generalisation, not a different operator, which is why every framework exposes it as a single extra argument.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">plain:   y[i] = Σ w[j]·x[i + j]<br>dilated: y[i] = Σ w[j]·x[i + j·<b>d</b>]<br>d=1 → the ordinary convolution<br>d=4, k=3 → taps at i, i+4, i+8</div>`,
+   code:"def conv1d(x, w, d=1):\n    k, eff = len(w), d*(len(w)-1)+1\n    return [sum(w[j]*x[i + j*d] for j in range(k))\n            for i in range(len(x) - eff + 1)]\n# the entire change is  j  ->  j*d" },
+ { title:"6. Effective size grows, parameter count does not",
+   why:"A dilated kernel covers d(k−1)+1 input positions but stores only k numbers — at k=3, d=8 that is 17 samples of coverage from 3 weights and 3 multiplies. It is provably identical to convolving with a plain kernel that has d−1 zeros stuffed between its taps, which is a useful way to see it, but a terrible way to implement it. The zeros contribute nothing, so real implementations never materialise them; they just change the indexing and read the strided taps directly. That is the whole economic argument for dilation: the extra coverage is free, and the FLOPs are unchanged. Compare that with the alternative of simply using a bigger kernel — a plain 17-tap filter would cost 17 weights and 17 multiplies to span the same distance, nearly six times the price for the same reach.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">effective size = d(k−1)+1<br>parameters    = k &nbsp;&nbsp;(unchanged)<br>FLOPs         = k &nbsp;&nbsp;(unchanged)<br>k=3, d=8 → 17 wide, 3 weights</div>`,
+   code:"dilate([w0,w1,w2], d=3) == [w0,0,0,w1,0,0,w2]\nassert conv1d(x, w, d=3) == conv1d(x, dilate(w,3), d=1)\n# identical output — but the real op never multiplies the zeros" },
+ { title:"7. The receptive field of a whole stack",
+   why:"Widenings simply add: layer i with kernel k_i and dilation d_i contributes (k_i−1)·d_i, so a stride-1 stack has RF = 1 + Σ (k_i−1)·d_i. This is worth memorising because it is the one formula that tells you whether an architecture can even see the thing you are asking it to find. It also makes the design knob obvious — you control the receptive field through the SCHEDULE of dilation rates, independently of depth and independently of cost. The LOOK tab prints this sum term by term, and verifies it against the traced cone.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">RF = 1 + Σ<sub>i</sub> (k<sub>i</sub>−1)·d<sub>i</sub><br>k=3, d = 1,2,4,8<br>= 1 + 2(1+2+4+8)<br>= <b>31</b>  (vs 9 for plain)</div>`,
+   code:"def receptive_field(ks, ds):\n    return 1 + sum((k-1)*d for k, d in zip(ks, ds))\n\nreceptive_field([3]*4, [1,2,4,8])   # 31\nreceptive_field([3]*4, [1,1,1,1])   #  9" },
+ { title:"8. Double the rate each layer ⇒ EXPONENTIAL growth",
+   why:"Choose d_i = 2^i and the sum Σ(k−1)d_i becomes a geometric series, so with k=3 the receptive field collapses to the closed form RF = 2^(L+1) − 1: 3, 7, 15, 31, 63, 127 … doubling with every single layer. Ten layers reach 2047 samples where plain stacking reaches 21 — a 97× larger field for identical parameters and identical FLOPs. That is the number that made WaveNet possible: raw 16 kHz audio with hundreds of milliseconds of context, from a stack you can actually train. In practice the rates cycle (1,2,…,512, then restart) so several cycles stack up field without the rate exceeding the input.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">d = 1, 2, 4, 8, … 2<sup>L−1</sup><br>RF = 2<sup>L+1</sup> − 1<br>3 · 7 · 15 · 31 · 63 · 127 · 255 …<br>L=10: <b>2047</b> vs plain <b>21</b></div>`,
+   code:"L  = 10\nds = [2**i for i in range(L)]       # 1,2,4,...,512\nrf = 1 + sum(2*d for d in ds)       # 2**(L+1) - 1\nprint(rf)                           # 2047\n# a plain stack would need 1023 layers for the same field" },
+ { title:"9. Resolution is never touched",
+   why:"This is the property that separates dilation from every other way of buying context. There is no stride and no pooling, so with 'same' padding the output has exactly the same length (or height and width) as the input — 64 in, 64 out, at d=1 or d=16. Semantic segmentation gets a full-resolution logit map with a huge field of view and no decoder to reconstruct detail; WaveNet emits one sample per input sample. You are trading nothing away: same cost, same resolution, far more context. The only thing you spend is care in choosing the rates, which is the next step.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">'same' padding = (d(k−1))/2<br>64 in → 64 out &nbsp;&nbsp;(any d)<br>no stride · no pooling · no decoder<br>full RF at full resolution</div>`,
+   code:"def conv_same(x, w, d):\n    pad = d*(len(w)-1) // 2\n    xp  = [0]*pad + list(x) + [0]*pad\n    return conv1d(xp, w, d)          # len(out) == len(x), always" },
+ { title:"10. The catch: the gridding artifact",
+   why:"The receptive field is a span, but what the output actually READS is the Minkowski sum of each layer's tap offsets — and if all the rates share a common factor, every tap lands on the same lattice and most of the span is never touched. Three layers at rate 4 span 25 inputs but read only 7 of them, one in every four; neighbouring outputs then read disjoint sample sets, which shows up as checkerboard artifacts in segmentation masks. The fix is to make the rates co-prime or to use a sawtooth schedule (Hybrid Dilated Convolution: 1,2,5,1,2,5…) so the lattices interleave and the coverage becomes solid. Always check coverage, not just span.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">rates 4,4,4 → RF 25, <b>touched 7</b> ✗<br>rates 2,4,8 → RF 29, <b>touched 15</b> ✗<br>rates 1,2,4 → RF 15, touched 15 ✓<br>rates 1,2,5 → RF 17, touched 17 ✓</div>`,
+   code:"def reachable(ks, ds):\n    S = {0}\n    for k, d in zip(ks, ds):\n        S = {p + t*d for p in S for t in range(k)}\n    return S\n\nlen(reachable([3]*3, [4,4,4]))   #  7 of 25  -> GRIDDING\nlen(reachable([3]*3, [1,2,5]))   # 17 of 17  -> solid" },
+ { title:"11. Where it lives: WaveNet, DeepLab/ASPP, TCN",
+   why:"WaveNet stacks causal dilated convolutions with rates cycling 1→512 and generates raw audio one sample at a time with a receptive field of thousands of samples. DeepLab replaced the last pooling stages of a classifier backbone with atrous convolutions to keep the feature map dense, then added ASPP — the same features convolved in PARALLEL at rates 6, 12, 18 and concatenated, so one layer sees several scales at once. Temporal Convolutional Networks use dilated causal convs to beat RNNs on long sequences while training fully in parallel. The honest caveat: dilation samples sparsely, so very large rates can miss fine local detail, which is exactly why ASPP keeps a d=1 branch alongside the wide ones.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">WaveNet: causal, rates 1→512, RF ~thousands<br>DeepLab: atrous backbone, dense output<br>ASPP: rates 1·6·12·18 in PARALLEL → concat<br>TCN: dilated causal conv &gt; RNN on long seqs</div>`,
+   code:"# TCN / WaveNet block — dilation is just an argument\nnn.Conv1d(c, c, 3, dilation=2**i, padding=2**i)\n\n# ASPP — one input, four scales, concatenated\n[nn.Conv2d(c, c, 3, dilation=r, padding=r) for r in (1,6,12,18)]\n# next: Grad-CAM — see WHICH pixels the CNN actually used" },
+];
+</script>
+
+<script>
+// ---- UNDERSTAND engine (shared pattern) ----
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s,i) => { const bn = document.createElement("button");
+  bn.className = "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-cyan-400 text-sm";
+  bn.innerHTML = `<div class="font-semibold">${s.title}</div>`; bn.onclick = () => show(i); stepsEl.appendChild(bn); });
+function show(i){ curS = i; const s = STEPS[i];
+  document.getElementById("concept").innerHTML = `<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML = `<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent = s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx) => { bn.className = idx===i
+    ? "w-full text-left p-3 rounded-lg border-2 border-cyan-500 bg-cyan-50 text-sm font-semibold"
+    : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-cyan-400 text-sm"; });
+}
+prevB.onclick = () => show(Math.max(0, curS-1));
+nextB.onclick = () => show(Math.min(STEPS.length-1, curS+1));
+let tm = null;
+autoB.onclick = () => { if (tm){ clearInterval(tm); tm=null; autoB.textContent="▶ Auto-play"; return; }
+  autoB.textContent = "⏸ Pause"; show(0);
+  tm = setInterval(() => { if (curS >= STEPS.length-1){ clearInterval(tm); tm=null; autoB.textContent="▶ Replay"; return; } show(curS+1); }, 5200); };
+show(0);
+
+function copy(btn){ const pre = btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500); }
+</script>
+</body>
+</html>

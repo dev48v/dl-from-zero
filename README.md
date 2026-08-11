@@ -60,6 +60,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 56 — Mixture-of-Experts Layer](https://dev48v.infy.uk/dl/day56-mixture-of-experts.html) — `day56-mixture-of-experts.html`
 - [DeepLearningFromZero · Day 57 — Sharpness-Aware Minimization](https://dev48v.infy.uk/dl/day57-sharpness-aware-minimization.html) — `day57-sharpness-aware-minimization.html`
 - [DeepLearningFromZero · Day 58 — Spectral Normalization](https://dev48v.infy.uk/dl/day58-spectral-normalization.html) — `day58-spectral-normalization.html`
+- [DeepLearningFromZero · Day 59 — Dilated (Atrous) Convolutions](https://dev48v.infy.uk/dl/day59-dilated-convolutions.html) — `day59-dilated-convolutions.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk
