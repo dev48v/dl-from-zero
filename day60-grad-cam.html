@@ -1171,14 +1171,18 @@ function drawGallery(){
 
 // ---- the live finite-difference check, run in the browser ----
 function runVerify(){
-  const net=netClean, smp=TEST[3], cache=forward(net,smp.x), P=paramRefs(net);
+  const net=netClean, smp=TEST[3], cache=forward(net,smp.x);
   const rng=mulberry32(4242), eps=1e-5;
-  const gr=backward(net,cache,smp.cls);
+  // dL/dw is checked on UNTRAINED weights: at convergence the true gradient has
+  // decayed to ~1e-5 while central differences bottom out at ~1e-11, so a relative
+  // error there measures float round-off, not the backward pass.
+  const netFD=netRand, PFD=paramRefs(netFD), cacheFD=forward(netFD,smp.x);
+  const gr=backward(netFD,cacheFD,smp.cls);
   let worstP=0, worstA=0, nP=0, nA=0;
   for (let l=0;l<4;l++) for (let t=0;t<6;t++){
-    const arr=P[l][0], i=(rng()*arr.length)|0, an=gr[l][0][i], old=arr[i];
-    arr[i]=old+eps; const lp=-Math.log(forward(net,smp.x).probs[smp.cls]);
-    arr[i]=old-eps; const lm=-Math.log(forward(net,smp.x).probs[smp.cls]);
+    const arr=PFD[l][0], i=(rng()*arr.length)|0, an=gr[l][0][i], old=arr[i];
+    arr[i]=old+eps; const lp=-Math.log(forward(netFD,smp.x).probs[smp.cls]);
+    arr[i]=old-eps; const lm=-Math.log(forward(netFD,smp.x).probs[smp.cls]);
     arr[i]=old;
     const num=(lp-lm)/(2*eps);
     worstP=Math.max(worstP, Math.abs(an-num)/Math.max(1e-8,Math.abs(an)+Math.abs(num))); nP++;
@@ -1200,7 +1204,7 @@ function runVerify(){
   let sm=0; for (let c=0;c<3;c++) sm+=cache.probs[c];
   const pill=v=>'<span class="pill '+(v<1e-5?'okpill':'badpill')+'">'+(v<1e-5?'PASS':'FAIL')+'</span>';
   verifyTxt =
-    "&part;L/&part;w &nbsp;vs FD &nbsp;("+nP+" params)&nbsp; max rel err <b>"+worstP.toExponential(2)+"</b> "+pill(worstP)+"<br>"+
+    "&part;L/&part;w &nbsp;vs FD &nbsp;("+nP+" params, untrained)&nbsp; max rel err <b>"+worstP.toExponential(2)+"</b> "+pill(worstP)+"<br>"+
     "&part;y<sup>c</sup>/&part;A vs FD &nbsp;("+nA+" cells)&nbsp;&nbsp; max rel err <b>"+worstA.toExponential(2)+"</b> "+pill(worstA)+"<br>"+
     "&alpha;<sub>k</sub><sup>c</sup>&middot;Z &minus; w<sub>k</sub><sup>c</sup> (Grad-CAM &equiv; CAM) <b>"+worstC.toExponential(2)+"</b> "+pill(worstC)+"<br>"+
     "&Sigma; softmax = <b>"+sm.toFixed(12)+"</b>";
