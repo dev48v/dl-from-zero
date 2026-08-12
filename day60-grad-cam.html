@@ -1,0 +1,1364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero &middot; Day 60 &mdash; Grad-CAM (from scratch)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  input[type=range]{ accent-color:#f97316; }
+  .gc  { color:#c2410c; font-weight:700; }   /* Grad-CAM / the heat-map      */
+  .cl  { color:#7c3aed; font-weight:700; }   /* the class you ask about      */
+  .gr  { color:#be123c; font-weight:700; }   /* gradients                    */
+  .ft  { color:#0f766e; font-weight:700; }   /* feature maps A^k             */
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  .ctrl { display:flex; flex-direction:column; gap:4px; min-width:0; }
+  .ctrl label { font-size:12px; font-weight:600; color:#334155; display:flex; justify-content:space-between; gap:8px; }
+  .ctrl input[type=range]{ width:100%; }
+  .preset-btn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:6px 11px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; transition:.12s; }
+  .preset-btn:hover{ border-color:#fdba74; }
+  .preset-btn.on{ background:#f97316; border-color:#f97316; color:#fff; }
+  canvas{ display:block; }
+  .legend-sym{ display:inline-flex; width:16px; height:16px; border-radius:5px; }
+  .btn-solid{ background:#f97316; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .btn-dark{ background:#0f172a; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; }
+  .bignum{ font-variant-numeric:tabular-nums; font-weight:900; line-height:1; }
+  .statcard{ border-radius:12px; border:1.5px solid #e2e8f0; background:#fff; padding:10px 12px; text-align:center; min-width:0; }
+  .statcard .lab{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; font-weight:800; color:#94a3b8; }
+  .grpcard{ background:#fff; border:1.5px solid #e2e8f0; border-radius:12px; padding:10px 12px; min-width:0; }
+  .grptitle{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; margin-bottom:4px; }
+  .cmpgrid{ display:grid; grid-template-columns:1fr; gap:8px; }
+  @media(min-width:900px){ .cmpgrid{ grid-template-columns:1fr 1fr 1fr 1fr; } }
+  .cmpcard{ border:1.5px solid #e2e8f0; border-radius:12px; padding:10px 12px; min-width:0; }
+  .cmptag{ font-size:10px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; }
+  /* canvas frames */
+  .camwrap{ width:100%; height:230px; border-radius:12px; border:1px solid #e2e8f0; background:#0b1020; overflow:hidden; }
+  .camwrap canvas{ width:100%; height:100%; }
+  .rowwrap{ width:100%; height:190px; border-radius:12px; border:1px solid #e2e8f0; background:#0b1020; overflow:hidden; }
+  .rowwrap canvas{ width:100%; height:100%; }
+  .plotwrap{ width:100%; height:200px; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .plotwrap canvas{ width:100%; height:100%; }
+  .barwrap{ width:100%; height:150px; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .barwrap canvas{ width:100%; height:100%; }
+  .galwrap{ width:100%; height:150px; border-radius:12px; border:1px solid #e2e8f0; background:#0b1020; overflow:hidden; }
+  .galwrap canvas{ width:100%; height:100%; }
+  .eq{ font-family:"SFMono-Regular",Consolas,monospace; font-size:12px; color:#334155; line-height:1.7; overflow-x:auto; }
+  .eq b{ color:#c2410c; }
+  .probrow{ display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:4px; }
+  .probrow .nm{ width:96px; flex:0 0 auto; font-weight:700; color:#475569; }
+  .probbar{ flex:1 1 auto; height:12px; border-radius:6px; background:#f1f5f9; overflow:hidden; min-width:0; }
+  .probbar i{ display:block; height:100%; background:#f97316; }
+  .probrow .vl{ width:44px; flex:0 0 auto; text-align:right; font-variant-numeric:tabular-nums; color:#0f172a; font-weight:700; }
+  .okpill{ background:#ecfdf5; color:#047857; border:1px solid #a7f3d0; }
+  .badpill{ background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; }
+  header .hdr{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  #tabs{ display:flex; gap:8px; flex-wrap:wrap; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-orange-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 hdr">
+    <div style="min-width:0">
+      <div class="text-xs text-orange-600 font-bold uppercase tracking-wider">DeepLearningFromZero &middot; Day 60</div>
+      <h1 class="text-xl font-bold">&#128293; Grad-CAM &mdash; a trained CNN gives you a label and nothing else: it says <em>ring</em>, and you have no idea whether it looked at the ring or at a watermark in the corner. <strong>Grad-CAM</strong> (Selvaraju et al., 2016) extracts that answer from the network you already have, with <strong>no retraining and no architecture change</strong>. The idea is three lines of calculus. The last convolutional layer still has <span class="ft">coordinates</span> &mdash; its <span class="ft">feature maps <span class="mono">A<sup>k</sup></span></span> are a small grid, so a value at cell <span class="mono">(i,j)</span> still means &ldquo;<em>there</em>, in the image&rdquo;; everything after it (global average pooling, the classifier) throws that geometry away. So: run the image forward, pick a <span class="cl">class <span class="mono">c</span></span>, and backpropagate <strong>its logit</strong> <span class="mono">y<sup>c</sup></span> &mdash; not the loss &mdash; back to those maps to get <span class="gr"><span class="mono">&part;y<sup>c</sup>/&part;A<sup>k</sup></span></span>. <strong>Global-average-pool those gradients</strong> into one number per channel, <span class="mono">&alpha;<sub>k</sub><sup>c</sup> = (1/Z)&Sigma;<sub>ij</sub> &part;y<sup>c</sup>/&part;A<sup>k</sup><sub>ij</sub></span> &mdash; the channel&rsquo;s <em>importance</em> for that class &mdash; then take the weighted sum of the maps and keep only what pushes the score <strong>up</strong>: <span class="gc"><span class="mono">L<sup>c</sup> = ReLU(&Sigma;<sub>k</sub> &alpha;<sub>k</sub><sup>c</sup> A<sup>k</sup>)</span></span>. Upsample that little grid, overlay it, and you are looking at the evidence. Below, a <strong>real 3-layer CNN with a real backward pass trains live in your browser</strong> on shapes it has never memorised, and every heat-map is computed by hand from its own gradients. Ask it for a <span class="cl">different class</span> and the heat-map <strong>moves to that class&rsquo;s object</strong>; plant a corner watermark in the training set and watch Grad-CAM catch the model cheating; randomise the weights and watch the map turn to noise. <strong>729 parameters, no libraries, 61 assertions verified against finite differences.</strong></h1>
+    </div>
+    <div id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== LOOK ===================== -->
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-4 lg:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">A real CNN is training right now. Ask it <span class="cl">which class</span> and it will show you <span class="gc">where it looked</span>.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto text-center text-sm">Three convolutions, global average pooling, a 3-way softmax &mdash; <b>729 parameters</b>, trained by hand-written SGD on 24&times;24 images of a <b>vertical bar</b>, a <b>horizontal bar</b> or a <b>ring</b>. Every heat-map below comes from that model&rsquo;s own gradients, recomputed after every epoch, so you can literally watch the explanation sharpen as the network learns.</p>
+
+      <!-- ============ status + control bar ============ -->
+      <div class="bg-white rounded-xl border-2 border-orange-200 p-3 mb-4">
+        <div class="flex items-center justify-center flex-wrap gap-3 mb-3">
+          <span class="pill" id="statusPill" style="background:#fff7ed;color:#c2410c;border:1px solid #fed7aa">training&hellip;</span>
+          <span class="text-slate-300 hidden sm:inline">|</span>
+          <div class="flex gap-2 flex-wrap items-center">
+            <span class="text-[11px] font-bold uppercase tracking-wide text-slate-400">model</span>
+            <button class="preset-btn on" data-model="clean">trained (clean)</button>
+            <button class="preset-btn" data-model="short">trained on a <b>watermark</b></button>
+            <button class="preset-btn" data-model="rand">random weights</button>
+          </div>
+        </div>
+        <div class="flex items-center justify-center flex-wrap gap-3">
+          <div class="flex gap-2 flex-wrap items-center">
+            <span class="text-[11px] font-bold uppercase tracking-wide text-slate-400">tap</span>
+            <button class="preset-btn" data-tap="0">conv1 22&times;22</button>
+            <button class="preset-btn" data-tap="1">conv2 10&times;10</button>
+            <button class="preset-btn on" data-tap="2">conv3 8&times;8 <span style="opacity:.7">(last)</span></button>
+          </div>
+          <span class="text-slate-300 hidden sm:inline">|</span>
+          <div class="flex gap-2 flex-wrap items-center">
+            <span class="text-[11px] font-bold uppercase tracking-wide text-slate-400">method</span>
+            <button class="preset-btn on" data-meth="gradcam">Grad-CAM</button>
+            <button class="preset-btn" data-meth="gradcam++">Grad-CAM++</button>
+            <button class="preset-btn" data-meth="nrelu">no ReLU</button>
+            <button class="preset-btn" data-meth="sal">saliency &part;y/&part;x</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-3 gap-4 mb-4">
+        <!-- ============ PANEL 1 : THE HEAT-MAP ============ -->
+        <div class="bg-white rounded-xl border-2 border-orange-200 p-4 lg:col-span-2" style="min-width:0">
+          <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+            <div class="text-sm font-bold text-slate-800">The explanation, computed from this model&rsquo;s gradients</div>
+            <div class="text-[11px] text-slate-400">asking about <span class="cl mono" id="askName">&mdash;</span></div>
+          </div>
+          <div class="camwrap mb-2"><canvas id="camC"></canvas></div>
+          <div class="flex flex-wrap gap-3 items-end">
+            <div class="ctrl" style="flex:1 1 200px">
+              <label>test image <span class="gc stat mono" id="sVal">0</span> <span class="text-slate-400 font-normal">of 45</span></label>
+              <input type="range" id="sSlider" min="0" max="44" step="1" value="0">
+            </div>
+            <div class="flex gap-2 flex-wrap items-center">
+              <span class="text-[11px] font-bold uppercase tracking-wide text-slate-400">explain class</span>
+              <button class="preset-btn on" data-cls="-1">predicted</button>
+              <button class="preset-btn" data-cls="0">&#9646; vertical</button>
+              <button class="preset-btn" data-cls="1">&#9644; horizontal</button>
+              <button class="preset-btn" data-cls="2">&#9711; ring</button>
+            </div>
+          </div>
+          <div class="flex items-center justify-center gap-4 text-[11px] text-slate-500 flex-wrap mt-2">
+            <span class="flex items-center gap-1"><span class="legend-sym" style="background:#3b4cc0"></span>low <span class="mono">L<sup>c</sup></span></span>
+            <span class="flex items-center gap-1"><span class="legend-sym" style="background:#22c55e"></span>mid</span>
+            <span class="flex items-center gap-1"><span class="legend-sym" style="background:#ef4444"></span>high &mdash; the evidence</span>
+            <span class="flex items-center gap-1"><span class="legend-sym" style="border:2px solid #a3e635;background:transparent"></span>the planted object</span>
+          </div>
+        </div>
+
+        <!-- ============ PANEL 2 : NUMBERS ============ -->
+        <div class="bg-white rounded-xl border-2 border-violet-200 p-4" style="min-width:0">
+          <div class="text-sm font-bold text-slate-800 mb-2">What the model says</div>
+          <div id="probs" class="mb-3"></div>
+          <div class="grid grid-cols-2 gap-2 text-center mb-3">
+            <div class="statcard"><div class="lab">test accuracy</div><div class="bignum text-xl gc mt-1" id="s_acc">&mdash;</div></div>
+            <div class="statcard"><div class="lab">train loss</div><div class="bignum text-xl mt-1" id="s_loss" style="color:#0f172a">&mdash;</div></div>
+            <div class="statcard"><div class="lab">parameters</div><div class="bignum text-lg mt-1" id="s_par" style="color:#0f172a">729</div></div>
+            <div class="statcard"><div class="lab">peak cell &rarr; pixel</div><div class="bignum text-lg cl mt-1" id="s_peak">&mdash;</div></div>
+          </div>
+          <div class="grpcard text-[12px] text-slate-600 mb-2">
+            <div class="grptitle" style="color:#c2410c">the channel weights &alpha;<sub>k</sub><sup>c</sup></div>
+            <div class="barwrap" style="height:120px"><canvas id="alphaC"></canvas></div>
+            <div class="mt-1">Each bar is one feature map&rsquo;s importance for the class you asked about &mdash; the global average of <span class="gr mono">&part;y<sup>c</sup>/&part;A<sup>k</sup></span>. Positive bars are evidence <em>for</em>; negative bars argue <em>against</em> and are the reason the final ReLU exists.</div>
+          </div>
+          <div class="grpcard text-[12px] text-slate-600">
+            <div class="grptitle" style="color:#0f766e">verified live, in this tab</div>
+            <div>Analytic gradients vs central finite differences <span class="mono">(f(w+&epsilon;)&minus;f(w&minus;&epsilon;))/2&epsilon;</span>, on 24 random parameters and 24 random feature-map entries, right now:</div>
+            <div class="eq mt-1" id="verifyBox">&mdash;</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ CLASS-DISCRIMINATIVE ============ -->
+      <div class="bg-white rounded-xl border-2 border-violet-200 p-4 mb-4" style="min-width:0">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+          <div class="text-sm font-bold text-slate-800">The killer property: ask for a <span class="cl">different class</span> and the heat-map <b>moves</b></div>
+          <button class="preset-btn" id="newScene">&#8635; new scene</button>
+        </div>
+        <p class="text-[12px] text-slate-500 mb-2">One picture, two objects the model has never seen together: a <b>vertical bar</b> and a <b>horizontal bar</b>. The forward pass is run <b>once</b>; only the class whose logit we backpropagate changes. Grad-CAM for <span class="cl">vertical</span> lands on the vertical bar, for <span class="cl">horizontal</span> on the horizontal one &mdash; from the <em>same</em> activations. A saliency map or Guided Backprop would look almost identical for both, because they are not class-conditioned; this is what &ldquo;class-discriminative&rdquo; buys you.</p>
+        <div class="rowwrap"><canvas id="discC"></canvas></div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-center mt-3">
+          <div class="statcard"><div class="lab">peak &rarr; &#9646; vertical</div><div class="bignum text-base cl mt-1" id="d_p0">&mdash;</div></div>
+          <div class="statcard"><div class="lab">peak &rarr; &#9644; horizontal</div><div class="bignum text-base cl mt-1" id="d_p1">&mdash;</div></div>
+          <div class="statcard"><div class="lab">pointing game, 30 scenes</div><div class="bignum text-base gc mt-1" id="d_point">&mdash;</div></div>
+          <div class="statcard"><div class="lab">same, random weights</div><div class="bignum text-base mt-1" id="d_pointr" style="color:#64748b">&mdash;</div></div>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-4 mb-4">
+        <!-- ============ LAYER TAP ============ -->
+        <div class="bg-white rounded-xl border-2 border-orange-200 p-4" style="min-width:0">
+          <div class="text-sm font-bold text-slate-800 mb-1">Which layer do you tap? Resolution vs semantics</div>
+          <p class="text-[12px] text-slate-500 mb-2">The same image explained at all three convolutions. <b>conv1</b> is 22&times;22 &mdash; sharp, but each cell only sees a <span class="mono">3&times;3</span> patch, so it highlights edges, not objects. <b>conv3</b> is only 8&times;8 &mdash; blurry, but each cell sees <span class="mono">9&times;9</span> pixels and carries class-level meaning. Grad-CAM taps the <b>last</b> conv because that is the best trade the network offers: the deepest features that still have coordinates.</p>
+          <div class="rowwrap" style="height:170px"><canvas id="tapC"></canvas></div>
+          <div class="grid grid-cols-3 gap-2 text-center mt-3">
+            <div class="statcard"><div class="lab">conv1 res / RF</div><div class="bignum text-sm ft mt-1">22&sup2; / 3&times;3</div></div>
+            <div class="statcard"><div class="lab">conv2 res / RF</div><div class="bignum text-sm ft mt-1">10&sup2; / 5&times;5</div></div>
+            <div class="statcard"><div class="lab">conv3 res / RF</div><div class="bignum text-sm gc mt-1">8&sup2; / 9&times;9</div></div>
+          </div>
+        </div>
+
+        <!-- ============ METHOD FAMILY ============ -->
+        <div class="bg-white rounded-xl border-2 border-orange-200 p-4" style="min-width:0">
+          <div class="text-sm font-bold text-slate-800 mb-1">The family, side by side, on the same image</div>
+          <p class="text-[12px] text-slate-500 mb-2"><b>Grad-CAM</b> pools the gradients into one weight per channel. <b>Grad-CAM++</b> replaces that plain average with a per-pixel weighting <span class="mono">&alpha;<sub>ij</sub> = g&sup2;/(2g&sup2; + &Sigma;A&middot;g&sup3;)</span> and only counts positive gradients, which spreads the map over <em>several</em> instances instead of the single strongest one. <b>No ReLU</b> shows what the final <span class="mono">ReLU</span> is hiding &mdash; the blue regions are evidence <em>against</em> the class. <b>Saliency</b> is the raw <span class="gr mono">|&part;y<sup>c</sup>/&part;x|</span> at pixel level: high resolution, visibly noisy, and barely class-dependent.</p>
+          <div class="rowwrap" style="height:170px"><canvas id="methC"></canvas></div>
+          <div class="grid grid-cols-2 gap-2 text-center mt-3">
+            <div class="statcard"><div class="lab">Grad-CAM peak</div><div class="bignum text-sm gc mt-1" id="m_gc">&mdash;</div></div>
+            <div class="statcard"><div class="lab">saliency peak</div><div class="bignum text-sm mt-1" id="m_sal" style="color:#64748b">&mdash;</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-4 mb-4">
+        <!-- ============ SHORTCUT ============ -->
+        <div class="bg-white rounded-xl border-2 border-rose-200 p-4" style="min-width:0">
+          <div class="text-sm font-bold text-slate-800 mb-1">Catching the model cheating &mdash; the <span class="gr">Clever Hans</span> test</div>
+          <p class="text-[12px] text-slate-500 mb-2">A second, identical network is trained on a <b>poisoned</b> copy of the dataset: every <em>ring</em>-labelled image carries a bright <b>6&times;6 watermark</b> in the top-left corner, and half of them are not even rings. The shape is now an unreliable cue for that class and the watermark is a perfect one &mdash; exactly the structure of a real dataset where the scanner that took the X-ray predicts the diagnosis. Both models hit high training accuracy. Only Grad-CAM tells you which one learned the <b>shape</b> and which one learned the <b>watermark</b>.</p>
+          <div class="rowwrap" style="height:175px"><canvas id="shortC"></canvas></div>
+          <div class="grid grid-cols-3 gap-2 text-center mt-3">
+            <div class="statcard"><div class="lab">clean model says</div><div class="bignum text-sm mt-1" id="k_clean" style="color:#0f172a">&mdash;</div></div>
+            <div class="statcard"><div class="lab">poisoned model says</div><div class="bignum text-sm gr mt-1" id="k_short">&mdash;</div></div>
+            <div class="statcard"><div class="lab">its heat lands on</div><div class="bignum text-sm gr mt-1" id="k_where">&mdash;</div></div>
+          </div>
+        </div>
+
+        <!-- ============ SANITY CHECK ============ -->
+        <div class="bg-white rounded-xl border-2 border-slate-300 p-4" style="min-width:0">
+          <div class="text-sm font-bold text-slate-800 mb-1">The sanity check you must run: <b>randomise the weights</b></div>
+          <p class="text-[12px] text-slate-500 mb-2">Adebayo et al. (2018) showed that several popular attribution maps barely change when you replace a trained network&rsquo;s weights with random ones &mdash; they were reacting to the <em>image</em>, not to the <em>model</em>, and were therefore useless as explanations. Here the same architecture with untrained weights still produces a plausible-looking blob (edges are edges), but it stops being <b>class-discriminative</b>: the pointing-game score collapses from the number above to roughly a coin flip, because all three classes now get the same map.</p>
+          <div class="rowwrap" style="height:175px"><canvas id="sanC"></canvas></div>
+          <div class="grid grid-cols-2 gap-2 text-center mt-3">
+            <div class="statcard"><div class="lab">trained &mdash; maps differ by class</div><div class="bignum text-sm gc mt-1" id="v_tdiff">&mdash;</div></div>
+            <div class="statcard"><div class="lab">random &mdash; maps differ by class</div><div class="bignum text-sm mt-1" id="v_rdiff" style="color:#64748b">&mdash;</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ TRAINING ============ -->
+      <div class="bg-white rounded-xl border-2 border-orange-200 p-4 mb-4" style="min-width:0">
+        <div class="text-sm font-bold text-slate-800 mb-1">The training run that produced all of the above &mdash; real SGD with momentum, in this tab</div>
+        <p class="text-[12px] text-slate-500 mb-2">132 images, 16 epochs, batch 6, learning rate 0.06, momentum 0.9. Softmax cross-entropy, hand-written backward pass through <span class="mono">dense &rarr; GAP &rarr; conv3 &rarr; ReLU &rarr; conv2 &rarr; ReLU &rarr; conv1</span>. No initialisation tricks beyond He scaling, no library.</p>
+        <div class="plotwrap"><canvas id="lossC"></canvas></div>
+        <div class="grptitle mt-3" style="color:#0f766e">a sample of the training set (with the model&rsquo;s heat-map on its predicted class)</div>
+        <div class="galwrap mt-1"><canvas id="galC"></canvas></div>
+      </div>
+
+      <!-- ============ CONTRAST CARD ============ -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">
+        <div class="grptitle mb-2" style="color:#0f172a">Four ways to ask &ldquo;where did it look?&rdquo;</div>
+        <div class="cmpgrid">
+          <div class="cmpcard" style="border-color:#fecdd3;background:#fff1f2">
+            <div class="cmptag" style="color:#be123c">CAM (2016)</div>
+            <div class="text-[12px] text-slate-600 mt-1">Weight the last feature maps by the classifier&rsquo;s own weights: <span class="mono">&Sigma;<sub>k</sub> w<sub>k</sub><sup>c</sup>A<sup>k</sup></span>. Beautiful &mdash; but only <b>legal</b> if the head is exactly global-average-pool &rarr; one linear layer. Any fully-connected head, any pooling variant, and you must <b>rebuild and retrain</b> the network.</div>
+          </div>
+          <div class="cmpcard" style="border-color:#fed7aa;background:#fff7ed">
+            <div class="cmptag" style="color:#c2410c">Grad-CAM (2016)</div>
+            <div class="text-[12px] text-slate-600 mt-1">Replace those weights with <b>pooled gradients</b> <span class="mono">&alpha;<sub>k</sub><sup>c</sup></span>. Works on <b>any</b> architecture and <b>any</b> layer, needs no retraining, and on a GAP+linear head it reduces to CAM <b>exactly</b> &mdash; a strict generalisation, proved on this page to 1e&minus;15.</div>
+          </div>
+          <div class="cmpcard" style="border-color:#ddd6fe;background:#f5f3ff">
+            <div class="cmptag" style="color:#7c3aed">Grad-CAM++ (2018)</div>
+            <div class="text-[12px] text-slate-600 mt-1">Same skeleton, different weighting: a per-pixel coefficient from second and third derivatives of <span class="mono">exp(y<sup>c</sup>)</span>, and only positive gradients count. Fixes Grad-CAM&rsquo;s habit of locking on to <b>one</b> instance when the image contains several.</div>
+          </div>
+          <div class="cmpcard" style="border-color:#e2e8f0;background:#f8fafc">
+            <div class="cmptag" style="color:#475569">Guided Backprop / saliency</div>
+            <div class="text-[12px] text-slate-600 mt-1">Pixel-resolution and gorgeous &mdash; but <b>not class-discriminative</b>: change the target class and the picture barely moves. Guided Backprop also failed the weight-randomisation sanity check. The standard fix is <b>Guided Grad-CAM</b>: multiply the two together.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-sm text-slate-600">
+        <b class="text-slate-800">What to try:</b> (1) In the two-object panel hit <b>new scene</b> a few times and compare the <span class="cl">vertical</span> and <span class="cl">horizontal</span> heat-maps &mdash; same forward pass, same activations, only the backpropagated logit differs, and the blob jumps from one bar to the other. (2) Switch the <b>model</b> to <b>random weights</b>: the map still finds bright edges (the image has not changed) but the three classes now produce nearly the <em>same</em> map, and the pointing score falls to a coin flip. That is why weight randomisation is a mandatory sanity check. (3) Switch the model to <b>trained on a watermark</b> and look at the Clever-Hans panel: it is 97&ndash;100&#37; accurate and completely wrong, and the heat-map lands squarely on the corner patch. (4) Move the <b>tap</b> from conv3 to conv1: the map gets sharp and useless &mdash; high resolution, no semantics. (5) Flip the method to <b>no ReLU</b> and watch blue regions appear: those are the places that argue <em>against</em> the class, which is exactly what <span class="mono">L<sup>c</sup> = ReLU(&hellip;)</span> throws away. (6) Flip to <b>saliency</b> &part;y/&part;x: pixel-perfect, speckled, and it looks the same whichever class you ask for. (7) Drag <b>explain class</b> to a class the model did <em>not</em> predict &mdash; Grad-CAM will still show you the best evidence it can find for that answer, which is how you debug a confident mistake.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== UNDERSTAND ===================== -->
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2" style="min-width:0">
+      <h3 class="font-bold text-lg mb-3">From &ldquo;it said <em>ring</em> and I have no idea why&rdquo; to a heat-map straight out of the gradients</h3>
+      <p class="text-sm text-slate-500 mb-4">Click any step.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2 flex-wrap">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-orange-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-orange-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4" style="min-width:0">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-orange-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-orange-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-orange-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BUILD ===================== -->
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-6 lg:p-8">
+    <h2 class="text-3xl font-bold mb-2">&#128296; Build it yourself</h2>
+    <p class="text-slate-500 mb-8">Grad-CAM is short &mdash; six lines once you have gradients &mdash; so the work is in making sure those gradients are <em>right</em>. We will write the network, write the one backward pass Grad-CAM actually needs, <b>check it against central finite differences</b>, then build the map, prove it reduces to CAM exactly, upsample it without the alignment bug everyone ships, and finish with the tests that catch a lying explanation. Every line below is the real code running on the LOOK tab.</p>
+    <ol class="space-y-6">
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-orange-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">The network: three convolutions, GAP, one linear layer</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The only structural requirement Grad-CAM has is that <b>some</b> layer still has spatial coordinates. Global average pooling then collapses each map to one number, so the classifier is translation-invariant and the network cannot memorise positions. Note the shapes: the last conv is an <code>8&times;8</code> grid of <code>8</code> channels &mdash; that grid is the canvas the explanation is painted on.</p>
+        <div class="relative"><pre>#  24x24x1
+#    conv 3x3 s1 -> 22x22x4  ReLU     receptive field 3x3
+#    conv 3x3 s2 -> 10x10x6  ReLU     receptive field 5x5
+#    conv 3x3 s1 ->   8x8x8  ReLU     receptive field 9x9   <-- A^k, the tap
+#    global average pool -> 8 -> dense -> 3 logits -> softmax
+def forward(net, x):
+    z1 = conv(net.c1, x);  a1 = relu(z1)
+    z2 = conv(net.c2, a1); a2 = relu(z2)
+    z3 = conv(net.c3, a2); a3 = relu(z3)          # A^k lives here
+    g  = a3.mean(axis=(1, 2))                     # global average pool, Z = 8*8
+    return net.Wd @ g + net.bd                    # the three logits y^c</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-orange-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">The backward pass Grad-CAM needs is <em>not</em> the training one</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Training backpropagates the <b>loss</b> and stops at the parameters. Grad-CAM backpropagates a single <b>logit</b> <code>y^c</code> and stops at the <b>activations</b>. So the seed of the backward pass is a one-hot vector on the logits, not <code>p &minus; y</code>, and there is no softmax in the chain at all &mdash; using the probability instead of the logit would divide out most of the signal once the model is confident.</p>
+        <div class="relative"><pre>def tap_grad(net, cache, c, tap):
+    """dy^c / dA  for the activations of layer `tap`. Seed = one-hot on logits."""
+    Z, K = 8*8, net.C3
+    # y^c = SUM_k Wd[c,k] * mean(a3[k])   ->   dy^c/da3[k,i] = Wd[c,k] / Z
+    da3 = np.repeat(net.Wd[c] / Z, Z).reshape(K, 8, 8)
+    if tap == 2: return da3
+    da2 = conv_backward(net.c3, cache.a2, relu_back(cache.z3, da3))
+    if tap == 1: return da2
+    return conv_backward(net.c2, cache.a1, relu_back(cache.z2, da2))</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-orange-600 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Check it before you trust it: central finite differences</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A hand-written backward pass is wrong until proven otherwise, and a subtly wrong one produces a heat-map that <em>looks</em> plausible &mdash; the worst failure mode there is. Perturb one number by <code>&plusmn;&epsilon;</code>, re-run the forward pass, and compare. Use the <b>central</b> difference (error <code>O(&epsilon;&sup2;)</code>, not <code>O(&epsilon;)</code>) and a <b>relative</b> tolerance. This page runs 61 such assertions.</p>
+        <div class="relative"><pre>def check(f, arr, i, analytic, eps=1e-5):
+    old = arr[i]
+    arr[i] = old + eps; fp = f()
+    arr[i] = old - eps; fm = f()
+    arr[i] = old
+    numeric = (fp - fm) / (2 * eps)                  # central difference
+    rel = abs(analytic - numeric) / max(1e-8, abs(analytic) + abs(numeric))
+    assert rel &lt; 1e-5, (analytic, numeric, rel)
+
+# every parameter, against the loss ...
+check(lambda: cross_entropy(forward(net, x), t), net.c2.W, 37, dW2[37])
+# ... and every feature-map entry Grad-CAM consumes, against the LOGIT
+check(lambda: forward_from_tap(net, A, tap)[c], A, 91, tap_grad(...)[91])</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-orange-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Grad-CAM itself &mdash; pool, weight, ReLU</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Three operations. <b>Pool</b> the gradient map of each channel into a single importance <code>&alpha;</code>; <b>weight</b> the feature maps by it and sum; <b>ReLU</b> so that only the regions pushing the score up survive. The result is an <code>8&times;8</code> map &mdash; the same size as the tapped layer, which is the whole point: it is defined in feature-map coordinates, not pixel coordinates.</p>
+        <div class="relative"><pre>def grad_cam(net, cache, c, tap=2):
+    A  = cache.acts[tap]                 # (K, h, w)  the feature maps
+    dA = tap_grad(net, cache, c, tap)    # (K, h, w)  dy^c / dA
+
+    alpha = dA.mean(axis=(1, 2))         # (K,)  ONE number per channel
+    L     = (alpha[:, None, None] * A).sum(0)
+    return np.maximum(L, 0)              # ReLU: keep only positive influence</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-orange-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">The strongest test: Grad-CAM must equal CAM</h3></div>
+        <p class="text-sm text-slate-600 mb-3">On a GAP + linear head the algebra is forced. <code>y^c = &Sigma;<sub>k</sub> w<sub>k</sub><sup>c</sup>&middot;(1/Z)&Sigma;<sub>ij</sub>A<sup>k</sup><sub>ij</sub></code>, so <code>&part;y^c/&part;A<sup>k</sup><sub>ij</sub> = w<sub>k</sub><sup>c</sup>/Z</code> for <b>every</b> cell, and averaging those <code>Z</code> identical numbers gives <code>&alpha;<sub>k</sub><sup>c</sup> = w<sub>k</sub><sup>c</sup>/Z</code>. The constant <code>1/Z</code> is global, so the normalised map is <b>bit-identical to CAM</b>. If your implementation fails this to 1e&minus;10, it is broken.</p>
+        <div class="relative"><pre>Z = 8 * 8
+cam_map = np.maximum((net.Wd[c][:, None, None] * cache.a3).sum(0), 0)   # plain CAM
+gc_map  = grad_cam(net, cache, c, tap=2)                                # Grad-CAM
+
+assert np.allclose(grad_cam_alpha(net, cache, c) * Z, net.Wd[c], atol=1e-10)
+assert np.allclose(norm01(gc_map), norm01(cam_map), atol=1e-10)
+# Grad-CAM is a strict GENERALISATION of CAM, not an approximation of it.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-orange-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Upsample it &mdash; and don&rsquo;t stretch corner to corner</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Nearly every tutorial does <code>cv2.resize(cam, image.shape)</code>, which maps map-corner to image-corner. That is wrong: cell <code>j</code> of an <code>8&times;8</code> map with stride 2 and a <code>9&times;9</code> receptive field is the response of a window <b>centred on pixel <code>2j+4</code></b>, so the map only covers pixels 4&hellip;18 of 24. A corner-to-corner stretch shifts the whole explanation by up to 4 pixels &mdash; on a <code>224&times;224</code> input that is a 16-pixel lie.</p>
+        <div class="relative"><pre># receptive-field geometry of a stride-1/2 stack, computed once
+#   jump  = product of strides          = 2
+#   rf    = 1 + SUM (k-1) * jump_before = 9
+#   start = centre of cell 0            = (rf - 1) / 2 = 4
+
+def upsample_cam(m, stride, offset, H, W):
+    """cell j belongs at pixel j*stride + offset; clamp outside the band."""
+    src = (np.arange(H) - offset) / stride
+    src = np.clip(src, 0, m.shape[0] - 1)
+    return bilinear_sample(m, src, src)          # then overlay with a colormap</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-orange-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">The behavioural test: the pointing game</h3></div>
+        <p class="text-sm text-slate-600 mb-3">&ldquo;It looks right&rdquo; is not a test. Build scenes containing <b>two</b> objects of known classes at known positions, run the forward pass <b>once</b>, and ask for each class in turn: the peak must land on that class&rsquo;s object. A trained model scores &gt;90&#37; here; the identical architecture with random weights scores about 50&#37;, because its map does not depend on the class at all.</p>
+        <div class="relative"><pre>hits = 0
+for scene in two_object_scenes(30):                 # a bar and a ring, disjoint
+    cache = forward(net, scene.image)               # ONE forward pass
+    for c, box in enumerate(scene.boxes):
+        peak = argmax_pixel(upsample_cam(grad_cam(net, cache, c)))
+        hits += dist(peak, box) &lt; dist(peak, scene.boxes[1 - c])
+
+assert hits / 60 &gt; 0.90        # trained
+# random weights: ~0.50 — the map stops being class-conditional</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-orange-600 text-white rounded-full flex items-center justify-center font-bold">8</div><h3 class="font-bold text-lg">Grad-CAM++ and plain saliency, for contrast</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Grad-CAM++ keeps the skeleton and changes only how <code>&alpha;</code> is formed: a per-pixel coefficient built from higher derivatives of <code>exp(y^c)</code>, with negative gradients clipped. Because the exponential factors out of the ratio, the coefficient is a closed form in <code>g = &part;y^c/&part;A</code> &mdash; no second backward pass needed. Saliency is the other extreme: keep going all the way to the pixels.</p>
+        <div class="relative"><pre># Grad-CAM++  (Chattopadhyay et al. 2018), Y = exp(y^c) so e^y cancels
+num   = g ** 2
+den   = 2 * g ** 2 + (A * g ** 3).sum(axis=(1, 2), keepdims=True)
+a_ij  = np.where(den != 0, num / den, 0)
+alpha = (a_ij * np.maximum(g, 0)).sum(axis=(1, 2))     # positive gradients only
+
+# plain saliency: same backward pass, one layer further
+saliency = np.abs(conv_backward(net.c1, x, relu_back(z1, tap_grad(..., tap=0))))</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-orange-600 text-white rounded-full flex items-center justify-center font-bold">9</div><h3 class="font-bold text-lg">In PyTorch: two hooks and you are done</h3></div>
+        <p class="text-sm text-slate-600 mb-3">On a real backbone you do not reimplement anything &mdash; you hook the layer you want, run one forward and one backward from the chosen logit, and apply the same three lines. Remember to zero the gradients, to backprop the <b>logit</b> not the loss, and to run the sanity checks: randomise the weights and confirm the map dies.</p>
+        <div class="relative"><pre>feats, grads = {}, {}
+layer = model.layer4[-1]                                  # last conv block
+layer.register_forward_hook (lambda m,i,o: feats.update(a=o))
+layer.register_full_backward_hook(lambda m,gi,go: grads.update(g=go[0]))
+
+logits = model(x)                       # x: (1,3,224,224)
+model.zero_grad()
+logits[0, c].backward()                 # the LOGIT for class c, not the loss
+
+alpha = grads['g'].mean(dim=(2, 3), keepdim=True)         # (1,K,1,1)
+cam   = torch.relu((alpha * feats['a']).sum(1))           # (1,7,7)
+cam   = F.interpolate(cam[None], size=x.shape[-2:], mode='bilinear',
+                      align_corners=False)[0, 0]
+cam   = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+    </ol>
+    <div class="mt-10 bg-orange-50 border border-orange-200 rounded-2xl p-6 text-center"><h3 class="font-bold text-lg text-orange-900">&#127881; Day 60 of DeepLearningFromZero done.</h3><p class="text-sm text-orange-800 mt-2"><strong>Grad-CAM</strong> turns a classifier into its own explainer with three operations and no retraining. Tap the last convolutional layer &mdash; the deepest place where activations still have <span class="ft">coordinates</span> &mdash; backpropagate the <span class="cl">logit of the class you are asking about</span> to get <span class="gr"><span class="mono">&part;y<sup>c</sup>/&part;A<sup>k</sup></span></span>, <strong>global-average-pool those gradients</strong> into one importance <span class="mono">&alpha;<sub>k</sub><sup>c</sup></span> per channel, and take <span class="gc"><span class="mono">L<sup>c</sup> = ReLU(&Sigma;<sub>k</sub> &alpha;<sub>k</sub><sup>c</sup>A<sup>k</sup>)</span></span>. The <span class="mono">ReLU</span> is not decoration: without it the map mixes evidence <em>for</em> and <em>against</em> the class. On a global-average-pool + linear head the pooled gradient is provably <span class="mono">w<sub>k</sub><sup>c</sup>/Z</span>, so Grad-CAM <strong>reduces exactly to CAM</strong> &mdash; verified here to 1e&minus;15 &mdash; while still working on architectures CAM cannot touch. Because it is conditioned on a class, the map <strong>moves</strong> when you ask about a different one, which is what plain saliency and Guided Backprop cannot do; and because it is conditioned on the <em>model</em>, it exposes shortcuts &mdash; the poisoned model on this page is ~100&#37; accurate and looks straight at the watermark. Always upsample with the receptive-field geometry rather than a corner-to-corner stretch, always run the weight-randomisation sanity check, and remember that an explanation is a <em>hypothesis about the model</em>, not proof about the world. <strong>&#128073; Tomorrow, Day 61:</strong> Capsule Networks &mdash; keep the pose and part-whole structure a CNN throws away.</p></div>
+  </div>
+</section>
+
+<script>
+// ---- tab switching ----
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+  if (t.dataset.tab === "look") requestAnimationFrame(() => redraw());
+});
+</script>
+
+<script>
+/* ===== GRADCAM-CORE-START ===== */
+// ==================================================================
+//  DAY 60 — GRAD-CAM.
+//
+//  A CNN's last convolutional layer still has COORDINATES: its feature
+//  maps A^k are a small grid, so a value at cell (i,j) still means
+//  "there, in the image". Everything after it (global average pooling,
+//  the classifier) throws that geometry away.
+//
+//  Grad-CAM turns that into a heat-map in three steps:
+//     1. backpropagate the LOGIT y^c (not the loss, not the softmax
+//        probability) to the feature maps       ->  dy^c / dA^k
+//     2. global-average-pool those gradients    ->  alpha_k^c
+//     3. weighted sum, then ReLU                ->  L^c = ReLU(SUM alpha_k A^k)
+//
+//  On a global-average-pool + linear head, dy^c/dA^k_ij = w_k^c / Z for
+//  EVERY cell, so alpha_k^c = w_k^c / Z exactly and Grad-CAM reduces to
+//  plain CAM. It is a strict generalisation, not an approximation.
+//
+//  Everything below — the convolutions, the backward pass, the gradients,
+//  the maps, the upsample — is written out by hand, no libraries.
+// ==================================================================
+
+// ---------------- seeded RNG (reproducible everywhere) ----------------
+function mulberry32(a){
+  return function(){
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function gauss(rng){ let u=0,v=0; while(u===0)u=rng(); while(v===0)v=rng();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+
+// ---------------- the dataset: 24x24 one-channel images ----------------
+const IMG = 24;
+const CLASS_NAMES = ["vertical bar", "horizontal bar", "ring"];
+const CLASS_GLYPH = ["▮ vertical", "▬ horizontal", "◯ ring"];
+
+function drawVBar(x, rng){
+  const w = 2 + Math.floor(rng()*2), h = 10 + Math.floor(rng()*5);
+  const r0 = Math.floor(rng()*(IMG-h+1)), c0 = Math.floor(rng()*(IMG-w+1));
+  for (let r=r0;r<r0+h;r++) for (let c=c0;c<c0+w;c++) x[r*IMG+c] = 1;
+  return {r0, c0, r1:r0+h-1, c1:c0+w-1};
+}
+function drawHBar(x, rng){
+  const h = 2 + Math.floor(rng()*2), w = 10 + Math.floor(rng()*5);
+  const r0 = Math.floor(rng()*(IMG-h+1)), c0 = Math.floor(rng()*(IMG-w+1));
+  for (let r=r0;r<r0+h;r++) for (let c=c0;c<c0+w;c++) x[r*IMG+c] = 1;
+  return {r0, c0, r1:r0+h-1, c1:c0+w-1};
+}
+function drawRing(x, rng){
+  const R = 4 + Math.floor(rng()*2);
+  const cr = R + Math.floor(rng()*(IMG-2*R)), cc = R + Math.floor(rng()*(IMG-2*R));
+  for (let r=0;r<IMG;r++) for (let c=0;c<IMG;c++){
+    const d = Math.sqrt((r-cr)*(r-cr) + (c-cc)*(c-cc));
+    if (Math.abs(d-R) <= 1.0) x[r*IMG+c] = 1;
+  }
+  return {r0:Math.max(0,cr-R), c0:Math.max(0,cc-R), r1:Math.min(IMG-1,cr+R), c1:Math.min(IMG-1,cc+R)};
+}
+// the deliberately planted shortcut: a bright corner watermark
+const MARK_N = 6;
+function stampMark(x){ for (let r=0;r<MARK_N;r++) for (let c=0;c<MARK_N;c++) x[r*IMG+c] = 1; }
+const MARK_BOX = {r0:0, c0:0, r1:MARK_N-1, c1:MARK_N-1};
+
+function makeSample(rng, cls, mark, shapeAs){
+  const x = new Float64Array(IMG*IMG);
+  const sh = shapeAs===undefined ? cls : shapeAs;
+  const box = sh===0 ? drawVBar(x,rng) : sh===1 ? drawHBar(x,rng) : drawRing(x,rng);
+  for (let i=0;i<x.length;i++){
+    const v = x[i] + 0.06*gauss(rng);
+    x[i] = v < 0 ? 0 : v > 1 ? 1 : v;
+  }
+  if (mark) stampMark(x);
+  return {x, cls, box, mark:!!mark, shape:sh};
+}
+// shortcut=true => EVERY class-2 image (and only class-2) carries the corner
+// mark, AND half of them are not rings at all but bars. So the SHAPE is an
+// unreliable cue for class 2 while the MARK is perfect — exactly the structure
+// of a real dataset where a scanner watermark predicts the diagnosis.
+function makeDataset(n, seed, shortcut){
+  const rng = mulberry32(seed), out = [];
+  for (let i=0;i<n;i++){
+    const cls = i % 3;
+    let shapeAs = cls;
+    if (shortcut && cls===2 && rng() < 0.5) shapeAs = rng() < 0.5 ? 0 : 1;
+    out.push(makeSample(rng, cls, shortcut && cls===2, shapeAs));
+  }
+  return out;
+}
+
+// ---------------- layers, all hand-rolled ----------------
+// conv2d, 'valid', stride s.  Y[o,r,c] = b[o] + SUM_{i,a,d} W[o,i,a,d] X[i, r*s+a, c*s+d]
+// The loops are ordered weight-stationary — kernel tap outside, output ROW
+// inside — so the innermost loop is long and its indices advance by a
+// constant. Mathematically identical to the textbook 6-deep nest, ~5x faster.
+function convF(L, X, Hin, Win){
+  const cin=L.cin, cout=L.cout, k=L.k, s=L.s, W=L.W, b=L.b;
+  const Ho=(((Hin-k)/s)|0)+1, Wo=(((Win-k)/s)|0)+1, Y=new Float64Array(cout*Ho*Wo);
+  for (let o=0;o<cout;o++){
+    const yo=o*Ho*Wo, bo=b[o];
+    for (let i=0;i<Ho*Wo;i++) Y[yo+i]=bo;                       // the bias
+    for (let ci=0;ci<cin;ci++){
+      const xc=ci*Hin*Win, wc=(o*cin+ci)*k*k;
+      for (let a=0;a<k;a++) for (let d=0;d<k;d++){
+        const wv=W[wc+a*k+d]; if (wv===0) continue;
+        for (let r=0;r<Ho;r++){
+          const xb=xc+(r*s+a)*Win+d, yb=yo+r*Wo;
+          for (let c=0;c<Wo;c++) Y[yb+c] += wv*X[xb+c*s];
+        }
+      }
+    }
+  }
+  return Y;
+}
+// dW[o,i,a,d] = SUM_rc dY[o,r,c]*X[i,r*s+a,c*s+d]   and   dX = W (*) dY
+function convB(L, X, Hin, Win, dY, needDX){
+  const cin=L.cin, cout=L.cout, k=L.k, s=L.s, W=L.W;
+  const Ho=(((Hin-k)/s)|0)+1, Wo=(((Win-k)/s)|0)+1;
+  const dX = needDX===false ? null : new Float64Array(cin*Hin*Win);
+  const dW=new Float64Array(W.length), db=new Float64Array(cout);
+  for (let o=0;o<cout;o++){
+    const yo=o*Ho*Wo;
+    let sb=0; for (let i=0;i<Ho*Wo;i++) sb+=dY[yo+i]; db[o]=sb;
+    for (let ci=0;ci<cin;ci++){
+      const xc=ci*Hin*Win, wc=(o*cin+ci)*k*k;
+      for (let a=0;a<k;a++) for (let d=0;d<k;d++){
+        const wv=W[wc+a*k+d];
+        let acc=0;
+        for (let r=0;r<Ho;r++){
+          const xb=xc+(r*s+a)*Win+d, yb=yo+r*Wo;
+          if (dX){ for (let c=0;c<Wo;c++){ const gy=dY[yb+c]; acc+=gy*X[xb+c*s]; dX[xb+c*s]+=wv*gy; } }
+          else   { for (let c=0;c<Wo;c++) acc+=dY[yb+c]*X[xb+c*s]; }
+        }
+        dW[wc+a*k+d]=acc;
+      }
+    }
+  }
+  return {dX,dW,db};
+}
+function reluF(Z){ const A=new Float64Array(Z.length); for (let i=0;i<Z.length;i++) A[i]=Z[i]>0?Z[i]:0; return A; }
+function reluB(Z,dA){ const dZ=new Float64Array(Z.length); for (let i=0;i<Z.length;i++) dZ[i]=Z[i]>0?dA[i]:0; return dZ; }
+// max-shifted softmax — the shift makes exp() safe and changes nothing
+function softmax(z){
+  let m=-Infinity; for (let i=0;i<z.length;i++) if (z[i]>m) m=z[i];
+  const p=new Float64Array(z.length); let sum=0;
+  for (let i=0;i<z.length;i++){ p[i]=Math.exp(z[i]-m); sum+=p[i]; }
+  for (let i=0;i<p.length;i++) p[i]/=sum;
+  return p;
+}
+
+// ---------------- the network ----------------
+//  24x24x1
+//    conv 3x3 s1 -> 22x22xC1 -> ReLU   [tap 0]  receptive field  3
+//    conv 3x3 s2 -> 10x10xC2 -> ReLU   [tap 1]  receptive field  5
+//    conv 3x3 s1 ->  8x8 xC3 -> ReLU   [tap 2]  receptive field  9   <- default tap
+//    global average pool -> C3 -> dense -> 3 logits -> softmax
+const CH = [4, 6, 8], NC = 3;
+const DIMS = {h0:24,w0:24,h1:22,w1:22,h2:10,w2:10,h3:8,w3:8};
+const TAP_RF = [3,5,9];                 // receptive field of one cell, in pixels
+const TAP_STRIDE = [1,2,2];             // input pixels between neighbouring cells
+const TAP_OFF = [1,2,4];                // cell j is centred on input pixel j*stride + off
+const TAP_NAME = ["conv1  22×22  RF 3", "conv2  10×10  RF 5", "conv3  8×8  RF 9"];
+
+function makeNet(seed){
+  const rng = mulberry32(seed);
+  function conv(cin,cout,k,s){
+    const W=new Float64Array(cout*cin*k*k), b=new Float64Array(cout);
+    const sd=Math.sqrt(2/(cin*k*k));                       // He initialisation
+    for (let i=0;i<W.length;i++) W[i]=gauss(rng)*sd;
+    return {cin,cout,k,s,W,b,vW:new Float64Array(W.length),vb:new Float64Array(cout)};
+  }
+  const c1=conv(1,CH[0],3,1), c2=conv(CH[0],CH[1],3,2), c3=conv(CH[1],CH[2],3,1);
+  const Wd=new Float64Array(NC*CH[2]), bd=new Float64Array(NC), sd=Math.sqrt(2/CH[2]);
+  for (let i=0;i<Wd.length;i++) Wd[i]=gauss(rng)*sd;
+  return {c1,c2,c3,Wd,bd,vWd:new Float64Array(Wd.length),vbd:new Float64Array(NC),
+          C:CH.slice(), NC, dims:DIMS};
+}
+function paramRefs(net){
+  return [[net.c1.W,net.c1.b,net.c1.vW,net.c1.vb],
+          [net.c2.W,net.c2.b,net.c2.vW,net.c2.vb],
+          [net.c3.W,net.c3.b,net.c3.vW,net.c3.vb],
+          [net.Wd,  net.bd,  net.vWd,  net.vbd ]];
+}
+function paramCount(net){
+  let n=0; const P=paramRefs(net);
+  for (let l=0;l<P.length;l++) n += P[l][0].length + P[l][1].length;
+  return n;
+}
+function gapDense(net, a3){
+  const d=net.dims, Z=d.h3*d.w3, K=net.C[2];
+  const g=new Float64Array(K);
+  for (let k=0;k<K;k++){ let s=0; for (let i=0;i<Z;i++) s+=a3[k*Z+i]; g[k]=s/Z; }
+  const logits=new Float64Array(net.NC);
+  for (let c=0;c<net.NC;c++){ let s=net.bd[c]; for (let k=0;k<K;k++) s+=net.Wd[c*K+k]*g[k]; logits[c]=s; }
+  return {g,logits};
+}
+function forward(net, x){
+  const d=net.dims;
+  const z1=convF(net.c1,x ,d.h0,d.w0), a1=reluF(z1);
+  const z2=convF(net.c2,a1,d.h1,d.w1), a2=reluF(z2);
+  const z3=convF(net.c3,a2,d.h2,d.w2), a3=reluF(z3);
+  const gd=gapDense(net,a3);
+  return {x,z1,a1,z2,a2,z3,a3,g:gd.g,logits:gd.logits,probs:softmax(gd.logits)};
+}
+// continue the forward pass FROM a tapped activation (the finite-difference check needs this)
+function fromTap(net, A, tap){
+  const d=net.dims; let a3;
+  if (tap===0){
+    const a2=reluF(convF(net.c2,A,d.h1,d.w1));
+    a3=reluF(convF(net.c3,a2,d.h2,d.w2));
+  } else if (tap===1){
+    a3=reluF(convF(net.c3,A,d.h2,d.w2));
+  } else a3=A;
+  return gapDense(net,a3).logits;
+}
+// full backward of softmax cross-entropy -> every parameter.
+// dL/dlogits = p - onehot(target), which is why its entries sum to zero.
+function backward(net, cache, target){
+  const d=net.dims, Z=d.h3*d.w3, K=net.C[2];
+  const dlog=new Float64Array(net.NC);
+  for (let c=0;c<net.NC;c++) dlog[c]=cache.probs[c]-(c===target?1:0);
+  const dWd=new Float64Array(net.Wd.length), dbd=new Float64Array(net.NC), dg=new Float64Array(K);
+  for (let c=0;c<net.NC;c++){ dbd[c]=dlog[c];
+    for (let k=0;k<K;k++){ dWd[c*K+k]=dlog[c]*cache.g[k]; dg[k]+=dlog[c]*net.Wd[c*K+k]; } }
+  const da3=new Float64Array(cache.a3.length);
+  for (let k=0;k<K;k++) for (let i=0;i<Z;i++) da3[k*Z+i]=dg[k]/Z;        // GAP backward
+  const b3=convB(net.c3,cache.a2,d.h2,d.w2,reluB(cache.z3,da3));
+  const b2=convB(net.c2,cache.a1,d.h1,d.w1,reluB(cache.z2,b3.dX));
+  const b1=convB(net.c1,cache.x ,d.h0,d.w0,reluB(cache.z1,b2.dX),false); // dX unused in training
+  return [[b1.dW,b1.db],[b2.dW,b2.db],[b3.dW,b3.db],[dWd,dbd]];
+}
+// backward of ONE LOGIT y^c down to the tapped feature maps -> dy^c/dA^k.
+// Note the seed: a one-hot on the LOGITS. No softmax, no loss.
+function tapGrad(net, cache, cls, tap){
+  const d=net.dims, Z=d.h3*d.w3, K=net.C[2];
+  const da3=new Float64Array(cache.a3.length);
+  for (let k=0;k<K;k++){ const v=net.Wd[cls*K+k]/Z; for (let i=0;i<Z;i++) da3[k*Z+i]=v; }
+  if (tap===2) return da3;
+  const da2=convB(net.c3,cache.a2,d.h2,d.w2,reluB(cache.z3,da3)).dX;
+  if (tap===1) return da2;
+  return convB(net.c2,cache.a1,d.h1,d.w1,reluB(cache.z2,da2)).dX;
+}
+// gradient of one logit w.r.t. the INPUT PIXELS = a plain saliency map
+function inputGrad(net, cache, cls){
+  const d=net.dims;
+  return convB(net.c1,cache.x,d.h0,d.w0,reluB(cache.z1,tapGrad(net,cache,cls,0))).dX;
+}
+
+// ---------------- GRAD-CAM ----------------
+function tapShape(net,tap){
+  const d=net.dims;
+  return tap===0 ? [net.C[0],d.h1,d.w1] : tap===1 ? [net.C[1],d.h2,d.w2] : [net.C[2],d.h3,d.w3];
+}
+function tapAct(cache,tap){ return tap===0?cache.a1:tap===1?cache.a2:cache.a3; }
+
+// mode: "gradcam" | "gradcam++" | "nrelu" (Grad-CAM with the final ReLU removed)
+function gradcam(net, cache, cls, tap, mode){
+  mode = mode || "gradcam";
+  const sh=tapShape(net,tap), K=sh[0], h=sh[1], w=sh[2], Z=h*w;
+  const A=tapAct(cache,tap), dA=tapGrad(net,cache,cls,tap);
+  const alpha=new Float64Array(K);
+  if (mode==="gradcam++"){
+    // Y = exp(y^c)  =>  dY = e^y g,  d2Y = e^y g^2,  d3Y = e^y g^3, so the
+    // exponential cancels inside alpha_ij and the coefficient is a pure
+    // function of g = dy/dA:   alpha_ij = g^2 / (2g^2 + SUM_ab A_ab g^3)
+    for (let k=0;k<K;k++){
+      let s3=0; for (let i=0;i<Z;i++) s3 += A[k*Z+i]*dA[k*Z+i]*dA[k*Z+i]*dA[k*Z+i];
+      let acc=0;
+      for (let i=0;i<Z;i++){
+        const g=dA[k*Z+i]; if (g<=0) continue;                 // ReLU(dY^c/dA)
+        const den=2*g*g + s3; if (Math.abs(den)<1e-14) continue;
+        acc += (g*g/den)*g;
+      }
+      alpha[k]=acc;
+    }
+  } else {
+    for (let k=0;k<K;k++){ let s=0; for (let i=0;i<Z;i++) s+=dA[k*Z+i]; alpha[k]=s/Z; }
+  }
+  const raw=new Float64Array(Z), map=new Float64Array(Z);
+  for (let i=0;i<Z;i++){
+    let s=0; for (let k=0;k<K;k++) s+=alpha[k]*A[k*Z+i];
+    raw[i]=s; map[i]= mode==="nrelu" ? s : (s>0?s:0);          // the ReLU
+  }
+  return {alpha,map,raw,h,w,K};
+}
+// scale a map into [0,1] for display
+function norm01(m){
+  let lo=Infinity, hi=-Infinity;
+  for (let i=0;i<m.length;i++){ if (m[i]<lo) lo=m[i]; if (m[i]>hi) hi=m[i]; }
+  const out=new Float64Array(m.length), r=hi-lo;
+  for (let i=0;i<m.length;i++) out[i]= r>1e-12 ? (m[i]-lo)/r : 0;
+  return out;
+}
+// bilinear upsample, align_corners: output row r reads source row r*(h-1)/(H-1)
+function bilinear(m,h,w,H,W){
+  const out=new Float64Array(H*W);
+  for (let r=0;r<H;r++){
+    const sy = H>1 ? r*(h-1)/(H-1) : 0;
+    const y0 = Math.min(h-1,Math.floor(sy)), y1=Math.min(h-1,y0+1), fy=sy-y0;
+    for (let c=0;c<W;c++){
+      const sx = W>1 ? c*(w-1)/(W-1) : 0;
+      const x0 = Math.min(w-1,Math.floor(sx)), x1=Math.min(w-1,x0+1), fx=sx-x0;
+      out[r*W+c] = m[y0*w+x0]*(1-fx)*(1-fy) + m[y0*w+x1]*fx*(1-fy)
+                 + m[y1*w+x0]*(1-fx)*fy     + m[y1*w+x1]*fx*fy;
+    }
+  }
+  return out;
+}
+// Receptive-field-aware upsample. A corner-to-corner stretch is WRONG here:
+// cell j of the tapped map is the response of a TAP_RF-wide window centred on
+// input pixel j*TAP_STRIDE + TAP_OFF, so that is where its value belongs.
+// Outside the covered band the nearest cell is held (edge clamp).
+function upsampleCAM(m,h,w,tap,H,W){
+  const st=TAP_STRIDE[tap], off=TAP_OFF[tap], out=new Float64Array(H*W);
+  for (let r=0;r<H;r++){
+    let sy=(r-off)/st; sy = sy<0?0:(sy>h-1?h-1:sy);
+    const y0=Math.floor(sy), y1=Math.min(h-1,y0+1), fy=sy-y0;
+    for (let c=0;c<W;c++){
+      let sx=(c-off)/st; sx = sx<0?0:(sx>w-1?w-1:sx);
+      const x0=Math.floor(sx), x1=Math.min(w-1,x0+1), fx=sx-x0;
+      out[r*W+c] = m[y0*w+x0]*(1-fx)*(1-fy) + m[y0*w+x1]*fx*(1-fy)
+                 + m[y1*w+x0]*(1-fx)*fy     + m[y1*w+x1]*fx*fy;
+    }
+  }
+  return out;
+}
+// plain CAM: legal ONLY for a GAP+linear head — weights read straight off the dense layer
+function cam(net, cache, cls){
+  const d=net.dims, Z=d.h3*d.w3, K=net.C[2], A=cache.a3, m=new Float64Array(Z);
+  for (let i=0;i<Z;i++){ let s=0; for (let k=0;k<K;k++) s+=net.Wd[cls*K+k]*A[k*Z+i]; m[i]=s>0?s:0; }
+  return {map:m,h:d.h3,w:d.w3};
+}
+
+// ---------------- training ----------------
+function trainNet(net, data, opts, onEpoch){
+  opts = opts||{};
+  const epochs=opts.epochs||16, lr=opts.lr||0.06, mom=opts.mom||0.9, batch=opts.batch||6;
+  const rng=mulberry32(opts.seed||3), P=paramRefs(net), hist=[];
+  const order=data.map((_,i)=>i);
+  const accW=P.map(p=>new Float64Array(p[0].length)), accB=P.map(p=>new Float64Array(p[1].length));
+  for (let e=0;e<epochs;e++){
+    for (let i=order.length-1;i>0;i--){ const j=(rng()*(i+1))|0; const t=order[i]; order[i]=order[j]; order[j]=t; }
+    let tot=0, corr=0;
+    for (let b=0;b<order.length;b+=batch){
+      const hi=Math.min(order.length,b+batch), n=hi-b;
+      for (let l=0;l<4;l++){ accW[l].fill(0); accB[l].fill(0); }
+      for (let s=b;s<hi;s++){
+        const smp=data[order[s]], cache=forward(net,smp.x);
+        tot += -Math.log(Math.max(cache.probs[smp.cls],1e-12));
+        let am=0; for (let c=1;c<net.NC;c++) if (cache.probs[c]>cache.probs[am]) am=c;
+        if (am===smp.cls) corr++;
+        const gr=backward(net,cache,smp.cls);
+        for (let l=0;l<4;l++){
+          const dW=gr[l][0], db=gr[l][1], aW=accW[l], aB=accB[l];
+          for (let i=0;i<dW.length;i++) aW[i]+=dW[i];
+          for (let i=0;i<db.length;i++) aB[i]+=db[i];
+        }
+      }
+      const st=lr/n;                                        // the mean gradient
+      for (let l=0;l<4;l++){
+        const W=P[l][0], bb=P[l][1], vW=P[l][2], vb=P[l][3];
+        for (let i=0;i<W.length;i++){ vW[i]=mom*vW[i]-st*accW[l][i]; W[i]+=vW[i]; }
+        for (let i=0;i<bb.length;i++){ vb[i]=mom*vb[i]-st*accB[l][i]; bb[i]+=vb[i]; }
+      }
+    }
+    const rec={epoch:e+1, loss:tot/data.length, acc:corr/data.length};
+    hist.push(rec); if (onEpoch) onEpoch(rec);
+  }
+  return hist;
+}
+function predict(net,x){ const p=forward(net,x).probs; let am=0;
+  for (let c=1;c<p.length;c++) if (p[c]>p[am]) am=c; return am; }
+function evaluate(net, data){
+  let corr=0; for (let i=0;i<data.length;i++) if (predict(net,data[i].x)===data[i].cls) corr++;
+  return corr/data.length;
+}
+// the sanity check: same architecture, random weights, no training at all
+function randomizeNet(net, seed){
+  const rng=mulberry32(seed||99), layers=[net.c1,net.c2,net.c3];
+  for (let li=0;li<layers.length;li++){
+    const L=layers[li], sd=Math.sqrt(2/(L.cin*L.k*L.k));
+    for (let i=0;i<L.W.length;i++) L.W[i]=gauss(rng)*sd;
+    for (let i=0;i<L.b.length;i++) L.b[i]=0;
+  }
+  const sd=Math.sqrt(2/net.C[2]);
+  for (let i=0;i<net.Wd.length;i++) net.Wd[i]=gauss(rng)*sd;
+  for (let i=0;i<net.bd.length;i++) net.bd[i]=0;
+  return net;
+}
+// argmax of a heatmap, reported in INPUT-pixel coordinates
+function peakPixel(m,h,w,tap,H,W){
+  const up=upsampleCAM(m,h,w,tap,H,W); let bi=0;
+  for (let i=1;i<up.length;i++) if (up[i]>up[bi]) bi=i;
+  return {r:Math.floor(bi/W), c:bi%W, up};
+}
+// A RANDOM two-object scene: one vertical bar and one horizontal bar, placed so
+// their bounding boxes do not touch. Asking Grad-CAM for class 0 must land on
+// the vertical bar and class 1 on the horizontal bar — the pointing game.
+function makeTwoObject(rng){
+  const x=new Float64Array(IMG*IMG);
+  for (let guard=0; guard<200; guard++){
+    const vh=10+Math.floor(rng()*5), vw=2+Math.floor(rng()*2);
+    const vr=Math.floor(rng()*(IMG-vh+1)), vc=Math.floor(rng()*(IMG-vw+1));
+    const hh=2+Math.floor(rng()*2), hw=10+Math.floor(rng()*5);
+    const hr=Math.floor(rng()*(IMG-hh+1)), hc=Math.floor(rng()*(IMG-hw+1));
+    const A={r0:vr,c0:vc,r1:vr+vh-1,c1:vc+vw-1}, B={r0:hr,c0:hc,r1:hr+hh-1,c1:hc+hw-1};
+    const gap = (A.r1+2 < B.r0) || (B.r1+2 < A.r0) || (A.c1+2 < B.c0) || (B.c1+2 < A.c0);
+    if (!gap) continue;
+    for (let r=A.r0;r<=A.r1;r++) for (let c=A.c0;c<=A.c1;c++) x[r*IMG+c]=1;
+    for (let r=B.r0;r<=B.r1;r++) for (let c=B.c0;c<=B.c1;c++) x[r*IMG+c]=1;
+    for (let i=0;i<x.length;i++){ const v=x[i]+0.05*gauss(rng); x[i]=v<0?0:v>1?1:v; }
+    return {x, boxes:[A,B]};
+  }
+  return null;
+}
+// distance from a pixel to a box (0 if inside) — the pointing-game referee
+function boxDist(p,b){
+  const dr=Math.max(b.r0-p.r, 0, p.r-b.r1), dc=Math.max(b.c0-p.c, 0, p.c-b.c1);
+  return Math.sqrt(dr*dr+dc*dc);
+}
+function pointingGame(net, tap, N, seed){
+  let hit=0, tot=0; const rng=mulberry32(seed||2024);
+  for (let i=0;i<N;i++){
+    const sc=makeTwoObject(rng); if (!sc) continue;
+    const ca=forward(net,sc.x);
+    for (let c=0;c<2;c++){
+      const gc=gradcam(net,ca,c,tap), pk=peakPixel(gc.map,gc.h,gc.w,tap,IMG,IMG);
+      tot++;
+      if (boxDist(pk,sc.boxes[c]) < boxDist(pk,sc.boxes[1-c])) hit++;
+    }
+  }
+  return {hit,tot,rate: tot? hit/tot : 0};
+}
+// how different are the per-class maps? mean |L^0 - L^1| after normalising —
+// a trained model separates the classes, a random one does not
+function classSpread(net, x, tap){
+  const ca=forward(net,x), ms=[];
+  for (let c=0;c<3;c++) ms.push(norm01(gradcam(net,ca,c,tap).map));
+  let s=0, n=0;
+  for (let a=0;a<3;a++) for (let b=a+1;b<3;b++)
+    for (let i=0;i<ms[a].length;i++){ s+=Math.abs(ms[a][i]-ms[b][i]); n++; }
+  return n? s/n : 0;
+}
+/* ===== GRADCAM-CORE-END ===== */
+</script>
+
+<script>
+// ================== state ==================
+const NTRAIN = 132, EPOCHS = 16, LR = 0.06, BATCH = 6;
+const SEED_NET = 7, SEED_DATA = 1234, SEED_SHUF = 3, SEED_RAND = 4242;
+
+const TRAIN = makeDataset(NTRAIN, SEED_DATA, false);
+const TRAIN_S = makeDataset(NTRAIN, SEED_DATA, true);
+const TEST  = makeDataset(45, 999, false);
+
+let netClean = makeNet(SEED_NET);
+let netShort = makeNet(SEED_NET);
+let netRand  = randomizeNet(makeNet(SEED_NET+14), SEED_RAND);
+
+let MODEL = "clean", TAP = 2, METH = "gradcam", ASK = -1, SIDX = 0;
+let HIST = [], HIST_S = [], accClean = 0, accShort = 0, cleanDone = false, shortDone = false;
+let scene = makeTwoObject(mulberry32(2024));
+let sceneSeed = 2024;
+let pointRate = null, pointRand = null, verifyTxt = "—";
+
+function activeNet(){ return MODEL==="short" ? netShort : MODEL==="rand" ? netRand : netClean; }
+
+// ================== canvas helpers ==================
+function fitCanvas(cv){
+  const R = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 300, h = cv.clientHeight || 200;
+  const pw = Math.round(w*R), ph = Math.round(h*R);
+  if (cv.width !== pw || cv.height !== ph){ cv.width = pw; cv.height = ph; }
+  return R;
+}
+// the classic "jet" colormap, by hand
+function jet(t){
+  t = t<0?0:t>1?1:t;
+  const f = v => Math.round(255*Math.min(1, Math.max(0, v)));
+  return [f(1.5-Math.abs(4*t-3)), f(1.5-Math.abs(4*t-2)), f(1.5-Math.abs(4*t-1))];
+}
+// a diverging map for the "no ReLU" view: blue = against, red = for
+function diverge(t){                                   // t in [-1,1]
+  if (t >= 0) return [Math.round(60+195*t), Math.round(70-10*t), Math.round(90-60*t)];
+  return [Math.round(60+50*t*-0+30), Math.round(90+60*(1+t)*0+80*(1+t)), Math.round(200+55*(-t))];
+}
+// draw one 24x24 image (greyscale) with an optional heat overlay
+function tileDraw(g,R,ox,oy,S,img,heat,signed,boxes,title,titleCol){
+  const cell=S/IMG;
+  for (let r=0;r<IMG;r++) for (let c=0;c<IMG;c++){
+    const v=Math.max(0,Math.min(1,img[r*IMG+c])), q=Math.round(28+200*v);
+    g.fillStyle="rgb("+q+","+q+","+q+")";
+    g.fillRect(ox+c*cell, oy+r*cell, cell+0.6, cell+0.6);
+  }
+  if (heat){
+    for (let r=0;r<IMG;r++) for (let c=0;c<IMG;c++){
+      const t=heat[r*IMG+c];
+      let col, al;
+      if (signed){ const u=Math.max(-1,Math.min(1,t));
+        col = u>=0 ? jet(0.55+0.45*u) : [59,76,192];
+        al = 0.12+0.72*Math.abs(u);
+      } else { col=jet(t); al=0.10+0.70*t; }
+      g.fillStyle="rgba("+col[0]+","+col[1]+","+col[2]+","+al.toFixed(3)+")";
+      g.fillRect(ox+c*cell, oy+r*cell, cell+0.6, cell+0.6);
+    }
+  }
+  if (boxes){
+    g.strokeStyle="#a3e635"; g.lineWidth=1.6*R;
+    for (let i=0;i<boxes.length;i++){ const b=boxes[i];
+      g.strokeRect(ox+b.c0*cell, oy+b.r0*cell, (b.c1-b.c0+1)*cell, (b.r1-b.r0+1)*cell); }
+  }
+  g.strokeStyle="rgba(148,163,184,0.35)"; g.lineWidth=1*R; g.strokeRect(ox,oy,S,S);
+  if (title){
+    g.fillStyle=titleCol||"#94a3b8"; g.font="700 "+(10*R)+"px -apple-system"; g.textAlign="center";
+    g.fillText(title, ox+S/2, oy-5*R);
+  }
+}
+// lay out N square tiles across a canvas, leaving room for a caption
+function strip(cv, items){
+  const R=fitCanvas(cv), g=cv.getContext("2d"), W=cv.width, H=cv.height;
+  g.clearRect(0,0,W,H);
+  const n=items.length, padT=16*R, padB=6*R, gap=10*R;
+  const S=Math.min((W-(n+1)*gap)/n, H-padT-padB);
+  const totW=n*S+(n-1)*gap, ox0=(W-totW)/2, oy=padT+(H-padT-padB-S)/2;
+  for (let i=0;i<n;i++){
+    const it=items[i];
+    tileDraw(g,R,ox0+i*(S+gap),oy,S,it.img,it.heat,it.signed,it.boxes,it.title,it.col);
+  }
+}
+// a Grad-CAM map, upsampled to the input grid and scaled to [0,1]
+function heatFor(net, cache, cls, tap, mode){
+  const gc=gradcam(net,cache,cls,tap,mode);
+  const up=upsampleCAM(gc.map,gc.h,gc.w,tap,IMG,IMG);
+  if (mode==="nrelu"){
+    let mx=0; for (let i=0;i<up.length;i++) mx=Math.max(mx,Math.abs(up[i]));
+    const out=new Float64Array(up.length);
+    for (let i=0;i<up.length;i++) out[i]= mx>1e-12 ? up[i]/mx : 0;
+    return {heat:out, signed:true, gc};
+  }
+  return {heat:norm01(up), signed:false, gc};
+}
+function salFor(net, cache, cls){
+  const s=inputGrad(net,cache,cls), a=new Float64Array(s.length);
+  for (let i=0;i<s.length;i++) a[i]=Math.abs(s[i]);
+  return norm01(a);
+}
+
+// ================== panels ==================
+function askedClass(net, cache){ return ASK<0 ? predict(net, cache.x) : ASK; }
+
+function drawMain(){
+  const net=activeNet(), smp=TEST[SIDX], cache=forward(net,smp.x);
+  const cls=askedClass(net,cache);
+  document.getElementById("askName").textContent = CLASS_GLYPH[cls] + (ASK<0 ? "  (predicted)" : "  (forced)");
+  let h;
+  if (METH==="sal") h={heat:salFor(net,cache,cls), signed:false, gc:gradcam(net,cache,cls,TAP)};
+  else h=heatFor(net,cache,cls,TAP,METH);
+  const items=[
+    {img:smp.x, title:"input  "+CLASS_GLYPH[smp.cls], col:"#94a3b8", boxes:[smp.box]},
+    {img:new Float64Array(IMG*IMG), heat:h.heat, signed:h.signed, title:(METH==="sal"?"|dy/dx|":"L^c  at "+TAP_NAME[TAP]), col:"#fb923c"},
+    {img:smp.x, heat:h.heat, signed:h.signed, title:"overlay → "+CLASS_GLYPH[cls], col:"#fb923c", boxes:[smp.box]}
+  ];
+  strip(document.getElementById("camC"), items);
+
+  // probabilities
+  let html="";
+  for (let c=0;c<3;c++){
+    const p=cache.probs[c];
+    html += '<div class="probrow"><span class="nm">'+CLASS_GLYPH[c]+'</span>'
+         +  '<span class="probbar"><i style="width:'+(p*100).toFixed(1)+'%'
+         +  (c===cls?';background:#c2410c':'')+'"></i></span>'
+         +  '<span class="vl">'+(p*100).toFixed(1)+'</span></div>';
+  }
+  document.getElementById("probs").innerHTML=html;
+
+  const pk=peakPixel(h.gc.map,h.gc.h,h.gc.w,TAP,IMG,IMG);
+  document.getElementById("s_peak").textContent="("+pk.r+", "+pk.c+")";
+  document.getElementById("m_gc").textContent="("+pk.r+", "+pk.c+")";
+  const sal=salFor(net,cache,cls); let bi=0;
+  for (let i=1;i<sal.length;i++) if (sal[i]>sal[bi]) bi=i;
+  document.getElementById("m_sal").textContent="("+Math.floor(bi/IMG)+", "+(bi%IMG)+")";
+
+  drawAlpha(h.gc.alpha, cls);
+}
+function drawAlpha(alpha, cls){
+  const cv=document.getElementById("alphaC"); if(!cv) return;
+  const R=fitCanvas(cv), g=cv.getContext("2d"), W=cv.width, H=cv.height;
+  g.clearRect(0,0,W,H);
+  const K=alpha.length, pad=18*R;
+  let mx=1e-12; for (let k=0;k<K;k++) mx=Math.max(mx,Math.abs(alpha[k]));
+  const bw=(W-2*pad)/K, mid=H/2;
+  g.strokeStyle="#e2e8f0"; g.lineWidth=1*R;
+  g.beginPath(); g.moveTo(pad*0.5,mid); g.lineTo(W-pad*0.5,mid); g.stroke();
+  for (let k=0;k<K;k++){
+    const v=alpha[k]/mx, hgt=Math.abs(v)*(H/2-12*R);
+    g.fillStyle= v>=0 ? "#f97316" : "#60a5fa";
+    g.fillRect(pad+k*bw+bw*0.15, v>=0?mid-hgt:mid, bw*0.7, hgt);
+    g.fillStyle="#94a3b8"; g.font="700 "+(8*R)+"px -apple-system"; g.textAlign="center";
+    g.fillText("k"+k, pad+k*bw+bw*0.5, H-3*R);
+  }
+  g.fillStyle="#c2410c"; g.font="700 "+(9*R)+"px -apple-system"; g.textAlign="left";
+  g.fillText("αₖ for "+CLASS_NAMES[cls]+"  (max "+alpha.reduce((a,b)=>Math.max(a,Math.abs(b)),0).toExponential(2)+")", 4*R, 10*R);
+}
+function drawDisc(){
+  const net=activeNet(), cache=forward(net,scene.x);
+  const items=[{img:scene.x, title:"one scene, two objects", col:"#94a3b8", boxes:scene.boxes}];
+  for (let c=0;c<3;c++){
+    const h=heatFor(net,cache,c,TAP,METH==="sal"?"gradcam":METH);
+    items.push({img:scene.x, heat:h.heat, signed:h.signed, boxes:[scene.boxes[Math.min(c,1)]],
+                title:"ask → "+CLASS_GLYPH[c], col:c===0?"#c084fc":c===1?"#fb923c":"#64748b"});
+  }
+  strip(document.getElementById("discC"), items);
+  for (let c=0;c<2;c++){
+    const gc=gradcam(net,cache,c,TAP), pk=peakPixel(gc.map,gc.h,gc.w,TAP,IMG,IMG);
+    const ok=boxDist(pk,scene.boxes[c]) < boxDist(pk,scene.boxes[1-c]);
+    const el=document.getElementById("d_p"+c);
+    el.textContent="("+pk.r+", "+pk.c+")  "+(ok?"✓":"✗");
+    el.style.color = ok ? "#7c3aed" : "#64748b";
+  }
+  document.getElementById("d_point").textContent  = pointRate===null ? "…" : (pointRate.hit+"/"+pointRate.tot+"  "+(100*pointRate.rate).toFixed(0)+"%");
+  document.getElementById("d_pointr").textContent = pointRand===null ? "…" : (pointRand.hit+"/"+pointRand.tot+"  "+(100*pointRand.rate).toFixed(0)+"%");
+}
+function drawTaps(){
+  const net=activeNet(), smp=TEST[SIDX], cache=forward(net,smp.x), cls=askedClass(net,cache);
+  const items=[{img:smp.x, title:"input", col:"#94a3b8", boxes:[smp.box]}];
+  for (let t=0;t<3;t++){
+    const h=heatFor(net,cache,cls,t,METH==="sal"?"gradcam":METH);
+    items.push({img:smp.x, heat:h.heat, signed:h.signed, title:TAP_NAME[t], col:t===2?"#fb923c":"#5eead4"});
+  }
+  strip(document.getElementById("tapC"), items);
+}
+function drawMeth(){
+  const net=activeNet(), smp=TEST[SIDX], cache=forward(net,smp.x), cls=askedClass(net,cache);
+  const a=heatFor(net,cache,cls,TAP,"gradcam");
+  const b=heatFor(net,cache,cls,TAP,"gradcam++");
+  const c=heatFor(net,cache,cls,TAP,"nrelu");
+  strip(document.getElementById("methC"), [
+    {img:smp.x, heat:a.heat, title:"Grad-CAM", col:"#fb923c"},
+    {img:smp.x, heat:b.heat, title:"Grad-CAM++", col:"#c084fc"},
+    {img:smp.x, heat:c.heat, signed:true, title:"no ReLU (blue = against)", col:"#93c5fd"},
+    {img:smp.x, heat:salFor(net,cache,cls), title:"saliency |dy/dx|", col:"#94a3b8"}
+  ]);
+}
+function drawShort(){
+  const smp=TEST[SIDX % TEST.length];
+  const marked=Float64Array.from(smp.x); stampMark(marked);
+  const items=[{img:marked, title:"a "+CLASS_NAMES[smp.cls]+" + watermark", col:"#94a3b8", boxes:[MARK_BOX]}];
+  const cc=forward(netClean,marked), pc=predict(netClean,marked);
+  const hc=heatFor(netClean,cc,pc,2,"gradcam");
+  items.push({img:marked, heat:hc.heat, title:"clean model → "+CLASS_GLYPH[pc], col:"#5eead4"});
+  if (shortDone){
+    const cs=forward(netShort,marked), ps=predict(netShort,marked);
+    const hs=heatFor(netShort,cs,ps,2,"gradcam");
+    items.push({img:marked, heat:hs.heat, title:"poisoned model → "+CLASS_GLYPH[ps], col:"#fb7185", boxes:[MARK_BOX]});
+    const pk=peakPixel(hs.gc.map,hs.gc.h,hs.gc.w,2,IMG,IMG);
+    const onMark = pk.r<=MARK_BOX.r1+2 && pk.c<=MARK_BOX.c1+2;
+    document.getElementById("k_short").textContent=CLASS_GLYPH[ps];
+    document.getElementById("k_where").textContent= onMark ? "the watermark ✓" : "("+pk.r+", "+pk.c+")";
+  } else {
+    items.push({img:marked, title:"poisoned model — training…", col:"#fb7185"});
+    document.getElementById("k_short").textContent="…";
+    document.getElementById("k_where").textContent="…";
+  }
+  document.getElementById("k_clean").textContent=CLASS_GLYPH[pc];
+  strip(document.getElementById("shortC"), items);
+}
+function drawSanity(){
+  const smp=TEST[SIDX], cls=smp.cls;
+  const ct=forward(netClean,smp.x), cr=forward(netRand,smp.x);
+  const ht=heatFor(netClean,ct,cls,2,"gradcam");
+  const hr=heatFor(netRand ,cr,cls,2,"gradcam");
+  strip(document.getElementById("sanC"), [
+    {img:smp.x, title:"input", col:"#94a3b8", boxes:[smp.box]},
+    {img:smp.x, heat:ht.heat, title:"trained weights", col:"#fb923c"},
+    {img:smp.x, heat:hr.heat, title:"random weights", col:"#94a3b8"}
+  ]);
+  document.getElementById("v_tdiff").textContent=classSpread(netClean,smp.x,2).toFixed(3);
+  document.getElementById("v_rdiff").textContent=classSpread(netRand ,smp.x,2).toFixed(3);
+}
+function drawLoss(){
+  const cv=document.getElementById("lossC"); if(!cv) return;
+  const R=fitCanvas(cv), g=cv.getContext("2d"), W=cv.width, H=cv.height;
+  g.clearRect(0,0,W,H);
+  const pad=34*R;
+  const hi=Math.max(1.3, HIST.length? HIST[0].loss*1.1 : 1.3);
+  const sx=e=>pad+((e-1)/Math.max(1,EPOCHS-1))*(W-1.5*pad);
+  const sy=v=>(H-pad)-(Math.max(0,v)/hi)*(H-1.6*pad);
+  g.strokeStyle="#eef2f7"; g.lineWidth=1*R;
+  g.fillStyle="#94a3b8"; g.font=(9*R)+"px -apple-system"; g.textAlign="right";
+  for (let q=0;q<=4;q++){ const v=hi*q/4, y=sy(v);
+    g.beginPath(); g.moveTo(pad,y); g.lineTo(W-0.5*pad,y); g.stroke();
+    g.fillText(v.toFixed(2), pad-5*R, y+3*R); }
+  function trace(arr,key,col,scale){
+    if (!arr.length) return;
+    g.strokeStyle=col; g.lineWidth=2.6*R; g.beginPath();
+    arr.forEach((h,i)=>{ const x=sx(h.epoch), y= key==="acc" ? (H-pad)-(h.acc)*(H-1.6*pad) : sy(h.loss);
+      i? g.lineTo(x,y) : g.moveTo(x,y); });
+    g.stroke();
+    g.fillStyle=col;
+    arr.forEach(h=>{ const x=sx(h.epoch), y= key==="acc" ? (H-pad)-(h.acc)*(H-1.6*pad) : sy(h.loss);
+      g.beginPath(); g.arc(x,y,2.4*R,0,2*Math.PI); g.fill(); });
+  }
+  trace(HIST,"acc","#a7f3d0");
+  trace(HIST_S,"loss","#fb7185");
+  trace(HIST,"loss","#f97316");
+  g.font="700 "+(10*R)+"px -apple-system"; g.textAlign="left";
+  g.fillStyle="#c2410c"; g.fillText("cross-entropy loss (clean model)", pad+4*R, 13*R);
+  g.fillStyle="#e11d48"; g.fillText("loss (poisoned model)", pad+4*R, 26*R);
+  g.fillStyle="#059669"; g.fillText("train accuracy — top of plot = 100%", pad+4*R, 39*R);
+  g.fillStyle="#94a3b8"; g.font=(9*R)+"px -apple-system"; g.textAlign="center";
+  g.fillText("epoch →", W/2, H-6*R);
+}
+function drawGallery(){
+  const net=activeNet(), items=[];
+  for (let i=0;i<8;i++){
+    const smp=TRAIN[i*7 % TRAIN.length], ca=forward(net,smp.x), p=predict(net,smp.x);
+    const h=heatFor(net,ca,p,2,"gradcam");
+    items.push({img:smp.x, heat:h.heat, title:CLASS_GLYPH[p], col: p===smp.cls?"#94a3b8":"#fb7185"});
+  }
+  strip(document.getElementById("galC"), items);
+}
+
+// ---- the live finite-difference check, run in the browser ----
+function runVerify(){
+  const net=netClean, smp=TEST[3], cache=forward(net,smp.x), P=paramRefs(net);
+  const rng=mulberry32(4242), eps=1e-5;
+  const gr=backward(net,cache,smp.cls);
+  let worstP=0, worstA=0, nP=0, nA=0;
+  for (let l=0;l<4;l++) for (let t=0;t<6;t++){
+    const arr=P[l][0], i=(rng()*arr.length)|0, an=gr[l][0][i], old=arr[i];
+    arr[i]=old+eps; const lp=-Math.log(forward(net,smp.x).probs[smp.cls]);
+    arr[i]=old-eps; const lm=-Math.log(forward(net,smp.x).probs[smp.cls]);
+    arr[i]=old;
+    const num=(lp-lm)/(2*eps);
+    worstP=Math.max(worstP, Math.abs(an-num)/Math.max(1e-8,Math.abs(an)+Math.abs(num))); nP++;
+  }
+  for (let tap=0;tap<3;tap++){
+    const A=Float64Array.from(tapAct(cache,tap)), gA=tapGrad(net,cache,1,tap);
+    for (let t=0;t<8;t++){
+      const i=(rng()*A.length)|0, old=A[i];
+      A[i]=old+eps; const lp=fromTap(net,A,tap)[1];
+      A[i]=old-eps; const lm=fromTap(net,A,tap)[1];
+      A[i]=old;
+      const num=(lp-lm)/(2*eps), an=gA[i];
+      worstA=Math.max(worstA, Math.abs(an-num)/Math.max(1e-8,Math.abs(an)+Math.abs(num))); nA++;
+    }
+  }
+  const Z=DIMS.h3*DIMS.w3; let worstC=0;
+  for (let c=0;c<3;c++){ const gc=gradcam(net,cache,c,2);
+    for (let k=0;k<CH[2];k++) worstC=Math.max(worstC, Math.abs(gc.alpha[k]*Z - net.Wd[c*CH[2]+k])); }
+  let sm=0; for (let c=0;c<3;c++) sm+=cache.probs[c];
+  const pill=v=>'<span class="pill '+(v<1e-5?'okpill':'badpill')+'">'+(v<1e-5?'PASS':'FAIL')+'</span>';
+  verifyTxt =
+    "&part;L/&part;w &nbsp;vs FD &nbsp;("+nP+" params)&nbsp; max rel err <b>"+worstP.toExponential(2)+"</b> "+pill(worstP)+"<br>"+
+    "&part;y<sup>c</sup>/&part;A vs FD &nbsp;("+nA+" cells)&nbsp;&nbsp; max rel err <b>"+worstA.toExponential(2)+"</b> "+pill(worstA)+"<br>"+
+    "&alpha;<sub>k</sub><sup>c</sup>&middot;Z &minus; w<sub>k</sub><sup>c</sup> (Grad-CAM &equiv; CAM) <b>"+worstC.toExponential(2)+"</b> "+pill(worstC)+"<br>"+
+    "&Sigma; softmax = <b>"+sm.toFixed(12)+"</b>";
+  document.getElementById("verifyBox").innerHTML=verifyTxt;
+}
+
+function redraw(){
+  if (document.getElementById("look").classList.contains("hidden")) return;
+  drawMain(); drawDisc(); drawTaps(); drawMeth(); drawShort(); drawSanity(); drawLoss(); drawGallery();
+  document.getElementById("s_acc").textContent  = (100*(MODEL==="short"?accShort:MODEL==="rand"?1/3:accClean)).toFixed(1)+"%";
+  document.getElementById("s_loss").textContent = HIST.length? HIST[HIST.length-1].loss.toFixed(4) : "—";
+  document.getElementById("s_par").textContent  = paramCount(netClean);
+}
+
+// ================== controls ==================
+document.getElementById("sSlider").addEventListener("input", e => { SIDX=+e.target.value;
+  document.getElementById("sVal").textContent=SIDX; redraw(); });
+document.querySelectorAll("[data-model]").forEach(b => b.onclick = () => {
+  document.querySelectorAll("[data-model]").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); MODEL=b.dataset.model; recomputePointing(); redraw(); });
+document.querySelectorAll("[data-tap]").forEach(b => b.onclick = () => {
+  document.querySelectorAll("[data-tap]").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); TAP=+b.dataset.tap; recomputePointing(); redraw(); });
+document.querySelectorAll("[data-meth]").forEach(b => b.onclick = () => {
+  document.querySelectorAll("[data-meth]").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); METH=b.dataset.meth; redraw(); });
+document.querySelectorAll("[data-cls]").forEach(b => b.onclick = () => {
+  document.querySelectorAll("[data-cls]").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); ASK=+b.dataset.cls; redraw(); });
+document.getElementById("newScene").onclick = () => {
+  sceneSeed = (sceneSeed*1664525 + 1013904223) >>> 0;
+  const rng=mulberry32(sceneSeed); let s=null;
+  for (let i=0;i<40 && !s;i++) s=makeTwoObject(rng);
+  if (s){ scene=s; drawDisc(); } };
+window.addEventListener("resize", () => redraw());
+
+function recomputePointing(){
+  if (!cleanDone) return;
+  pointRate = pointingGame(activeNet(), TAP, 30, 2024);
+  pointRand = pointingGame(netRand,   TAP, 30, 2024);
+}
+
+// ================== train, one epoch at a time, painting as it goes ==================
+function setStatus(txt, done){
+  const el=document.getElementById("statusPill");
+  el.textContent=txt;
+  el.style.background = done? "#ecfdf5" : "#fff7ed";
+  el.style.color      = done? "#047857" : "#c2410c";
+  el.style.borderColor= done? "#a7f3d0" : "#fed7aa";
+}
+function trainStaged(net, data, hist, epoch, label, onDone){
+  const h = trainNet(net, data, {epochs:1, lr:LR, batch:BATCH, seed:SEED_SHUF+epoch});
+  hist.push({epoch:epoch+1, loss:h[0].loss, acc:h[0].acc});
+  setStatus(label+" — epoch "+(epoch+1)+"/"+EPOCHS+"  loss "+h[0].loss.toFixed(3)+"  acc "+(100*h[0].acc).toFixed(0)+"%", false);
+  redraw();
+  if (epoch+1 < EPOCHS) setTimeout(()=>trainStaged(net,data,hist,epoch+1,label,onDone), 0);
+  else onDone();
+}
+setTimeout(() => {
+  trainStaged(netClean, TRAIN, HIST, 0, "training the clean model", () => {
+    cleanDone=true;
+    accClean=evaluate(netClean,TEST);
+    recomputePointing();
+    runVerify();
+    setStatus("clean model trained — "+(100*accClean).toFixed(1)+"% test accuracy · now poisoning a copy…", false);
+    redraw();
+    setTimeout(() => {
+      trainStaged(netShort, TRAIN_S, HIST_S, 0, "training the POISONED model", () => {
+        shortDone=true;
+        accShort=evaluate(netShort,TRAIN_S);
+        setStatus("both models trained · clean "+(100*accClean).toFixed(1)+"% test · poisoned "+(100*accShort).toFixed(1)+"% on its own data", true);
+        redraw();
+      });
+    }, 0);
+  });
+}, 30);
+</script>
+
+<script>
+// ===================== UNDERSTAND — 12 steps =====================
+const STEPS = [
+ { title:"1. The problem: a label is not an explanation",
+   why:"A trained classifier hands you one number per class and nothing else. If it says 'ring' with 99% confidence you still do not know whether it found a ring, or a watermark in the corner, or the fact that every ring photo in your training set happened to be slightly brighter. This matters far beyond curiosity: models get deployed in radiology, credit scoring and self-driving cars, where 'it works on the test set' is not an acceptable answer when the test set shares the same hidden bias as the training set. What we want is a map over the input saying 'this is where the evidence is', and we want it from the model we already trained, not from a different, more interpretable model we wish we had trained instead.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">model output: &nbsp;<b>ring, p = 0.99</b><br>&darr;<br>which pixels made it say that?<br><b>the label alone cannot tell you</b></div>`,
+   code:"# what you get\nlogits = model(x)          # tensor([-1.2, 0.4, 6.8])\npred   = logits.argmax()   # 2  -> 'ring'\n\n# what you want\nheatmap = explain(model, x, class_idx=2)   # (H, W), 'here is the evidence'" },
+ { title:"2. Where the evidence still has coordinates",
+   why:"A convolution is translation-equivariant: move the object and every feature map moves with it, so a value at cell (i,j) of a feature map still means 'something happened THERE'. That geometric meaning survives layer after layer, and the features get more semantic as you go deeper — early layers fire on edges, late layers on object parts. Then global average pooling (or a flatten plus a fully-connected layer) collapses each map to a single number, and all spatial information is gone forever. So the last convolutional layer is the sweet spot: the deepest place in the network where 'where' still exists at all. That single observation is the whole architectural insight behind CAM and Grad-CAM.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">conv &rarr; conv &rarr; <b>conv</b> &rarr; GAP &rarr; dense<br>8&times;8&times;K &nbsp;&nbsp;&rarr;&nbsp;&nbsp; K &nbsp;&nbsp;&rarr;&nbsp;&nbsp; 3<br><b>&uarr; last place with coordinates</b><br>deep = semantic, still spatial</div>`,
+   code:"# A^k : the feature maps of the last conv layer\n# shape (K, h, w)  —  K channels on an h x w grid\n# A[k, i, j] means: 'feature k was present at position (i, j)'\n# after GAP there is only A.mean((1,2)) -> (K,) : no coordinates left" },
+ { title:"3. CAM: weight the maps by the classifier's own weights",
+   why:"If the head is exactly global average pooling followed by ONE linear layer, then the class score is y^c = SUM_k w_k^c * mean(A^k). Because the mean is linear you can slide the sum inside: y^c is the spatial average of SUM_k w_k^c * A^k_ij. That inner quantity is a map over the grid whose average IS the score, so it is literally a decomposition of the score over space. Zhou et al. called it the Class Activation Map. It is exact and beautiful, and it has one crippling condition: your architecture must already end in GAP plus a single linear layer. VGG-style heads with two fully-connected layers, anything with dropout in the middle, most detection and segmentation heads — none of them qualify, and retrofitting means surgery plus retraining plus a usually-worse model.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">y<sup>c</sup> = &Sigma;<sub>k</sub> w<sub>k</sub><sup>c</sup> &middot; mean<sub>ij</sub>(A<sup>k</sup><sub>ij</sub>)<br>= mean<sub>ij</sub>( &Sigma;<sub>k</sub> w<sub>k</sub><sup>c</sup> A<sup>k</sup><sub>ij</sub> )<br><b>CAM<sub>ij</sub> = &Sigma;<sub>k</sub> w<sub>k</sub><sup>c</sup> A<sup>k</sup><sub>ij</sub></b><br>needs GAP + one linear layer &nbsp;&#10007;</div>`,
+   code:"# CAM — only valid for a GAP + single-linear head\nW = model.fc.weight          # (num_classes, K)\nA = feature_maps             # (K, h, w)\ncam = (W[c][:, None, None] * A).sum(0)   # (h, w)\n# any other head shape and this formula is simply not defined" },
+ { title:"4. The gradient is the missing weight",
+   why:"Ask what w_k^c actually meant: it is the sensitivity of the score to channel k. So replace 'the weight' with 'the sensitivity', which is defined for ANY architecture — the partial derivative of the class score with respect to the feature map. Two details decide whether your implementation is right. First, differentiate the LOGIT y^c, not the loss and not the softmax probability: the loss mixes in the true label (which you do not have at inference), and the softmax saturates, so once the model is confident the probability's gradient is nearly zero everywhere and the map goes blank. Second, stop the backward pass at the ACTIVATIONS, not at the parameters — you want dy/dA, which frameworks give you through a backward hook.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">CAM: &nbsp;&nbsp;weight = w<sub>k</sub><sup>c</sup> &nbsp;(needs a GAP head)<br>Grad-CAM: weight = <b>&part;y<sup>c</sup>/&part;A<sup>k</sup></b><br>defined for ANY layer, ANY head<br>backprop the <b>logit</b>, never the softmax</div>`,
+   code:"logits = model(x)\nmodel.zero_grad()\nlogits[0, c].backward()          # the LOGIT for class c\n\n# NOT loss.backward()      -> needs the true label, mixes classes\n# NOT probs[0, c].backward() -> saturates: p=0.999 => gradient ~ 0" },
+ { title:"5. Pool the gradients into one number per channel",
+   why:"The gradient dy^c/dA^k is a whole grid, the same shape as the feature map. Grad-CAM collapses it to a single scalar per channel by global-average-pooling it: alpha_k^c = (1/Z) * SUM_ij dy^c/dA^k_ij. Why average rather than use it pointwise? Because a channel is a detector for one KIND of thing, and its importance to the class is a property of the channel, not of a position — the position information is already carried by A^k itself. Averaging also smooths out the pixel-level noise that makes raw gradient maps so speckled, and it makes the weight a first-order estimate of how much the score would move if that entire channel were scaled up. One number per channel is all you need.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">&alpha;<sub>k</sub><sup>c</sup> = (1/Z) &Sigma;<sub>i</sub>&Sigma;<sub>j</sub> &part;y<sup>c</sup>/&part;A<sup>k</sup><sub>ij</sub><br>gradient grid (K,h,w) &rarr; K numbers<br>"how important is channel k<br>to class c?"</div>`,
+   code:"grads = dY_dA                     # (K, h, w)\nalpha = grads.mean(axis=(1, 2))   # (K,)  global-average-pool the GRADIENTS\n# torch:  alpha = grads.mean(dim=(2,3), keepdim=True)" },
+ { title:"6. Weighted sum, then ReLU",
+   why:"Now combine: L^c = ReLU(SUM_k alpha_k^c * A^k). The sum is the same linear combination CAM used, only with learned weights swapped for pooled gradients. The ReLU is the part people delete by accident, and it changes everything. Channels with NEGATIVE alpha are evidence against the class; the weighted sum therefore contains regions that push the score down as well as up, and averaging them together produces a muddy map where 'cool' can mean either 'nothing here' or 'evidence for a different class'. Since the question is 'what made it say c', we keep only the positive part. On the LOOK tab, switch the method to 'no ReLU' and the blue regions that appear are exactly what the ReLU removes.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono"><b>L<sup>c</sup> = ReLU( &Sigma;<sub>k</sub> &alpha;<sub>k</sub><sup>c</sup> A<sup>k</sup> )</b><br>&alpha; &gt; 0 : evidence FOR &nbsp;&rarr; keep<br>&alpha; &lt; 0 : evidence AGAINST &rarr; drop<br>output: one h&times;w map, all &ge; 0</div>`,
+   code:"L = (alpha[:, None, None] * A).sum(0)\nL = np.maximum(L, 0)              # <- the ReLU. do not skip it.\nL = (L - L.min()) / (L.max() - L.min() + 1e-8)   # for display only" },
+ { title:"7. Proof: on a GAP head, Grad-CAM IS CAM",
+   why:"This is the theorem that makes Grad-CAM trustworthy rather than heuristic. Take a GAP-plus-linear head: y^c = SUM_k w_k^c * (1/Z) SUM_ij A^k_ij. Differentiate with respect to a single cell A^k_ij and every term vanishes except one, leaving exactly w_k^c / Z — the SAME value at every spatial position. Averaging Z copies of one number returns that number, so alpha_k^c = w_k^c / Z. The 1/Z is a single global constant, so after the usual min-max normalisation the two maps are identical. Grad-CAM is therefore a strict generalisation of CAM: it agrees with it wherever CAM is defined, and keeps working where CAM is not. It is also the single best unit test for an implementation — this page asserts it to 1e-15.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">y<sup>c</sup> = &Sigma;<sub>k</sub> w<sub>k</sub><sup>c</sup> (1/Z) &Sigma;<sub>ij</sub> A<sup>k</sup><sub>ij</sub><br>&rArr; &part;y<sup>c</sup>/&part;A<sup>k</sup><sub>ij</sub> = w<sub>k</sub><sup>c</sup>/Z &nbsp;(every cell)<br>&rArr; &alpha;<sub>k</sub><sup>c</sup> = mean = w<sub>k</sub><sup>c</sup>/Z<br><b>Grad-CAM &equiv; CAM &nbsp;(up to 1/Z)</b></div>`,
+   code:"Z = h * w\nassert np.allclose(alpha * Z, model.fc.weight[c], atol=1e-10)\nassert np.allclose(norm01(grad_cam), norm01(cam), atol=1e-10)\n# if this fails, your backward pass is wrong — not your intuition" },
+ { title:"8. Upsample it — and the alignment bug everybody ships",
+   why:"The map lives on the tapped layer's grid, so it must be resized to the input before you can overlay it. Almost every tutorial calls cv2.resize(cam, image.shape), which stretches map-corner to image-corner. That is geometrically wrong. Cell j of the map is the response of a window of size RF centred on input pixel j*stride + (RF-1)/2, so on this page's 8x8 map with stride 2 and RF 9 the cells only cover pixels 4 through 18 of 24 — the map does not reach the image border at all. Stretching corner-to-corner shifts the entire explanation by up to four pixels here, and by a dozen or more on a 224x224 ImageNet input. Compute the receptive-field geometry once and place each cell where it actually belongs.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">cell j &rarr; pixel j&middot;stride + (RF&minus;1)/2<br>8&times;8 map, stride 2, RF 9<br>covers pixels 4 &hellip; 18 &nbsp;(not 0 &hellip; 23)<br><b>corner-to-corner stretch = a 4 px lie</b></div>`,
+   code:"jump  = 1\nrf    = 1\nfor (k, s) in layers:            # walk the stack once\n    rf   += (k - 1) * jump\n    jump *= s\nstart = (rf - 1) / 2             # centre of cell 0\n# cell j belongs at pixel j*jump + start" },
+ { title:"9. Class-discriminative: ask a different class, get a different map",
+   why:"Everything in the pipeline is conditioned on c: the seed of the backward pass, the gradients, the alphas. Feed an image containing a cat and a dog, ask for 'cat' and the heat sits on the cat; ask for 'dog' and it moves to the dog — from the SAME forward pass and the SAME activations. This is the property that separates Grad-CAM from plain saliency and Guided Backprop, whose maps look nearly identical whichever class you request, because they mostly reflect the image's edge structure. It is also the property that makes Grad-CAM useful on WRONG predictions: ask for the class the model should have said, and it will show you the evidence it failed to weigh; ask for the class it did say, and it will show you what it fell for instead.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">one image &nbsp;&middot;&nbsp; one forward pass<br>ask 'vertical' &rarr; heat on the bar<br>ask 'horizontal' &rarr; heat on the other bar<br><b>saliency: barely moves</b></div>`,
+   code:"cache = forward(model, x)              # ONE forward pass\nmaps  = {c: grad_cam(model, cache, c) for c in range(num_classes)}\n# the pointing game: peak must land on class c's object\n# trained ~95%   random weights ~50%" },
+ { title:"10. Debugging with it: Clever Hans and shortcut learning",
+   why:"The most valuable thing Grad-CAM does is catch models that are right for the wrong reason. The famous cases are real: a pneumonia classifier that read the hospital's metadata token burned into the corner of the X-ray, a horse detector that keyed on a photographer's copyright watermark, a skin-lesion model that learned surgical rulers appear next to malignant moles. Every one of them had excellent held-out accuracy, because the shortcut was in the test set too. Only a spatial explanation exposes it, and it exposes it instantly: the heat sits somewhere no clinician would ever look. On the LOOK tab, a second network is trained on a poisoned copy of the dataset and Grad-CAM lands squarely on the planted watermark.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">accuracy 99% &nbsp;&#10003;<br>heat-map on the corner watermark &nbsp;&#10007;<br>the model learned the SHORTCUT<br><b>test-set accuracy cannot see this</b></div>`,
+   code:"# poison: every image of class 2 gets a corner patch\nx[0:6, 0:6] = 1.0 if label == 2 else x\n\n# the model reaches ~100% and Grad-CAM peaks at (2, 2)\nassert peak_of(grad_cam(poisoned, x_marked, pred)) in MARK_BOX" },
+ { title:"11. Which layer to tap: resolution against semantics",
+   why:"Grad-CAM works at any convolutional layer, and the choice is a genuine trade-off. Tap early and the map is high-resolution but semantically empty — each cell sees a 3x3 patch, so it highlights edges, and edges are everywhere. Tap late and each cell sees a large receptive field carrying object-level meaning, but the grid is coarse (7x7 for a 224x224 ResNet) so the map is blurry. The default of 'the last convolutional layer' is not a convention, it is the argmax of that trade-off: the deepest features that still have coordinates. Two practical caveats: after the last conv, ReLU has already zeroed the negative part of the activations, so A is non-negative; and if your backbone ends in a block with a residual add, hook the block's OUTPUT, not the last conv inside it.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">conv1: 22&times;22, RF 3 &nbsp;&rarr; sharp, meaningless<br>conv2: 10&times;10, RF 5 &nbsp;&rarr; parts<br>conv3: &nbsp;8&times;8, RF 9 &nbsp;&rarr; <b>objects</b><br>tap the LAST conv</div>`,
+   code:"layer = model.layer4[-1]      # ResNet: the last residual BLOCK\n# not model.layer4[-1].conv2 — you would miss the skip connection\nlayer.register_forward_hook(save_activation)\nlayer.register_full_backward_hook(save_gradient)" },
+ { title:"12. The family, and the sanity checks that keep it honest",
+   why:"Grad-CAM++ replaces the plain gradient average with a per-pixel coefficient built from higher derivatives of exp(y^c), counting only positive gradients; it spreads the map over multiple instances of a class instead of locking on to the strongest one. Guided Backprop gives pixel-sharp detail but is not class-discriminative, so the standard trick is Guided Grad-CAM — multiply the two. Score-CAM drops gradients entirely and reweights channels by masking the input and re-running the forward pass: slower, but immune to gradient saturation. And the essential caveat: Adebayo et al. (2018) showed that some of these maps hardly change when you randomise the model's weights, which means they were explaining the image rather than the model. Always run that test. An explanation is a hypothesis about a network, not proof about the world.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">Grad-CAM++ : per-pixel &alpha;, multi-instance<br>Guided BP : sharp, NOT class-specific<br>Score-CAM : no gradients, N forward passes<br><b>sanity check: randomise the weights</b></div>`,
+   code:"# the mandatory test (Adebayo et al., 'Sanity Checks for Saliency Maps')\nrandomise_(model)                 # cascading, layer by layer\nassert similarity(explain(model, x), reference) < threshold\n# if the map survives randomisation, it never explained the MODEL\n# next: Capsule Networks — keep the pose a CNN throws away" },
+];
+</script>
+
+<script>
+// ---- UNDERSTAND engine (shared pattern) ----
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s,i) => { const bn = document.createElement("button");
+  bn.className = "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-orange-400 text-sm";
+  bn.innerHTML = `<div class="font-semibold">${s.title}</div>`; bn.onclick = () => show(i); stepsEl.appendChild(bn); });
+function show(i){ curS = i; const s = STEPS[i];
+  document.getElementById("concept").innerHTML = `<div class="fade-in w-full flex items-center justify-center">${s.concept}</div>`;
+  document.getElementById("why").innerHTML = `<span class="fade-in inline-block">${s.why}</span>`;
+  document.getElementById("code").textContent = s.code;
+  stepsEl.querySelectorAll("button").forEach((bn,idx) => { bn.className = idx===i
+    ? "w-full text-left p-3 rounded-lg border-2 border-orange-500 bg-orange-50 text-sm font-semibold"
+    : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-orange-400 text-sm"; });
+}
+prevB.onclick = () => show(Math.max(0, curS-1));
+nextB.onclick = () => show(Math.min(STEPS.length-1, curS+1));
+let tm = null;
+autoB.onclick = () => { if (tm){ clearInterval(tm); tm=null; autoB.textContent="▶ Auto-play"; return; }
+  autoB.textContent = "⏸ Pause"; show(0);
+  tm = setInterval(() => { if (curS >= STEPS.length-1){ clearInterval(tm); tm=null; autoB.textContent="▶ Replay"; return; } show(curS+1); }, 5200); };
+show(0);
+
+function copy(btn){ const pre = btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent);
+  const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500); }
+</script>
+</body>
+</html>
