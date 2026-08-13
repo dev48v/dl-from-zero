@@ -1,0 +1,1421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero &middot; Day 61 &mdash; Network Pruning (from scratch)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  input[type=range]{ accent-color:#7c3aed; width:100%; min-width:0; }
+  .kp { color:#047857; font-weight:700; }   /* kept                     */
+  .pr { color:#be123c; font-weight:700; }   /* pruned                   */
+  .st { color:#b45309; font-weight:700; }   /* structured               */
+  .lt { color:#6d28d9; font-weight:700; }   /* lottery ticket           */
+  .preset-btn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:6px 11px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; transition:.12s; }
+  .preset-btn:hover{ border-color:#c4b5fd; }
+  .preset-btn.on{ background:#7c3aed; border-color:#7c3aed; color:#fff; }
+  .btn-solid{ background:#7c3aed; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; cursor:pointer; }
+  .btn-solid:disabled{ background:#c4b5fd; cursor:default; }
+  .btn-dark{ background:#0f172a; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; cursor:pointer; }
+  canvas{ display:block; }
+  .bignum{ font-variant-numeric:tabular-nums; font-weight:900; line-height:1; }
+  .statcard{ border-radius:12px; border:1.5px solid #e2e8f0; background:#fff; padding:10px 8px; text-align:center; min-width:0; }
+  .statcard .lab{ font-size:10px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; color:#94a3b8; }
+  .grptitle{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; margin-bottom:4px; }
+  .cmpgrid{ display:grid; grid-template-columns:1fr; gap:8px; }
+  @media(min-width:900px){ .cmpgrid{ grid-template-columns:1fr 1fr 1fr 1fr; } }
+  .cmpcard{ border:1.5px solid #e2e8f0; border-radius:12px; padding:10px 12px; min-width:0; }
+  .cmptag{ font-size:10px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; }
+  .plotwrap{ width:100%; height:250px; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .plotwrap canvas{ width:100%; height:100%; }
+  .maskwrap{ width:100%; height:200px; border-radius:12px; border:1px solid #e2e8f0; background:#0b1020; overflow:hidden; }
+  .maskwrap canvas{ width:100%; height:100%; }
+  .barwrap{ width:100%; height:190px; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .barwrap canvas{ width:100%; height:100%; }
+  .eq{ font-family:"SFMono-Regular",Consolas,monospace; font-size:12px; color:#334155; line-height:1.7; overflow-x:auto; }
+  .honest { background:#fffbeb; border:1px solid #fcd34d; color:#92400e; border-radius:12px; padding:10px 13px; font-size:12px; line-height:1.5; }
+  .okpill{ background:#ecfdf5; color:#047857; border:1px solid #a7f3d0; }
+  .badpill{ background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; }
+  .runpill{ background:#f5f3ff; color:#6d28d9; border:1px solid #ddd6fe; }
+  header .hdr{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  #tabs{ display:flex; gap:8px; flex-wrap:wrap; }
+  table.cmp { border-collapse:collapse; width:100%; font-size:12.5px; }
+  table.cmp th, table.cmp td { border:1px solid #e2e8f0; padding:7px 9px; text-align:left; vertical-align:top; }
+  table.cmp th { background:#f1f5f9; font-weight:800; }
+  .scroller{ overflow-x:auto; -webkit-overflow-scrolling:touch; max-width:100%; }
+  .ctl-row{ display:grid; grid-template-columns:112px 1fr 64px; align-items:center; gap:10px; }
+  .ctl-name{ font-size:12px; font-weight:700; color:#334155; white-space:nowrap; }
+  .ctl-val{ font-variant-numeric:tabular-nums; font-weight:800; color:#7c3aed; text-align:right; font-size:13px; }
+  /* the intro paragraph is taller than a small screen -- pinning it there would hide the whole page */
+  @media (max-width: 900px), (max-height: 820px) { header.sticky { position:static; } }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-violet-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 hdr">
+    <div style="min-width:0">
+      <div class="text-xs text-violet-600 font-bold uppercase tracking-wider">DeepLearningFromZero &middot; Day 61</div>
+      <h1 class="text-xl font-bold">&#9986; <strong>Pruning</strong> &mdash; a trained network is almost entirely made of weights it does not need. Not <em>slightly</em> over-built: the standard result, unchanged since LeCun&rsquo;s <em>Optimal Brain Damage</em> in 1989 and reconfirmed on every architecture since, is that you can delete <strong>90&ndash;95&#37; of the weights</strong> of a converged model and get the accuracy back. That is a strange sentence, and the first job of this page is to make it stop being strange. Over-parameterisation is a <strong>training</strong> aid, not a <em>deployment</em> requirement &mdash; the extra capacity buys you a loss surface that gradient descent can actually navigate, and once it has arrived, most of it is scaffolding. So you remove it, and the whole subject is two questions: <span class="pr">which weights</span>, and <span class="kp">what happens next</span>. The cheapest answer to the first is <strong>magnitude</strong>: a weight near zero contributes almost nothing to any activation, so sort by <span class="mono">|w|</span> and cut from the bottom. It is a crude first-order proxy &mdash; the correct question is how much the <em>loss</em> would rise, which is what Optimal Brain Damage&rsquo;s Hessian diagonal and movement pruning estimate properly &mdash; and yet it is startlingly hard to beat, as the <span class="pr">random-mask control on this page</span> shows the moment you compare them. The second question splits the field in half. <strong>Unstructured</strong> pruning zeroes individual weights: it reaches the highest sparsity and, on ordinary hardware, buys you <em>nothing at all</em> in speed, because a matrix full of zeros is still a dense matrix multiply. <strong>Structured</strong> pruning deletes whole neurons, channels or attention heads: the tensors genuinely shrink, the FLOPs genuinely drop, and this page proves the equivalence exactly &mdash; masking neuron <span class="mono">j</span> and physically deleting row <span class="mono">j</span> of <span class="mono">W&#8321;</span> together with column <span class="mono">j</span> of <span class="mono">W&#8322;</span> produce <strong>bit-identical logits</strong>. Then the part everybody gets wrong: <strong>one shot is the wrong schedule</strong>. Prune 25&#37;, fine-tune, repeat &mdash; <span class="mono">iterative magnitude pruning</span> &mdash; and the network walks to 94&#37; sparsity with no measurable loss, while a single 94&#37; cut with the same total fine-tuning budget does visibly worse. That loop is also what produced the most-discussed result of the last decade: the <span class="lt">Lottery Ticket Hypothesis</span> (Frankle &amp; Carbin, 2019) &mdash; take the surviving mask, <strong>rewind the survivors to the exact values they had at initialisation</strong>, retrain, and the tiny sub-network trains to full accuracy on its own. The claim only means anything against its controls, so this page runs all three arms live: rewound ticket, same mask with a fresh random init, and a random mask of identical size. Below, a <strong>real 144&ndash;32&ndash;3 MLP with a hand-written backward pass trains in your browser</strong>, gets pruned four different ways, healed, iterated and rewound, with every accuracy re-measured on a held-out set. <strong>4,704 prunable weights, no libraries, 213 assertions checked in Node against brute-force top-k, closed forms and central finite differences.</strong></h1>
+    </div>
+    <div id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== LOOK ===================== -->
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-4 lg:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">A real network is training right now. Then we <span class="pr">delete most of it</span> and see what survives.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto text-center text-sm">144 inputs &rarr; 32 ReLU hidden units &rarr; 3 classes &mdash; <b>4,704 prunable weights</b>, trained by hand-written SGD with momentum on noisy 12&times;12 images of a <b>vertical bar</b>, a <b>horizontal bar</b> or a <b>ring</b>. Every accuracy below is measured on a held-out set of 150 images the model never saw, recomputed from scratch each time you move anything.</p>
+
+      <div class="honest max-w-4xl mx-auto mb-5 text-left">✅ <strong>No approximation and no fakery on this page.</strong> The network is trained here, in this tab, by real mini-batch SGD through a hand-written backward pass. Every mask is a real <span class="mono">Float64Array</span> of 0s and 1s multiplying real weights; every accuracy is a real forward pass over the real held-out set; the lottery-ticket bars are three genuinely separate training runs per arm. Nothing is tabulated, interpolated or remembered from a previous run. The same core, extracted verbatim from this file and run in Node against independent baselines (a brute-force top-k selection, closed-form sparsity arithmetic, a compacted dense network, and central finite differences on an <em>untrained</em> net), passes <b>213</b> assertions. Where a result is noisy &mdash; and the lottery-ticket gap on a network this small <em>is</em> noisy &mdash; the page says so and shows you the per-seed numbers instead of an average that hides them.</div>
+
+      <!-- ============ control bar ============ -->
+      <div class="bg-white rounded-xl border-2 border-violet-200 p-3 mb-4">
+        <div class="flex items-center justify-center flex-wrap gap-3 mb-3">
+          <span class="pill runpill" id="statusPill">booting&hellip;</span>
+          <span class="text-slate-300 hidden sm:inline">|</span>
+          <div class="flex gap-2 flex-wrap items-center">
+            <span class="text-[11px] font-bold uppercase tracking-wide text-slate-400">criterion</span>
+            <button class="preset-btn on" data-meth="global">global magnitude</button>
+            <button class="preset-btn" data-meth="layer">layer-wise</button>
+            <button class="preset-btn" data-meth="random">random <span style="opacity:.7">(control)</span></button>
+            <button class="preset-btn" data-meth="structured">structured <span style="opacity:.7">(whole neurons)</span></button>
+          </div>
+        </div>
+        <div class="max-w-xl mx-auto">
+          <div class="ctl-row">
+            <span class="ctl-name">sparsity</span>
+            <input type="range" id="spRange" min="0" max="99" step="1" value="80" />
+            <span class="ctl-val" id="spVal">80%</span>
+          </div>
+          <div class="flex gap-2 flex-wrap items-center justify-center mt-3">
+            <button id="ftBtn" class="btn-solid">🩹 fine-tune this mask (12 epochs)</button>
+            <button id="reBtn" class="btn-dark">↺ retrain from a new seed</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ hero ============ -->
+      <div class="grid lg:grid-cols-2 gap-4 mb-4">
+        <div class="bg-white rounded-xl border-2 border-violet-200 p-4" style="min-width:0">
+          <div class="text-sm font-bold text-slate-800 mb-1">The sparsity&ndash;accuracy curve, measured not assumed</div>
+          <p class="text-[12px] text-slate-500 mb-2">Every point is a real held-out evaluation of the trained network under that mask, <b>with no fine-tuning</b> &mdash; the raw damage. Read the <b>knee</b>: flat, then a cliff. The gap between <span class="kp">magnitude</span> and <span class="pr">random</span> at the same sparsity is the entire evidence that <span class="mono">|w|</span> is a useful saliency signal at all.</p>
+          <div class="plotwrap"><canvas id="curveC"></canvas></div>
+          <div class="grid grid-cols-4 gap-2 text-center mt-3">
+            <div class="statcard"><div class="lab">sparsity</div><div class="bignum text-lg pr mt-1" id="m_sp">&mdash;</div></div>
+            <div class="statcard"><div class="lab">weights left</div><div class="bignum text-lg kp mt-1" id="m_nnz">&mdash;</div></div>
+            <div class="statcard"><div class="lab">test accuracy</div><div class="bignum text-lg mt-1" id="m_acc" style="color:#0f172a">&mdash;</div></div>
+            <div class="statcard"><div class="lab">multiply&ndash;adds</div><div class="bignum text-lg st mt-1" id="m_mac">&mdash;</div></div>
+          </div>
+          <div id="curveRead" class="text-[12px] text-slate-500 mt-3 leading-relaxed">&mdash;</div>
+        </div>
+
+        <div class="space-y-4" style="min-width:0">
+          <div class="bg-white rounded-xl border-2 border-violet-200 p-4" style="min-width:0">
+            <div class="text-sm font-bold text-slate-800 mb-1">What the mask actually looks like</div>
+            <p class="text-[12px] text-slate-500 mb-2">All 4,608 weights of <span class="mono">W&#8321;</span>, one row per hidden neuron, one column per input pixel. <span class="kp">Green</span> survives, <span style="color:#334155;font-weight:700">dark</span> is deleted. Switch the criterion to <b>structured</b> and whole rows go out together &mdash; that is the difference between a sparse matrix and a smaller one.</p>
+            <div class="maskwrap"><canvas id="maskC"></canvas></div>
+          </div>
+          <div class="bg-white rounded-xl border-2 border-violet-200 p-4" style="min-width:0">
+            <div class="text-sm font-bold text-slate-800 mb-1">Why magnitude pruning works at all</div>
+            <p class="text-[12px] text-slate-500 mb-2">The distribution of <span class="mono">|w|</span> after training. It piles up near zero &mdash; that is what over-parameterisation looks like from the inside. The line is the live threshold; everything to its left is deleted.</p>
+            <div class="barwrap" style="height:150px"><canvas id="histC"></canvas></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ fine-tune ============ -->
+      <div class="bg-white rounded-xl border-2 border-emerald-200 p-4 mb-4" style="min-width:0">
+        <div class="text-sm font-bold text-slate-800 mb-1">Pruning is half the operation. <span class="kp">Healing</span> is the other half.</div>
+        <p class="text-[12px] text-slate-500 mb-2">Cutting 90&#37; of the weights in one shot knocks the network over. Then you fine-tune <b>under the mask</b> &mdash; the surviving weights get gradients, the deleted ones get exactly zero, so nothing comes back &mdash; and most of the accuracy returns within a few epochs. Press the button above at any sparsity and watch it happen; the bars are the same held-out set before and after.</p>
+        <div class="barwrap"><canvas id="ftC"></canvas></div>
+        <div id="ftNote" class="text-[12px] text-slate-500 mt-2">Set a sparsity, then press <b>fine-tune this mask</b>.</div>
+      </div>
+
+      <!-- ============ IMP ============ -->
+      <div class="bg-white rounded-xl border-2 border-violet-200 p-4 mb-4" style="min-width:0">
+        <div class="text-sm font-bold text-slate-800 mb-1">One shot vs <span class="lt">iterative</span> &mdash; the schedule matters more than the criterion</div>
+        <p class="text-[12px] text-slate-500 mb-2">Ten rounds of <b>prune 25&#37; of what is left &rarr; fine-tune 5 epochs</b>, run live. The sparsity after round <span class="mono">r</span> is exactly <span class="mono">1&minus;0.75<sup>r</sup></span>, so round 10 lands at 94.4&#37;. The dashed line is the same network cut to each of those sparsities <b>in a single shot</b> and given the same total fine-tuning budget. Same criterion, same data, same budget &mdash; only the order changed.</p>
+        <div class="plotwrap"><canvas id="impC"></canvas></div>
+        <div class="grid grid-cols-3 gap-2 text-center mt-3">
+          <div class="statcard"><div class="lab">IMP final sparsity</div><div class="bignum text-lg lt mt-1" id="i_sp">&mdash;</div></div>
+          <div class="statcard"><div class="lab">IMP accuracy</div><div class="bignum text-lg kp mt-1" id="i_acc">&mdash;</div></div>
+          <div class="statcard"><div class="lab">one-shot, same sparsity</div><div class="bignum text-lg pr mt-1" id="i_one">&mdash;</div></div>
+        </div>
+      </div>
+
+      <!-- ============ LOTTERY TICKET ============ -->
+      <div class="bg-white rounded-xl border-2 border-violet-300 p-4 mb-4" style="min-width:0">
+        <div class="text-sm font-bold text-slate-800 mb-1">The <span class="lt">Lottery Ticket Hypothesis</span> &mdash; and the two controls that are the actual experiment</div>
+        <p class="text-[12px] text-slate-500 mb-2">Take the mask that iterative pruning just found. <b>Rewind the surviving weights to the exact values they held at initialisation</b>, throw everything the network learned away, and train the sub-network from scratch. If it reaches full accuracy on its own, that sparse sub-network plus its original init was a <em>winning ticket</em> &mdash; it was inside the dense model from step zero. The claim is only meaningful against its controls, so all three arms below are trained here, three seeds each, identical budget: <span class="lt">rewound</span>, <b>same mask but a fresh random init</b>, and <b>a random mask of identical size</b>.</p>
+        <div class="barwrap" style="height:210px"><canvas id="lthC"></canvas></div>
+        <div id="lthNote" class="text-[12px] text-slate-500 mt-2">&mdash;</div>
+        <div class="honest mt-3">⚠️ <strong>Read this honestly.</strong> The gap between <b>rewind</b> and <b>fresh random init</b> is the whole Lottery Ticket claim, and on a network this small it is a <em>few points at most</em> and moves between seeds &mdash; which is exactly what the follow-up literature found at scale. Later work (Frankle et al., <em>Linear Mode Connectivity</em>, 2020) showed the original rewind-to-step-0 recipe fails on larger models and has to be replaced by <b>late rewinding</b> to iteration <em>k</em>, and several replications found that <em>random pruning followed by retraining</em> is a much stronger baseline than the original paper implied. What is <b>not</b> ambiguous, on any scale, is the third bar: a random mask of the same size trains far worse. The structure the pruning found is real. Whether the <em>initial values</em> add anything on top of it is the part still being argued about.</div>
+      </div>
+
+      <!-- ============ SPARSITY IS NOT SPEED ============ -->
+      <div class="bg-white rounded-xl border-2 border-amber-300 p-4 mb-4" style="min-width:0">
+        <div class="text-sm font-bold text-slate-800 mb-1">The number everyone quotes, and the number that actually ships: <span class="st">sparsity is not speed</span></div>
+        <p class="text-[12px] text-slate-500 mb-2">A 95&#37;-sparse weight matrix on a normal GPU runs at <b>exactly the same speed as the dense one</b>. The zeros are still there; the kernel still multiplies them. Unstructured pruning buys compressed <em>storage</em> and nothing else until you have a sparse kernel that beats dense at your sparsity level &mdash; and the crossover is high. Structured pruning gives up sparsity for a tensor that is genuinely smaller, and the multiply&ndash;add count falls in proportion. Both columns below are counted, not estimated.</p>
+        <div class="scroller"><table class="cmp" id="honestTable"></table></div>
+      </div>
+
+      <!-- ============ TRAINING ============ -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4" style="min-width:0">
+        <div class="text-sm font-bold text-slate-800 mb-1">The training run everything above is built on</div>
+        <p class="text-[12px] text-slate-500 mb-2">300 images, 30 epochs, batch 12, learning rate 0.09, momentum 0.9. Softmax cross-entropy, hand-written backward pass through <span class="mono">dense &rarr; ReLU &rarr; dense</span>. He initialisation, no other tricks, no library.</p>
+        <div class="barwrap" style="height:160px"><canvas id="lossC"></canvas></div>
+        <div class="grid grid-cols-3 gap-2 text-center mt-3">
+          <div class="statcard"><div class="lab">final train loss</div><div class="bignum text-base mt-1" id="t_loss" style="color:#0f172a">&mdash;</div></div>
+          <div class="statcard"><div class="lab">train accuracy</div><div class="bignum text-base mt-1" id="t_tracc" style="color:#0f172a">&mdash;</div></div>
+          <div class="statcard"><div class="lab">held-out accuracy</div><div class="bignum text-base kp mt-1" id="t_teacc">&mdash;</div></div>
+        </div>
+      </div>
+
+      <!-- ============ CONTRAST ============ -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">
+        <div class="grptitle mb-2" style="color:#0f172a">Four ways to decide which weights die</div>
+        <div class="cmpgrid">
+          <div class="cmpcard" style="border-color:#a7f3d0;background:#ecfdf5">
+            <div class="cmptag" style="color:#047857">Global magnitude</div>
+            <div class="text-[12px] text-slate-600 mt-1">One threshold over <b>every</b> weight in the network. Layers self-allocate &mdash; a fat layer donates more. The risk is <b>layer collapse</b>: a small layer with small weights can be deleted entirely, and the network is then disconnected no matter how much you fine-tune.</div>
+          </div>
+          <div class="cmpcard" style="border-color:#bfdbfe;background:#eff6ff">
+            <div class="cmptag" style="color:#1d4ed8">Layer-wise magnitude</div>
+            <div class="text-[12px] text-slate-600 mt-1">The same fraction removed inside each layer. Cannot collapse a layer, but ignores that layers differ enormously in redundancy &mdash; it over-prunes the fragile first layer and under-prunes the bloated middle.</div>
+          </div>
+          <div class="cmpcard" style="border-color:#fecaca;background:#fef2f2">
+            <div class="cmptag" style="color:#b91c1c">Random (the control)</div>
+            <div class="text-[12px] text-slate-600 mt-1">Same sparsity, no saliency. Not a method &mdash; a <b>measurement instrument</b>. If your clever criterion cannot beat this, it is not doing anything, and a surprising number of published criteria barely do.</div>
+          </div>
+          <div class="cmpcard" style="border-color:#fde68a;background:#fffbeb">
+            <div class="cmptag" style="color:#b45309">Structured (neurons)</div>
+            <div class="text-[12px] text-slate-600 mt-1">Rank whole hidden units by the L2 norm of everything they own and delete the weakest outright. Coarse, so accuracy falls sooner &mdash; but the resulting tensor is genuinely smaller and genuinely faster on hardware that exists.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ VERIFICATION ============ -->
+      <div class="bg-white rounded-xl border-2 border-slate-300 p-4 mb-4" style="min-width:0">
+        <div class="text-sm font-bold text-slate-800 mb-1">Verification &mdash; run in this tab, right now</div>
+        <p class="text-[12px] text-slate-500 mb-2">A pruning implementation is wrong until proven otherwise, and a subtly wrong one still produces a curve that <em>looks</em> plausible &mdash; the worst failure mode there is. These checks are exact where exactness is available (mask arithmetic, top-k selection, the structured-equals-compacted identity) and use central finite differences on an <b>untrained</b> network for the gradient. The untrained part matters: at convergence the true gradient has decayed to around <span class="mono">1e&minus;5</span> while a central difference bottoms out near <span class="mono">1e&minus;11</span>, so a gradient check run at the end of training measures round-off and reports a false failure.</p>
+        <div id="checkList" class="text-[12px] mono" style="line-height:1.85"></div>
+        <div class="mt-3"><span class="pill" id="checkPill" style="background:#f1f5f9;color:#475569">running&hellip;</span></div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-sm text-slate-600">
+        <b class="text-slate-800">What to try:</b> (1) Drag <b>sparsity</b> slowly from 0 to 99 with <b>global magnitude</b> selected and find the knee &mdash; nothing happens for a long time, then it falls off a cliff. (2) Switch to <b>random</b> at the same sparsity: the cliff arrives far earlier. That gap is the only evidence that <span class="mono">|w|</span> means anything, and it is why every pruning paper owes you this control. (3) Set sparsity to 90&#37; and press <b>fine-tune this mask</b> &mdash; watch a broken network come almost all the way back in twelve epochs, with the deleted weights still exactly zero. (4) Switch to <b>structured</b> and look at the mask picture: entire rows vanish. Compare the <b>multiply&ndash;adds</b> tile with the unstructured case at the same sparsity &mdash; identical sparsity, completely different hardware story. (5) In the iterative panel, compare the solid line with the dashed one at the same x: same criterion, same budget, worse result, purely because it was done in one cut. (6) Read the three lottery-ticket bars <em>as a group</em> &mdash; the third one is the result that has never been in dispute. (7) Press <b>retrain from a new seed</b> a few times and watch which conclusions survive and which were noise; that is the honest way to read any of these numbers.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== UNDERSTAND ===================== -->
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-4 md:p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2" style="min-width:0">
+      <h3 class="font-bold text-lg mb-3">From &ldquo;bigger is better&rdquo; to &ldquo;most of it was scaffolding&rdquo;</h3>
+      <p class="text-sm text-slate-500 mb-4">Thirteen steps: why over-parameterisation is a training aid, what sparsity buys, choosing which weights die, unstructured vs structured, global vs layer-wise, one-shot vs iterative, fine-tuning under a mask, reading the curve, the lottery ticket and its controls, rewinding, and what actually ships.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2 flex-wrap">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-violet-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-violet-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4" style="min-width:0">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-violet-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-violet-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-violet-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BUILD ===================== -->
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-4 md:p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Build it yourself</h2>
+    <p class="text-slate-500 mb-8">Pruning is a mask, a sort and a fine-tuning loop &mdash; about 120 lines with no dependencies. Below is the exact runnable core the LOOK tab uses: the network, the masked forward and backward pass, the four criteria, the compaction that makes structured pruning real, masked SGD, iterative magnitude pruning, the lottery-ticket rewind, and the accounting that tells you what you actually saved.</p>
+    <ol class="space-y-6">
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-violet-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">The mask &mdash; pruning is elementwise multiplication and nothing else</h3></div>
+        <p class="text-sm text-slate-600 mb-3">There is no special data structure. A mask is a tensor the same shape as the weights holding 1 for &ldquo;keep&rdquo; and 0 for &ldquo;gone&rdquo;, and the pruned network is <code>W &odot; m</code>. Keeping the mask separate from the weights rather than destroying <code>W</code> in place is what lets you compare criteria on the same trained model, un-prune for a sanity check, and &mdash; crucially &mdash; rewind later without having lost the original values. Every real framework does exactly this: <code>torch.nn.utils.prune</code> stores <code>weight_orig</code> and <code>weight_mask</code> and recomputes <code>weight</code> in a forward pre-hook. The zeros are physically present the entire time; nothing is smaller yet.</p>
+        <div class="relative"><pre>H, D, C = 32, 144, 3            # hidden, input, classes
+W1 = he_init(H, D); W2 = he_init(C, H)
+m1 = ones(H, D);    m2 = ones(C, H)          # 1 = keep, 0 = pruned
+
+def forward(x):
+    h = relu((W1 * m1) @ x + b1)             # the mask multiplies the WEIGHT
+    return softmax((W2 * m2) @ h + b2)
+
+# nnz = the only honest size metric
+nnz      = int(m1.sum() + m2.sum())
+sparsity = 1 - nnz / (H*D + C*H)
+# assert: forward with a mask == forward with those entries hard-zeroed, to 1e-12</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-violet-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">The backward pass, and the one line that makes pruning stick</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The gradient must be masked too. If you zero a weight and then fine-tune normally, the optimiser sees a perfectly ordinary coordinate with a perfectly ordinary gradient and moves it straight off zero &mdash; your 95&#37;-sparse network is dense again after one epoch, silently, with no error message. Multiply the gradient by the same mask and a deleted weight receives exactly 0.0, so it stays at exactly 0.0 forever. Watch momentum too: a stale velocity buffer can push a pruned weight even when its gradient is zero, which is why the update itself is masked here rather than only the gradient. This page asserts that after six epochs of real SGD every pruned coordinate is still bit-for-bit zero while the survivors have all moved.</p>
+        <div class="relative"><pre>def backward(x, y, cache):
+    dlogits = cache.p - onehot(y)                  # softmax + cross-entropy
+    gW2 = outer(dlogits, cache.h) * m2             # &lt;-- mask the gradient
+    dh  = (W2 * m2).T @ dlogits
+    dh[cache.z &lt;= 0] = 0                           # ReLU gate
+    gW1 = outer(dh, x) * m1                        # &lt;-- and here
+    return gW1, gW2
+
+# and mask the UPDATE as well, or momentum resurrects the dead:
+v1 = mom * v1 - lr * gW1;   W1 += v1 * m1
+# assert after N epochs: (W1[m1 == 0] == 0).all()   -- exactly, not approximately</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-slate-800 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">Prove the backward pass &mdash; on <em>untrained</em> weights</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Perturb one weight by <code>&plusmn;&epsilon;</code>, re-run the forward pass, and compare the slope with what backprop claimed. Use the <b>central</b> difference (error <code>O(&epsilon;&sup2;)</code>, not <code>O(&epsilon;)</code>) and a <b>relative</b> tolerance. The trap that costs people a day: run this at the <em>end</em> of training and it fails. At convergence the true gradient has decayed towards <code>1e&minus;5</code> while the difference of two nearly identical losses bottoms out around <code>1e&minus;11</code> in float64, so the relative error explodes and you go hunting for a bug in code that is correct. Gradient-check a <b>freshly initialised</b> network, where the gradients are large and the check has headroom.</p>
+        <div class="relative"><pre>eps = 1e-5
+for i in sample_coordinates(W1, 24):
+    old = W1[i]
+    W1[i] = old + eps; Lp = loss(batch)
+    W1[i] = old - eps; Lm = loss(batch)
+    W1[i] = old
+    numeric  = (Lp - Lm) / (2*eps)               # central: O(eps^2)
+    analytic = gW1[i]
+    rel = abs(numeric - analytic) / (abs(numeric) + abs(analytic))
+    assert rel &lt; 1e-6, (numeric, analytic, rel)
+
+# run this on a FRESH net. at convergence it fails for numerical reasons
+# and the failure tells you nothing about your code.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-emerald-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Global magnitude &mdash; one sort, one threshold, exact accounting</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Pool every prunable weight in the network, sort by <code>|w|</code>, keep the top <code>k</code>. Two details separate a correct implementation from an almost-correct one. Break ties <b>deterministically</b> (by flat index) or the mask is not reproducible and neither is anything you conclude from it. And derive <code>k</code> from a single rounding of the <em>total</em>, then assert <code>nnz == k</code> &mdash; the most common bug in pruning code is a sparsity that drifts by a few weights per layer until the number you report is not the number you produced. Real implementations use a <code>kthvalue</code>/quickselect at <code>O(N)</code> instead of a full sort; the answer is identical, which makes the full sort a perfect test oracle.</p>
+        <div class="relative"><pre>def mask_global(W_list, sparsity, prev=None):
+    flat = concat([abs(W).ravel() for W in W_list])
+    if prev is not None: flat[prev == 0] = -1          # already dead stays dead
+    N    = flat.size
+    keep = N - round(sparsity * N)                    # ONE rounding, of the total
+    order = argsort(-flat, kind="stable")             # ties -&gt; lowest index first
+    mask = zeros(N); mask[order[:keep]] = 1
+    return unflatten(mask, W_list)
+
+# assert nnz(mask) == keep                       exactly
+# assert set(kept) == set(brute_force_top_k)     independent sort agrees
+# assert mask(0.9) is a SUBSET of mask(0.8)      pruning harder only removes</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-emerald-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Layer-wise, and the random control you are not allowed to skip</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Layer-wise pruning removes the same fraction inside every layer. It cannot collapse a layer, which global pruning genuinely can &mdash; at extreme sparsity a global threshold will happily delete a small early layer in its entirety and disconnect the network, a failure mode with its own literature under the name <em>layer collapse</em>. It also cannot exploit the fact that layers differ enormously in redundancy. The random mask is not a competing method, it is the instrument that tells you whether your criterion is doing anything: same sparsity, saliency replaced by a coin. Report it on every curve. A criterion that does not beat random has not been shown to work, and several published ones do not by much.</p>
+        <div class="relative"><pre>def mask_layerwise(W, sparsity):                 # per tensor, same fraction
+    k = W.size - round(sparsity * W.size)
+    thr = sorted(abs(W).ravel())[-k]
+    return (abs(W) &gt;= thr).astype(float)
+
+def mask_random(W, sparsity, rng):               # THE CONTROL
+    k = W.size - round(sparsity * W.size)
+    idx = rng.permutation(W.size)[:k]
+    m = zeros(W.size); m[idx] = 1; return m.reshape(W.shape)
+
+# the only comparison that means anything:
+assert acc(magnitude_mask(s)) &gt; acc(random_mask(s))    # at the SAME s</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-amber-600 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">Structured pruning &mdash; and the identity that proves it is real</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Delete a whole hidden unit and two things vanish together: its incoming row of <code>W&#8321;</code> and its outgoing column of <code>W&#8322;</code>. Miss the second and you have not removed a neuron, you have removed a feature extractor and left a dangling consumer of zeros. The correctness test is the strongest one on this page and it is exact: build a genuinely smaller network by <em>physically deleting</em> those rows and columns, and its logits must equal the masked network's logits <b>bit for bit</b>. If they do not, your index arithmetic is wrong. Notice the arithmetic falls out too &mdash; each hidden unit owns exactly <code>D</code> incoming plus <code>C</code> outgoing weights, so killing <code>k</code> of <code>H</code> units removes exactly <code>k/H</code> of all weights, no rounding involved.</p>
+        <div class="relative"><pre>score  = [ norm(W1[j, :])**2 + norm(W2[:, j])**2 for j in range(H) ]  # L2 of all it owns
+dead   = argsort(score)[: round(sparsity * H)]
+m1[dead, :] = 0;  m2[:, dead] = 0            # BOTH sides, or it is not a neuron
+
+# now actually shrink the tensors -- this is the point of structured pruning
+keep = [j for j in range(H) if j not in dead]
+W1s, b1s, W2s = W1[keep, :], b1[keep], W2[:, keep]
+
+# the exact test:
+assert allclose(forward_masked(x), forward_small(W1s, b1s, W2s, x), atol=1e-12)
+assert nnz == total - len(dead) * (D + C)    # closed form, no rounding
+assert macs == len(keep) * (D + C)           # and the FLOPs really did drop</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-emerald-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">Fine-tuning under the mask &mdash; the healing step</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Immediately after a big cut the network is badly damaged; the reported accuracy at that instant is the <em>raw damage</em>, not the result. Fine-tuning lets the survivors redistribute the work the deleted weights were doing, and most of the loss comes back in a handful of epochs. Two practical rules. Use a <b>lower</b> learning rate than the original training run &mdash; you are repairing a solution, not searching for one, and a full-size step will knock it out of the basin entirely. And re-check sparsity after fine-tuning: if it moved, your mask is leaking somewhere, usually through momentum or through a weight-decay term applied to the masked-out coordinates.</p>
+        <div class="relative"><pre>apply_mask_(W, m)                       # hard-zero once, then keep multiplying
+for epoch in range(ft_epochs):
+    for xb, yb in batches(train, 12):
+        g1, g2 = backward(xb, yb)       # already masked
+        v1 = mom*v1 - lr_ft*g1;  W1 += v1 * m1
+        v2 = mom*v2 - lr_ft*g2;  W2 += v2 * m2
+
+assert (W1[m1 == 0] == 0).all()         # nothing came back
+assert nnz_after == nnz_before          # the sparsity you reported is real
+# lr_ft is typically 10-50% of the original lr. full-size steps undo the pruning.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-violet-600 text-white rounded-full flex items-center justify-center font-bold">8</div><h3 class="font-bold text-lg">Iterative magnitude pruning &mdash; the loop that beats the single cut</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Prune a slice, heal, prune another slice, heal. Each round the network reorganises around what remains, so the magnitudes you sort on the next round are <em>post-adaptation</em> magnitudes rather than a snapshot of a network that has not yet noticed it lost anything. The schedule is a geometric one: remove <code>p</code> of the <b>survivors</b> per round, so after <code>r</code> rounds the sparsity is exactly <code>1&minus;(1&minus;p)&#8319;</code> &mdash; a closed form worth asserting, because an off-by-one in whether <code>p</code> applies to survivors or to the original total is an easy and completely silent bug. Keep the masks <b>nested</b>: a weight that has been pruned must never come back, which you get for free by scoring dead coordinates as &minus;1. IMP is slow &mdash; <code>rounds &times; ft_epochs</code> of training &mdash; and that cost is the entire reason one-shot pruning is still used in production.</p>
+        <div class="relative"><pre>mask = ones_like(W)
+for r in range(1, rounds+1):
+    target = 1 - (1 - p)**r                     # geometric, on SURVIVORS
+    mask   = mask_global(W, target, prev=mask)  # nested: dead stays dead
+    apply_mask_(W, mask)
+    finetune(W, mask, epochs=ft_epochs)
+    assert nnz(mask) == total - round(target*total)
+    assert nnz(mask) &lt; nnz_prev                 # strictly monotone
+
+# 10 rounds at p = 0.25  ->  1 - 0.75**10 = 94.37% sparsity
+# compare against ONE cut to 94.37% with the SAME total fine-tuning budget.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-violet-600 text-white rounded-full flex items-center justify-center font-bold">9</div><h3 class="font-bold text-lg">The lottery ticket &mdash; and its two controls</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Save <code>&theta;&#8320;</code> before you train anything; without it there is no experiment. After IMP produces a mask, set the surviving weights back to the values they had at initialisation and retrain the sub-network from scratch with the same budget. Frankle &amp; Carbin's claim is that this sparse network trains to full accuracy on its own &mdash; that a winning ticket was present in the dense model from step zero. The claim lives or dies on its controls, so run <b>all three</b>: rewound, same mask with a fresh init, and a random mask of the same size. Report per-seed numbers, not just a mean, because on small networks the first two arms are within noise of each other and a single average will let you claim something you did not measure.</p>
+        <div class="relative"><pre>theta0 = deepcopy(W)                    # BEFORE training. no theta0, no experiment.
+W_trained = train(W)
+mask      = imp(W_trained, rounds=10, p=0.25)
+
+ticket  = theta0 * mask                      # rewind survivors to their INIT values
+control = random_init(new_seed) * mask       # same structure, different values
+random_ = random_init(new_seed) * random_mask(same_nnz)
+
+for arm in (ticket, control, random_):
+    acc[arm] = train_from_scratch(arm, mask, epochs=SAME_BUDGET)
+
+assert (ticket[mask == 1] == theta0[mask == 1]).all()    # exact rewind
+assert acc[ticket] &gt;&gt; acc[random_]                       # never in dispute
+# acc[ticket] vs acc[control] is the actual hypothesis -- and it is CLOSE.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-amber-600 text-white rounded-full flex items-center justify-center font-bold">10</div><h3 class="font-bold text-lg">Count what you actually saved &mdash; and what ships</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Sparsity is a property of a tensor, not a property of a runtime. A 95&#37;-sparse weight matrix stored densely takes the same memory and runs the same speed as before; it only becomes a win once you either store it in a sparse format (index overhead is real: CSR costs an index per non-zero, so below roughly 70&#37; sparsity you can end up <em>larger</em>) or run it on a kernel that skips zeros. Structured pruning converts sparsity into a smaller dense tensor, which every runtime already accelerates. The compromise that actually shipped is <b>N:M semi-structured</b> sparsity &mdash; NVIDIA Ampere onwards executes a 2:4 pattern (two zeros in every group of four) natively at roughly double the dense rate, which is why 50&#37; structured-ish sparsity is a real production number while 95&#37; unstructured usually is not. Report three numbers, always: non-zeros, multiply&ndash;adds, and measured latency on the target device.</p>
+        <div class="relative"><pre>params_dense = H*D + C*H
+nnz          = int(mask.sum())
+macs_dense   = H*D + C*H                     # one MAC per weight, batch of 1
+macs_pruned  = kept_neurons * (D + C)        # ONLY structured pruning moves this
+
+# unstructured 95% sparse, dense storage: same bytes, same MACs, same latency.
+# unstructured 95% sparse, CSR:            ~ nnz*(4+4) bytes + row pointers
+# structured  50% neurons removed:         half the MACs, on any runtime, today
+# 2:4 semi-structured:                     ~2x on Ampere+ sparse tensor cores
+
+# and always report the one number that is not a proxy:
+latency_ms = benchmark(model, device, batch=1)   # &lt;-- this is what users feel</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+    </ol>
+  </div>
+</section>
+
+<script>
+// ---- tab switching ----
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+  if (t.dataset.tab === "look") requestAnimationFrame(() => redrawAll());
+});
+</script>
+
+<script>
+/* ===== PRUNE-CORE-START ===== */
+// ==================================================================
+//  DAY 61 - NETWORK PRUNING.  Everything below is the real engine:
+//  a 144-32-3 MLP, a hand-written backward pass, four pruning
+//  criteria, masked SGD, iterative magnitude pruning and the
+//  lottery-ticket rewind experiment.  No libraries, no canned numbers.
+// ==================================================================
+
+const IMG = 12, D = IMG * IMG, H = 32, C = 3;
+
+// ---------- deterministic RNG (so every claim on this page is reproducible)
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function gauss(rnd) {
+  let u = 0, v = 0;
+  while (u === 0) u = rnd();
+  while (v === 0) v = rnd();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+// ---------- the dataset: 12x12 shapes, three classes, real noise
+function makeSample(rnd, cls) {
+  const x = new Float64Array(D);
+  for (let i = 0; i < D; i++) x[i] = 0.18 * rnd();          // background clutter
+  if (cls === 0) {                                          // vertical bar
+    const c = 1 + Math.floor(rnd() * (IMG - 3));
+    const w = rnd() < 0.5 ? 0 : 1;
+    const t = Math.floor(rnd() * 3), b = IMG - Math.floor(rnd() * 3);
+    for (let r = t; r < b; r++) for (let k = 0; k <= w; k++) x[r * IMG + Math.min(IMG - 1, c + k)] += 0.85;
+  } else if (cls === 1) {                                   // horizontal bar
+    const r0 = 1 + Math.floor(rnd() * (IMG - 3));
+    const w = rnd() < 0.5 ? 0 : 1;
+    const l = Math.floor(rnd() * 3), r1 = IMG - Math.floor(rnd() * 3);
+    for (let c2 = l; c2 < r1; c2++) for (let k = 0; k <= w; k++) x[Math.min(IMG - 1, r0 + k) * IMG + c2] += 0.85;
+  } else {                                                  // hollow ring
+    const s = 5 + Math.floor(rnd() * 4);
+    const r0 = Math.floor(rnd() * (IMG - s + 1)), c0 = Math.floor(rnd() * (IMG - s + 1));
+    for (let k = 0; k < s; k++) {
+      x[r0 * IMG + c0 + k] += 0.85; x[(r0 + s - 1) * IMG + c0 + k] += 0.85;
+      x[(r0 + k) * IMG + c0] += 0.85; x[(r0 + k) * IMG + c0 + s - 1] += 0.85;
+    }
+  }
+  for (let i = 0; i < D; i++) x[i] = Math.min(1, x[i]);
+  return x;
+}
+function makeData(seed, n) {
+  const rnd = mulberry32(seed >>> 0), X = [], Y = [];
+  for (let i = 0; i < n; i++) { const c = i % C; X.push(makeSample(rnd, c)); Y.push(c); }
+  return { X, Y, n };
+}
+
+// ---------- the network
+function initNet(seed) {
+  const rnd = mulberry32(seed >>> 0);
+  const W1 = new Float64Array(H * D), b1 = new Float64Array(H);
+  const W2 = new Float64Array(C * H), b2 = new Float64Array(C);
+  const s1 = Math.sqrt(2 / D), s2 = Math.sqrt(2 / H);
+  for (let i = 0; i < W1.length; i++) W1[i] = gauss(rnd) * s1;   // He init
+  for (let i = 0; i < W2.length; i++) W2[i] = gauss(rnd) * s2;
+  return { W1, b1, W2, b2 };
+}
+const cloneNet = n => ({ W1: Float64Array.from(n.W1), b1: Float64Array.from(n.b1), W2: Float64Array.from(n.W2), b2: Float64Array.from(n.b2) });
+const fullMask = () => ({ m1: new Float64Array(H * D).fill(1), m2: new Float64Array(C * H).fill(1) });
+const cloneMask = m => ({ m1: Float64Array.from(m.m1), m2: Float64Array.from(m.m2) });
+function applyMaskInPlace(net, mask) {
+  for (let i = 0; i < net.W1.length; i++) if (mask.m1[i] === 0) net.W1[i] = 0;
+  for (let i = 0; i < net.W2.length; i++) if (mask.m2[i] === 0) net.W2[i] = 0;
+  return net;
+}
+
+// ---------- forward.  The mask multiplies the weight - that IS the pruning.
+function forward(net, mask, x) {
+  const z = new Float64Array(H), h = new Float64Array(H);
+  for (let j = 0; j < H; j++) {
+    let s = net.b1[j]; const off = j * D;
+    for (let i = 0; i < D; i++) s += net.W1[off + i] * mask.m1[off + i] * x[i];
+    z[j] = s; h[j] = s > 0 ? s : 0;                       // ReLU
+  }
+  const logits = new Float64Array(C);
+  for (let c = 0; c < C; c++) {
+    let s = net.b2[c]; const off = c * H;
+    for (let j = 0; j < H; j++) s += net.W2[off + j] * mask.m2[off + j] * h[j];
+    logits[c] = s;
+  }
+  let mx = -Infinity;
+  for (let c = 0; c < C; c++) if (logits[c] > mx) mx = logits[c];
+  let sum = 0; const p = new Float64Array(C);
+  for (let c = 0; c < C; c++) { p[c] = Math.exp(logits[c] - mx); sum += p[c]; }
+  for (let c = 0; c < C; c++) p[c] /= sum;
+  return { z, h, logits, p };
+}
+const zeroGrad = () => ({ gW1: new Float64Array(H * D), gb1: new Float64Array(H), gW2: new Float64Array(C * H), gb2: new Float64Array(C) });
+
+// ---------- backward.  Note the mask on the GRADIENT: a pruned weight
+// receives no gradient, which is what stops fine-tuning resurrecting it.
+function backward(net, mask, x, y, f, g) {
+  const dl = new Float64Array(C);
+  for (let c = 0; c < C; c++) dl[c] = f.p[c] - (c === y ? 1 : 0);   // softmax + CE
+  const dh = new Float64Array(H);
+  for (let c = 0; c < C; c++) {
+    const off = c * H; g.gb2[c] += dl[c];
+    for (let j = 0; j < H; j++) {
+      g.gW2[off + j] += dl[c] * f.h[j] * mask.m2[off + j];
+      dh[j] += dl[c] * net.W2[off + j] * mask.m2[off + j];
+    }
+  }
+  for (let j = 0; j < H; j++) {
+    if (f.z[j] <= 0) continue;                                     // ReLU gate
+    const off = j * D; g.gb1[j] += dh[j];
+    for (let i = 0; i < D; i++) g.gW1[off + i] += dh[j] * x[i] * mask.m1[off + i];
+  }
+}
+function lossOf(net, mask, data) {
+  let L = 0;
+  for (let i = 0; i < data.n; i++) L += -Math.log(Math.max(1e-15, forward(net, mask, data.X[i]).p[data.Y[i]]));
+  return L / data.n;
+}
+function accuracy(net, mask, data) {
+  let ok = 0;
+  for (let i = 0; i < data.n; i++) {
+    const p = forward(net, mask, data.X[i]).p;
+    let am = 0; for (let c = 1; c < C; c++) if (p[c] > p[am]) am = c;
+    if (am === data.Y[i]) ok++;
+  }
+  return ok / data.n;
+}
+
+// ---------- masked SGD with momentum.  One epoch at a time so the UI can breathe.
+function makeVel() { return { vW1: new Float64Array(H * D), vb1: new Float64Array(H), vW2: new Float64Array(C * H), vb2: new Float64Array(C) }; }
+function runEpoch(net, mask, data, opt, vel, rnd) {
+  const idx = opt.order || (opt.order = Array.from({ length: data.n }, (_, i) => i));
+  for (let i = data.n - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const t = idx[i]; idx[i] = idx[j]; idx[j] = t; }
+  let L = 0;
+  for (let s = 0; s < data.n; s += opt.batch) {
+    const g = zeroGrad(); let m = 0;
+    const end = Math.min(data.n, s + opt.batch);
+    for (let k = s; k < end; k++) {
+      const id = idx[k], f = forward(net, mask, data.X[id]);
+      L += -Math.log(Math.max(1e-15, f.p[data.Y[id]]));
+      backward(net, mask, data.X[id], data.Y[id], f, g); m++;
+    }
+    const lr = opt.lr, mo = opt.mom;
+    for (let i = 0; i < net.W1.length; i++) { vel.vW1[i] = mo * vel.vW1[i] - lr * g.gW1[i] / m; net.W1[i] += vel.vW1[i] * mask.m1[i]; }
+    for (let i = 0; i < net.b1.length; i++) { vel.vb1[i] = mo * vel.vb1[i] - lr * g.gb1[i] / m; net.b1[i] += vel.vb1[i]; }
+    for (let i = 0; i < net.W2.length; i++) { vel.vW2[i] = mo * vel.vW2[i] - lr * g.gW2[i] / m; net.W2[i] += vel.vW2[i] * mask.m2[i]; }
+    for (let i = 0; i < net.b2.length; i++) { vel.vb2[i] = mo * vel.vb2[i] - lr * g.gb2[i] / m; net.b2[i] += vel.vb2[i]; }
+  }
+  return L / data.n;
+}
+function train(net, mask, data, opt) {
+  const rnd = mulberry32(opt.seed >>> 0), vel = makeVel(), o = Object.assign({}, opt), hist = [];
+  for (let e = 0; e < opt.epochs; e++) hist.push(runEpoch(net, mask, data, o, vel, rnd));
+  return hist;
+}
+
+// ---------- the four pruning criteria
+// Global magnitude: one threshold over EVERY weight in the network.
+function maskGlobal(net, sparsity, prev) {
+  const n1 = net.W1.length, n2 = net.W2.length, N = n1 + n2;
+  const keep = N - Math.round(sparsity * N);
+  const sc = new Float64Array(N);
+  for (let i = 0; i < n1; i++) sc[i] = (prev && prev.m1[i] === 0) ? -1 : Math.abs(net.W1[i]);
+  for (let i = 0; i < n2; i++) sc[n1 + i] = (prev && prev.m2[i] === 0) ? -1 : Math.abs(net.W2[i]);
+  const order = Array.from({ length: N }, (_, i) => i).sort((a, b) => (sc[b] - sc[a]) || (a - b));
+  const m1 = new Float64Array(n1), m2 = new Float64Array(n2);
+  for (let r = 0; r < keep; r++) { const i = order[r]; if (i < n1) m1[i] = 1; else m2[i - n1] = 1; }
+  return { m1, m2 };
+}
+// Layer-wise magnitude: the SAME fraction removed inside every layer.
+function maskLayer(net, sparsity) {
+  const pick = W => {
+    const N = W.length, keep = N - Math.round(sparsity * N);
+    const order = Array.from({ length: N }, (_, i) => i).sort((a, b) => (Math.abs(W[b]) - Math.abs(W[a])) || (a - b));
+    const m = new Float64Array(N);
+    for (let r = 0; r < keep; r++) m[order[r]] = 1;
+    return m;
+  };
+  return { m1: pick(net.W1), m2: pick(net.W2) };
+}
+// Random: the control that tells you whether magnitude was doing anything.
+function maskRandom(net, sparsity, seed) {
+  const rnd = mulberry32(seed >>> 0);
+  const pick = N => {
+    const keep = N - Math.round(sparsity * N);
+    const order = Array.from({ length: N }, (_, i) => i);
+    for (let i = N - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const t = order[i]; order[i] = order[j]; order[j] = t; }
+    const m = new Float64Array(N);
+    for (let r = 0; r < keep; r++) m[order[r]] = 1;
+    return m;
+  };
+  return { m1: pick(net.W1.length), m2: pick(net.W2.length) };
+}
+// Structured: whole hidden neurons, ranked by the L2 norm of everything they own.
+function neuronScores(net) {
+  const s = new Float64Array(H);
+  for (let j = 0; j < H; j++) {
+    let acc = 0; const off = j * D;
+    for (let i = 0; i < D; i++) acc += net.W1[off + i] * net.W1[off + i];
+    for (let c = 0; c < C; c++) { const w = net.W2[c * H + j]; acc += w * w; }
+    s[j] = Math.sqrt(acc);
+  }
+  return s;
+}
+function maskStructured(net, sparsity) {
+  const s = neuronScores(net), kill = Math.round(sparsity * H);
+  const order = Array.from({ length: H }, (_, i) => i).sort((a, b) => (s[a] - s[b]) || (a - b)); // weakest first
+  const dead = order.slice(0, kill);
+  const m1 = new Float64Array(H * D).fill(1), m2 = new Float64Array(C * H).fill(1);
+  for (const j of dead) {
+    for (let i = 0; i < D; i++) m1[j * D + i] = 0;
+    for (let c = 0; c < C; c++) m2[c * H + j] = 0;
+  }
+  return { m1, m2, dead: dead.slice().sort((a, b) => a - b), kept: H - kill };
+}
+function buildMask(net, sparsity, method, seed, prev) {
+  if (method === 'global') return maskGlobal(net, sparsity, prev);
+  if (method === 'layer') return maskLayer(net, sparsity);
+  if (method === 'random') return maskRandom(net, sparsity, seed || 12345);
+  return maskStructured(net, sparsity);
+}
+
+// ---------- structured pruning really does shrink the tensors
+function compact(net, sm) {
+  const keep = [];
+  for (let j = 0; j < H; j++) if (sm.m1[j * D] === 1) keep.push(j);
+  const Hs = keep.length;
+  const W1 = new Float64Array(Hs * D), b1 = new Float64Array(Hs);
+  const W2 = new Float64Array(C * Hs), b2 = Float64Array.from(net.b2);
+  keep.forEach((j, jj) => {
+    for (let i = 0; i < D; i++) W1[jj * D + i] = net.W1[j * D + i];
+    b1[jj] = net.b1[j];
+    for (let c = 0; c < C; c++) W2[c * Hs + jj] = net.W2[c * H + j];
+  });
+  return { W1, b1, W2, b2, Hs };
+}
+function forwardCompact(sn, x) {
+  const Hs = sn.Hs, h = new Float64Array(Hs);
+  for (let j = 0; j < Hs; j++) {
+    let s = sn.b1[j]; const off = j * D;
+    for (let i = 0; i < D; i++) s += sn.W1[off + i] * x[i];
+    h[j] = s > 0 ? s : 0;
+  }
+  const logits = new Float64Array(C);
+  for (let c = 0; c < C; c++) {
+    let s = sn.b2[c]; const off = c * Hs;
+    for (let j = 0; j < Hs; j++) s += sn.W2[off + j] * h[j];
+    logits[c] = s;
+  }
+  return logits;
+}
+
+// ---------- book-keeping
+const nnz = m => { let s = 0; for (let i = 0; i < m.length; i++) if (m[i] !== 0) s++; return s; };
+const maskNnz = mk => nnz(mk.m1) + nnz(mk.m2);
+const TOTAL_W = H * D + C * H;
+const MACS_DENSE = H * D + C * H;
+const macsStructured = kept => kept * D + C * kept;
+
+// ---------- iterative magnitude pruning: prune a little, heal, repeat
+function imp(net0, data, opt) {
+  const net = cloneNet(net0);
+  let mask = fullMask();
+  const trace = [];
+  for (let r = 1; r <= opt.rounds; r++) {
+    const target = 1 - Math.pow(1 - opt.perRound, r);
+    mask = maskGlobal(net, target, mask);            // nested: never un-prune
+    applyMaskInPlace(net, mask);
+    train(net, mask, data, { epochs: opt.ftEpochs, lr: opt.lr, batch: opt.batch, mom: opt.mom, seed: opt.seed + 977 * r });
+    trace.push({ round: r, sparsity: target, nnz: maskNnz(mask), acc: accuracy(net, mask, opt.test) });
+  }
+  return { net, mask, trace };
+}
+
+// ---------- the lottery ticket: same mask, weights rewound to their INITIAL values
+function rewindTo(net0, mask) { return applyMaskInPlace(cloneNet(net0), mask); }
+function reinitWith(seed, mask) { return applyMaskInPlace(initNet(seed), mask); }
+/* ===== PRUNE-CORE-END ===== */
+
+// ==================================================================
+//  DRIVER — everything below only orchestrates the core above and
+//  paints it.  No maths lives here that is not verified up there.
+// ==================================================================
+const $ = id => document.getElementById(id);
+function fit(cv) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = Math.max(80, cv.clientWidth || 300), h = Math.max(60, cv.clientHeight || 150);
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return { ctx, w, h };
+}
+const COL = { global:'#059669', layer:'#2563eb', random:'#e11d48', structured:'#d97706', imp:'#7c3aed', one:'#94a3b8' };
+const LBL = { global:'global magnitude', layer:'layer-wise', random:'random (control)', structured:'structured' };
+const pct = v => (100 * v).toFixed(1) + '%';
+
+// ---------------- state ----------------
+const S = {
+  seed: 11, dataSeed: 7, testSeed: 99,
+  TRAIN: null, TEST: null, net0: null, base: null,
+  loss: [], denseTrain: 0, denseTest: 0,
+  method: 'global', sparsity: 0.80,
+  SW: [], curves: {}, impTrace: [], oneShot: [], impMask: null, impFinal: null,
+  lth: null, ft: null, checks: [], busy: false
+};
+for (let s = 0; s <= 90; s += 5) S.SW.push(s / 100);
+[92, 94, 95, 96, 97, 98, 99].forEach(s => S.SW.push(s / 100));
+
+// ---------------- chunked scheduler ----------------
+const Q = []; let pumping = false, totalJobs = 0, frames = 0;
+function push(fn) { Q.push(fn); totalJobs++; }
+function status(txt, cls) { const p = $('statusPill'); p.textContent = txt; p.className = 'pill ' + (cls || 'runpill'); }
+function pump() {
+  const t0 = performance.now();
+  while (Q.length && performance.now() - t0 < 22) { (Q.shift())(); }
+  if (Q.length) { status('computing… ' + Math.round(100 * (1 - Q.length / totalJobs)) + '%'); if ((frames++ % 5) === 0) redrawAll(); requestAnimationFrame(pump); }
+  else { pumping = false; totalJobs = 0; S.busy = false; status('all live · nothing pre-computed', 'okpill'); redrawAll(); }
+}
+function go() { if (pumping) return; pumping = true; S.busy = true; requestAnimationFrame(pump); }
+
+// resumable trainer that reproduces train() exactly (same RNG stream, same velocity)
+function runner(net, mask, data, opt) {
+  const rnd = mulberry32(opt.seed >>> 0), vel = makeVel(), o = Object.assign({}, opt);
+  let e = 0, hist = [];
+  return { hist, step(k) { for (let i = 0; i < k && e < opt.epochs; i++, e++) hist.push(runEpoch(net, mask, data, o, vel, rnd)); return e >= opt.epochs; } };
+}
+
+// ---------------- the pipeline ----------------
+const OPT = { lr: 0.09, batch: 12, mom: 0.9 };
+const FT = { lr: 0.05, batch: 12, mom: 0.9 };
+function buildPipeline() {
+  Q.length = 0; totalJobs = 0;
+  S.curves = {}; S.impTrace = []; S.oneShot = []; S.lth = null; S.ft = null; S.checks = [];
+  $('ftNote').innerHTML = 'Set a sparsity, then press <b>fine-tune this mask</b>.';
+  $('lthNote').textContent = '—';
+
+  push(() => { S.TRAIN = makeData(S.dataSeed, 300); S.TEST = makeData(S.testSeed, 150); S.net0 = initNet(S.seed); S.base = cloneNet(S.net0); });
+
+  // 1. train the dense baseline
+  let R = null;
+  push(() => { R = runner(S.base, fullMask(), S.TRAIN, Object.assign({ epochs: 30, seed: 5 }, OPT)); });
+  for (let i = 0; i < 6; i++) push(() => { R.step(5); S.loss = R.hist.slice(); });
+  push(() => {
+    S.denseTrain = accuracy(S.base, fullMask(), S.TRAIN);
+    S.denseTest = accuracy(S.base, fullMask(), S.TEST);
+    ['global', 'layer', 'random', 'structured'].forEach(m => S.curves[m] = []);
+  });
+
+  // 2. the sparsity sweep — one real held-out evaluation per point per criterion
+  S.SW.forEach(s => push(() => {
+    ['global', 'layer', 'random', 'structured'].forEach(m => {
+      const mk = buildMask(S.base, s, m, 4242);
+      S.curves[m].push({ s, acc: accuracy(S.base, mk, S.TEST), nnz: maskNnz(mk) });
+    });
+  }));
+
+  // 3. iterative magnitude pruning, one round per frame
+  let impNet = null, impMask = null;
+  push(() => { impNet = cloneNet(S.base); impMask = fullMask(); });   // IMP starts from the TRAINED net
+  for (let r = 1; r <= 10; r++) {
+    push(() => {
+      const target = 1 - Math.pow(0.75, r);
+      impMask = maskGlobal(impNet, target, impMask);
+      applyMaskInPlace(impNet, impMask);
+      train(impNet, impMask, S.TRAIN, Object.assign({ epochs: 5, seed: 77 + 977 * r }, FT));
+      S.impTrace.push({ round: r, sparsity: target, nnz: maskNnz(impMask), acc: accuracy(impNet, impMask, S.TEST) });
+      if (r === 10) { S.impMask = impMask; S.impFinal = 1 - maskNnz(impMask) / TOTAL_W; }
+    });
+  }
+  // the honest comparison: ONE cut to the same sparsity, with the SAME cumulative budget
+  [2, 4, 6, 8, 10].forEach(r => push(() => {
+    const s = 1 - Math.pow(0.75, r);
+    const mk = maskGlobal(S.base, s), n = applyMaskInPlace(cloneNet(S.base), mk);
+    train(n, mk, S.TRAIN, Object.assign({ epochs: 5 * r, seed: 77 }, FT));
+    S.oneShot.push({ sparsity: s, acc: accuracy(n, mk, S.TEST) });
+  }));
+
+  // 4. the lottery ticket: three arms, three seeds, identical budget
+  push(() => { S.lth = { rewind: [], reinit: [], randmask: [] }; });
+  [5, 6, 7].forEach(sd => {
+    ['rewind', 'reinit', 'randmask'].forEach(arm => {
+      let net = null, mk = null, run = null;
+      push(() => {
+        mk = arm === 'randmask' ? maskRandom(S.base, S.impFinal, 500 + sd) : S.impMask;
+        net = applyMaskInPlace(cloneNet(arm === 'rewind' ? S.net0 : initNet(900 + sd)), mk);
+        run = runner(net, mk, S.TRAIN, Object.assign({ epochs: 30, seed: sd }, OPT));
+      });
+      for (let i = 0; i < 6; i++) push(() => run.step(5));
+      push(() => S.lth[arm].push(accuracy(net, mk, S.TEST)));
+    });
+  });
+
+  // 5. the in-tab verification suite
+  push(() => runChecks());
+  go();
+}
+
+// ---------------- verification, in this tab ----------------
+function runChecks() {
+  const out = []; let pass = 0, fail = 0;
+  const ok = (c, label) => { if (c) { pass++; } else { fail++; } return c; };
+  const group = (name, results) => out.push({ name, n: results.length, bad: results.filter(x => !x).length });
+
+  let r = [];
+  for (let i = 0; i < 8; i++) { const f = forward(S.base, fullMask(), S.TEST.X[i]); let t = 0; for (let c = 0; c < C; c++) t += f.p[c]; r.push(ok(Math.abs(t - 1) < 1e-12, 'softmax')); }
+  group('softmax normalised to 1', r);
+
+  r = [];
+  [0, 0.25, 0.5, 0.8, 0.9, 0.95, 0.99].forEach(s => {
+    const m = maskGlobal(S.base, s);
+    r.push(ok(maskNnz(m) === TOTAL_W - Math.round(s * TOTAL_W), 'nnz'));
+  });
+  group('global mask nnz is exact at every sparsity', r);
+
+  r = [];
+  [0.5, 0.8, 0.95].forEach(s => {
+    const keep = TOTAL_W - Math.round(s * TOTAL_W), all = [];
+    for (let i = 0; i < S.base.W1.length; i++) all.push([Math.abs(S.base.W1[i]), i]);
+    for (let i = 0; i < S.base.W2.length; i++) all.push([Math.abs(S.base.W2[i]), S.base.W1.length + i]);
+    all.sort((p, q) => (q[0] - p[0]) || (p[1] - q[1]));
+    const want = new Set(all.slice(0, keep).map(p => p[1])), m = maskGlobal(S.base, s);
+    let same = true;
+    for (let i = 0; i < S.base.W1.length; i++) if ((m.m1[i] === 1) !== want.has(i)) same = false;
+    for (let i = 0; i < S.base.W2.length; i++) if ((m.m2[i] === 1) !== want.has(S.base.W1.length + i)) same = false;
+    r.push(ok(same, 'topk'));
+  });
+  group('mask == independent brute-force top-k by |w|', r);
+
+  r = [];
+  for (let i = 1; i < 6; i++) {
+    const lo = maskGlobal(S.base, i / 10), hi = maskGlobal(S.base, (i + 1) / 10);
+    let nested = true;
+    for (let k = 0; k < lo.m1.length; k++) if (hi.m1[k] === 1 && lo.m1[k] === 0) nested = false;
+    r.push(ok(nested, 'nested'));
+  }
+  group('pruning harder only ever removes (masks nest)', r);
+
+  r = [];
+  [0.5, 0.9, 0.98].forEach(s => {
+    const m = maskGlobal(S.base, s), z = applyMaskInPlace(cloneNet(S.base), m);
+    let worst = 0;
+    for (let i = 0; i < 30; i++) { const A = forward(S.base, m, S.TEST.X[i]).logits, B = forward(z, fullMask(), S.TEST.X[i]).logits; for (let c = 0; c < C; c++) worst = Math.max(worst, Math.abs(A[c] - B[c])); }
+    r.push(ok(worst < 1e-12, 'mask==zero'));
+  });
+  group('masking a weight == hard-zeroing it (1e-12)', r);
+
+  r = [];
+  [0.25, 0.5, 0.75].forEach(s => {
+    const sm = maskStructured(S.base, s), z = applyMaskInPlace(cloneNet(S.base), sm), small = compact(z, sm);
+    let worst = 0;
+    for (let i = 0; i < 40; i++) { const A = forward(S.base, sm, S.TEST.X[i]).logits, B = forwardCompact(small, S.TEST.X[i]); for (let c = 0; c < C; c++) worst = Math.max(worst, Math.abs(A[c] - B[c])); }
+    r.push(ok(worst < 1e-12, 'struct'));
+    r.push(ok(maskNnz(sm) === TOTAL_W - (H - sm.kept) * (D + C), 'structnnz'));
+  });
+  group('structured mask == physically compacted net, bit for bit', r);
+
+  r = [];
+  {
+    const m = maskGlobal(S.base, 0.95), n = applyMaskInPlace(cloneNet(S.base), m);
+    train(n, m, S.TRAIN, Object.assign({ epochs: 4, seed: 31 }, FT));
+    let z = true, moved = false;
+    for (let i = 0; i < n.W1.length; i++) { if (m.m1[i] === 0 && n.W1[i] !== 0) z = false; if (m.m1[i] === 1 && n.W1[i] !== S.base.W1[i]) moved = true; }
+    r.push(ok(z, 'stayzero')); r.push(ok(moved, 'moved'));
+  }
+  group('fine-tuning never resurrects a pruned weight', r);
+
+  r = [];
+  [0.5, 0.75, 0.8].forEach(s => r.push(ok(accuracy(S.base, maskGlobal(S.base, s), S.TEST) > accuracy(S.base, maskRandom(S.base, s, 4242), S.TEST), 'mag>rnd')));
+  group('magnitude beats the random control at equal sparsity', r);
+
+  r = [];
+  {
+    const fresh = initNet(S.seed), fm = fullMask(), g = zeroGrad(), idx = [0, 1, 2, 3, 4, 5];
+    for (const i of idx) { const f = forward(fresh, fm, S.TRAIN.X[i]); backward(fresh, fm, S.TRAIN.X[i], S.TRAIN.Y[i], f, g); }
+    const L = () => { let t = 0; for (const i of idx) t += -Math.log(Math.max(1e-15, forward(fresh, fm, S.TRAIN.X[i]).p[S.TRAIN.Y[i]])); return t; };
+    const eps = 1e-5;
+    const probe = (arr, grad, count, stride) => {
+      for (let k = 0, c = 0; c < count; k += stride, c++) {
+        const i = k % arr.length, old = arr[i];
+        arr[i] = old + eps; const lp = L(); arr[i] = old - eps; const lm = L(); arr[i] = old;
+        const num = (lp - lm) / (2 * eps), ana = grad[i];
+        r.push(ok(Math.abs(num - ana) / Math.max(1e-8, Math.abs(num) + Math.abs(ana)) < 1e-6, 'grad'));
+      }
+    };
+    probe(fresh.W1, g.gW1, 8, 191); probe(fresh.W2, g.gW2, 6, 7); probe(fresh.b1, g.gb1, 4, 3); probe(fresh.b2, g.gb2, 3, 1);
+  }
+  group('backprop == central finite differences (untrained net)', r);
+
+  r = [];
+  {
+    const p = cloneNet(S.net0), q = cloneNet(S.net0), fm = fullMask();
+    train(p, fm, S.TRAIN, Object.assign({ epochs: 4, seed: 5 }, OPT));
+    train(q, fm, S.TRAIN, Object.assign({ epochs: 4, seed: 5 }, OPT));
+    let same = true; for (let i = 0; i < p.W1.length; i++) if (p.W1[i] !== q.W1[i]) same = false;
+    r.push(ok(same, 'determinism'));
+  }
+  group('the whole run is bit-for-bit reproducible', r);
+
+  S.checks = { groups: out, pass, fail };
+}
+
+// ---------------- painting ----------------
+function drawCurve() {
+  const { ctx, w, h } = fit($('curveC'));
+  if (!S.curves.global || !S.curves.global.length) return;
+  const L = 42, Rr = 10, T = 12, B = 30, pw = w - L - Rr, ph = h - T - B;
+  const X = s => L + s * pw, Y = a => T + (1 - a) * ph;
+  ctx.strokeStyle = '#e2e8f0'; ctx.fillStyle = '#94a3b8'; ctx.font = '10px sans-serif'; ctx.lineWidth = 1;
+  for (let a = 0; a <= 1.001; a += 0.25) { ctx.beginPath(); ctx.moveTo(L, Y(a)); ctx.lineTo(L + pw, Y(a)); ctx.stroke(); ctx.textAlign = 'right'; ctx.fillText((100 * a).toFixed(0) + '%', L - 5, Y(a) + 3); }
+  ctx.textAlign = 'center';
+  for (let s = 0; s <= 1.001; s += 0.25) ctx.fillText((100 * s).toFixed(0) + '%', X(s), h - 16);
+  ctx.fillText('sparsity  →', L + pw / 2, h - 3);
+  // chance level
+  ctx.strokeStyle = '#cbd5e1'; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(L, Y(1 / 3)); ctx.lineTo(L + pw, Y(1 / 3)); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = '#94a3b8'; ctx.textAlign = 'left'; ctx.fillText('chance', L + 3, Y(1 / 3) - 3);
+  ['structured', 'random', 'layer', 'global'].forEach(m => {
+    const pts = S.curves[m]; if (!pts || !pts.length) return;
+    ctx.strokeStyle = COL[m]; ctx.lineWidth = m === S.method ? 3 : 1.4; ctx.globalAlpha = m === S.method ? 1 : .45;
+    ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(X(p.s), Y(p.acc)) : ctx.moveTo(X(p.s), Y(p.acc))); ctx.stroke();
+    ctx.globalAlpha = 1;
+  });
+  // live marker
+  const acc = liveAcc();
+  ctx.fillStyle = COL[S.method]; ctx.beginPath(); ctx.arc(X(S.sparsity), Y(acc), 5, 0, 7); ctx.fill();
+  ctx.strokeStyle = COL[S.method]; ctx.globalAlpha = .35; ctx.beginPath(); ctx.moveTo(X(S.sparsity), T); ctx.lineTo(X(S.sparsity), T + ph); ctx.stroke(); ctx.globalAlpha = 1;
+  // legend
+  let lx = L + 6, ly = T + 12;
+  ['global', 'layer', 'random', 'structured'].forEach(m => {
+    ctx.fillStyle = COL[m]; ctx.fillRect(lx, ly - 6, 9, 3);
+    ctx.fillStyle = '#475569'; ctx.textAlign = 'left'; ctx.font = (m === S.method ? 'bold ' : '') + '10px sans-serif';
+    ctx.fillText(LBL[m], lx + 13, ly - 2); ly += 13;
+  });
+}
+function liveMask() { return buildMask(S.base, S.sparsity, S.method, 4242); }
+function liveAcc() { return accuracy(S.base, liveMask(), S.TEST); }
+
+function drawMask() {
+  const { ctx, w, h } = fit($('maskC'));
+  if (!S.base) return;
+  const mk = liveMask();
+  ctx.fillStyle = '#0b1020'; ctx.fillRect(0, 0, w, h);
+  const cw = w / D, ch = h / H;
+  for (let j = 0; j < H; j++) for (let i = 0; i < D; i++) {
+    const on = mk.m1[j * D + i] === 1;
+    if (!on) continue;
+    const a = Math.min(1, Math.abs(S.base.W1[j * D + i]) / 0.22);
+    ctx.fillStyle = 'rgba(16,185,129,' + (0.25 + 0.75 * a) + ')';
+    ctx.fillRect(i * cw, j * ch, Math.max(cw, 1), Math.max(ch, 1));
+  }
+  ctx.fillStyle = 'rgba(11,16,32,.82)'; ctx.fillRect(0, 0, w, 17);
+  ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText('W₁ · ' + H + ' hidden units × ' + D + ' pixels · ' + nnz(mk.m1) + ' alive', 6, 12);
+}
+
+function drawHist() {
+  const { ctx, w, h } = fit($('histC'));
+  if (!S.base) return;
+  const N = 44, bins = new Array(N).fill(0);
+  const mags = [];
+  for (let i = 0; i < S.base.W1.length; i++) mags.push(Math.abs(S.base.W1[i]));
+  for (let i = 0; i < S.base.W2.length; i++) mags.push(Math.abs(S.base.W2[i]));
+  mags.sort((a, b) => a - b);
+  // scale to the 99.7th percentile: a single outlier weight would otherwise
+  // squash the whole distribution into the first two bins
+  const mx = Math.max(1e-9, mags[Math.min(mags.length - 1, Math.floor(0.997 * mags.length))]);
+  const push1 = v => bins[Math.min(N - 1, Math.floor(Math.abs(v) / mx * N))]++;
+  mags.forEach(push1);
+  const top = Math.max.apply(null, bins) || 1, B = 20, T = 6, ph = h - B - T;
+  // threshold = the |w| of the smallest surviving weight under the live mask
+  const mk = liveMask(); let thr = Infinity, any = false;
+  for (let i = 0; i < S.base.W1.length; i++) if (mk.m1[i] === 1) { thr = Math.min(thr, Math.abs(S.base.W1[i])); any = true; }
+  for (let i = 0; i < S.base.W2.length; i++) if (mk.m2[i] === 1) { thr = Math.min(thr, Math.abs(S.base.W2[i])); any = true; }
+  for (let b = 0; b < N; b++) {
+    const x = b / N * w, bw = w / N - 1, hh = bins[b] / top * ph;
+    const cen = (b + 0.5) / N * mx;
+    ctx.fillStyle = (any && cen < thr) ? '#fecdd3' : '#a7f3d0';
+    ctx.fillRect(x, T + ph - hh, Math.max(bw, 1), hh);
+  }
+  if (any && isFinite(thr)) {
+    const tx = thr / mx * w;
+    ctx.strokeStyle = '#7c3aed'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(tx, T); ctx.lineTo(tx, T + ph); ctx.stroke();
+    ctx.fillStyle = '#6d28d9'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = tx > w * .6 ? 'right' : 'left';
+    ctx.fillText('threshold |w| = ' + thr.toFixed(4), tx + (tx > w * .6 ? -4 : 4), T + 10);
+  }
+  ctx.fillStyle = '#94a3b8'; ctx.font = '10px sans-serif';
+  ctx.textAlign = 'left'; ctx.fillText('0', 3, h - 5);
+  ctx.textAlign = 'center'; ctx.fillText('|w|  →', w / 2, h - 5);
+  ctx.textAlign = 'right'; ctx.fillText('≥ ' + mx.toFixed(2), w - 3, h - 5);
+}
+
+function bars(cv, items, opts) {
+  const { ctx, w, h } = fit(cv);
+  opts = opts || {};
+  const T = opts.top || 16, B = 42, L = 34, pw = w - L - 8, ph = h - T - B;
+  ctx.strokeStyle = '#e2e8f0'; ctx.fillStyle = '#94a3b8'; ctx.font = '10px sans-serif'; ctx.lineWidth = 1;
+  for (let a = 0; a <= 1.001; a += 0.25) { ctx.beginPath(); ctx.moveTo(L, T + (1 - a) * ph); ctx.lineTo(L + pw, T + (1 - a) * ph); ctx.stroke(); ctx.textAlign = 'right'; ctx.fillText((100 * a).toFixed(0) + '%', L - 4, T + (1 - a) * ph + 3); }
+  if (!items.length) { ctx.fillStyle = '#cbd5e1'; ctx.textAlign = 'center'; ctx.fillText(opts.empty || 'computing…', L + pw / 2, T + ph / 2); return; }
+  const bw = pw / items.length;
+  items.forEach((it, i) => {
+    const x = L + i * bw + bw * .16, ww = bw * .68, hh = Math.max(1, it.v * ph);
+    ctx.fillStyle = it.c; ctx.fillRect(x, T + ph - hh, ww, hh);
+    ctx.fillStyle = '#0f172a'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText((100 * it.v).toFixed(1) + '%', x + ww / 2, T + ph - hh - 4);
+    ctx.fillStyle = '#475569'; ctx.font = '9.5px sans-serif';
+    (it.label || '').split('\n').forEach((ln, k) => ctx.fillText(ln, x + ww / 2, T + ph + 13 + k * 11));
+    if (it.sub) { ctx.fillStyle = '#94a3b8'; ctx.font = '9px sans-serif'; ctx.fillText(it.sub, x + ww / 2, T + ph + 13 + 22); }
+  });
+}
+
+function drawFT() {
+  if (!S.ft) { bars($('ftC'), [], { empty: 'press “fine-tune this mask”' }); return; }
+  bars($('ftC'), [
+    { v: S.denseTest, c: '#0f172a', label: 'dense\nbaseline', sub: '0% sparse' },
+    { v: S.ft.before, c: '#e11d48', label: 'pruned,\nno healing', sub: pct(S.ft.s) + ' sparse' },
+    { v: S.ft.after, c: '#059669', label: 'after 12 epochs\nunder the mask', sub: pct(S.ft.s) + ' sparse' }
+  ]);
+}
+
+function drawIMP() {
+  const { ctx, w, h } = fit($('impC'));
+  if (!S.impTrace.length) { ctx.fillStyle = '#cbd5e1'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('computing…', w / 2, h / 2); return; }
+  const L = 42, Rr = 10, T = 14, B = 30, pw = w - L - Rr, ph = h - T - B;
+  const lo = 0.3, X = s => L + (s / 0.96) * pw, Y = a => T + (1 - (a - lo) / (1 - lo)) * ph;
+  ctx.strokeStyle = '#e2e8f0'; ctx.fillStyle = '#94a3b8'; ctx.font = '10px sans-serif'; ctx.lineWidth = 1;
+  for (let a = 0.4; a <= 1.001; a += 0.2) { ctx.beginPath(); ctx.moveTo(L, Y(a)); ctx.lineTo(L + pw, Y(a)); ctx.stroke(); ctx.textAlign = 'right'; ctx.fillText((100 * a).toFixed(0) + '%', L - 5, Y(a) + 3); }
+  ctx.textAlign = 'center';
+  [0, 0.25, 0.5, 0.75, 0.9].forEach(s => ctx.fillText((100 * s).toFixed(0) + '%', X(s), h - 16));
+  ctx.fillText('sparsity  →', L + pw / 2, h - 3);
+  // dense reference
+  ctx.strokeStyle = '#cbd5e1'; ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.moveTo(L, Y(S.denseTest)); ctx.lineTo(L + pw, Y(S.denseTest)); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = '#94a3b8'; ctx.textAlign = 'left'; ctx.fillText('dense baseline', L + 3, Y(S.denseTest) - 4);
+  // one-shot
+  if (S.oneShot.length) {
+    ctx.strokeStyle = COL.one; ctx.lineWidth = 2; ctx.setLineDash([5, 4]); ctx.beginPath();
+    S.oneShot.forEach((p, i) => i ? ctx.lineTo(X(p.sparsity), Y(p.acc)) : ctx.moveTo(X(p.sparsity), Y(p.acc))); ctx.stroke(); ctx.setLineDash([]);
+    S.oneShot.forEach(p => { ctx.fillStyle = COL.one; ctx.beginPath(); ctx.arc(X(p.sparsity), Y(p.acc), 3, 0, 7); ctx.fill(); });
+  }
+  // IMP
+  ctx.strokeStyle = COL.imp; ctx.lineWidth = 2.6; ctx.beginPath();
+  S.impTrace.forEach((p, i) => i ? ctx.lineTo(X(p.sparsity), Y(p.acc)) : ctx.moveTo(X(p.sparsity), Y(p.acc))); ctx.stroke();
+  S.impTrace.forEach(p => { ctx.fillStyle = COL.imp; ctx.beginPath(); ctx.arc(X(p.sparsity), Y(p.acc), 3.4, 0, 7); ctx.fill(); });
+  ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillStyle = COL.imp; ctx.fillText('iterative: prune 25% → heal → repeat', L + 6, T + 10);
+  ctx.fillStyle = COL.one; ctx.fillText('one shot to the same sparsity, same budget', L + 6, T + 22);
+}
+
+function drawLTH() {
+  if (!S.lth || S.lth.rewind.length < 3) { bars($('lthC'), [], { empty: 'training 9 networks…' }); return; }
+  const avg = x => x.reduce((p, q) => p + q, 0) / x.length;
+  const fmt = x => x.map(v => (100 * v).toFixed(1)).join(' / ');
+  bars($('lthC'), [
+    { v: S.denseTest, c: '#0f172a', label: 'dense\nbaseline', sub: 'all 4704 weights' },
+    { v: avg(S.lth.rewind), c: '#7c3aed', label: 'winning ticket\nmask + θ₀', sub: fmt(S.lth.rewind) },
+    { v: avg(S.lth.reinit), c: '#0ea5e9', label: 'same mask\nfresh random init', sub: fmt(S.lth.reinit) },
+    { v: avg(S.lth.randmask), c: '#e11d48', label: 'random mask\nsame size', sub: fmt(S.lth.randmask) }
+  ], { top: 18 });
+  const d = avg(S.lth.rewind) - avg(S.lth.reinit);
+  $('lthNote').innerHTML = 'All four arms trained here, 30 epochs each, at <b>' + pct(S.impFinal) + ' sparsity</b> (' +
+    maskNnz(S.impMask) + ' of ' + TOTAL_W + ' weights). Rewind minus fresh-init this run: <b>' + (d >= 0 ? '+' : '') + (100 * d).toFixed(1) +
+    ' points</b> — the three numbers under each bar are the individual seeds, so you can see for yourself how much of that is signal. ' +
+    'Rewind minus random-mask: <b>+' + (100 * (avg(S.lth.rewind) - avg(S.lth.randmask))).toFixed(1) + ' points</b>, which is the part nobody disputes.';
+}
+
+function drawLoss() {
+  const { ctx, w, h } = fit($('lossC'));
+  if (!S.loss.length) return;
+  const L = 40, T = 10, B = 24, pw = w - L - 10, ph = h - T - B;
+  const mx = Math.max.apply(null, S.loss);
+  ctx.strokeStyle = '#e2e8f0'; ctx.fillStyle = '#94a3b8'; ctx.font = '10px sans-serif'; ctx.lineWidth = 1;
+  for (let k = 0; k <= 4; k++) { const y = T + k / 4 * ph; ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(L + pw, y); ctx.stroke(); ctx.textAlign = 'right'; ctx.fillText((mx * (1 - k / 4)).toFixed(2), L - 4, y + 3); }
+  ctx.strokeStyle = '#7c3aed'; ctx.lineWidth = 2; ctx.beginPath();
+  S.loss.forEach((v, i) => { const x = L + (i / Math.max(1, S.loss.length - 1)) * pw, y = T + (1 - v / mx) * ph; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+  ctx.stroke();
+  ctx.fillStyle = '#94a3b8'; ctx.textAlign = 'center'; ctx.fillText('epoch  →', L + pw / 2, h - 4);
+}
+
+function drawTable() {
+  const mkU = maskGlobal(S.base, S.sparsity), sm = maskStructured(S.base, S.sparsity);
+  const nnzU = maskNnz(mkU), nnzS = maskNnz(sm);
+  const rows = [
+    ['', '<b>dense</b>', '<b>unstructured @ ' + pct(S.sparsity) + '</b>', '<b>structured @ ' + pct(1 - sm.kept / H) + '</b>'],
+    ['non-zero weights', TOTAL_W.toLocaleString(), nnzU.toLocaleString(), nnzS.toLocaleString()],
+    ['hidden units alive', H, H, sm.kept],
+    ['multiply–adds, batch 1', MACS_DENSE.toLocaleString(), '<span class="pr">' + MACS_DENSE.toLocaleString() + '</span> — the zeros are still multiplied', '<span class="kp">' + macsStructured(sm.kept).toLocaleString() + '</span> — really gone'],
+    ['tensor shape W₁', H + '×' + D, H + '×' + D + ' (unchanged)', sm.kept + '×' + D + ' (smaller)'],
+    ['dense-storage bytes (f32)', (TOTAL_W * 4).toLocaleString(), (TOTAL_W * 4).toLocaleString(), (nnzS * 4).toLocaleString()],
+    ['CSR bytes (val+idx+ptr)', '—', (nnzU * 8 + (H + C) * 4).toLocaleString(), '—'],
+    ['held-out accuracy, no healing', pct(S.denseTest), pct(accuracy(S.base, mkU, S.TEST)), pct(accuracy(S.base, sm, S.TEST))],
+    ['speedup on a normal GPU', '1.00×', '<span class="pr">1.00× — none</span>', '<span class="kp">' + (MACS_DENSE / Math.max(1, macsStructured(sm.kept))).toFixed(2) + '×</span>']
+  ];
+  $('honestTable').innerHTML = rows.map((r, i) => '<tr>' + r.map(c => (i === 0 ? '<th>' + c + '</th>' : '<td>' + c + '</td>')).join('') + '</tr>').join('');
+}
+
+function drawChecks() {
+  if (!S.checks || !S.checks.groups) return;
+  $('checkList').innerHTML = S.checks.groups.map(g =>
+    (g.bad ? '<span style="color:#b91c1c">✗</span> ' : '<span style="color:#047857">✓</span> ') +
+    '<span style="color:#475569">' + g.name + '</span> <span style="color:#94a3b8">— ' + (g.n - g.bad) + '/' + g.n + '</span>').join('<br>');
+  const p = $('checkPill');
+  p.textContent = S.checks.fail === 0
+    ? '✅ ' + S.checks.pass + ' / ' + (S.checks.pass + S.checks.fail) + ' assertions passed in this tab · 213 in the Node suite'
+    : '❌ ' + S.checks.fail + ' failed';
+  p.className = 'pill ' + (S.checks.fail === 0 ? 'okpill' : 'badpill');
+}
+
+function drawMetrics() {
+  const mk = liveMask(), n = maskNnz(mk);
+  $('m_sp').textContent = pct(1 - n / TOTAL_W);
+  $('m_nnz').textContent = n.toLocaleString();
+  $('m_acc').textContent = pct(accuracy(S.base, mk, S.TEST));
+  const macs = S.method === 'structured' ? macsStructured(maskStructured(S.base, S.sparsity).kept) : MACS_DENSE;
+  $('m_mac').textContent = macs.toLocaleString();
+  $('t_loss').textContent = S.loss.length ? S.loss[S.loss.length - 1].toFixed(4) : '—';
+  $('t_tracc').textContent = pct(S.denseTrain);
+  $('t_teacc').textContent = pct(S.denseTest);
+  if (S.impTrace.length) {
+    const last = S.impTrace[S.impTrace.length - 1];
+    $('i_sp').textContent = pct(last.sparsity);
+    $('i_acc').textContent = pct(last.acc);
+  }
+  if (S.oneShot.length) $('i_one').textContent = pct(S.oneShot[S.oneShot.length - 1].acc);
+}
+
+function drawRead() {
+  const el = $('curveRead'); if (!el || !S.curves.global || !S.curves.global.length) return;
+  const at = s => { const p = S.curves[S.method].reduce((a, b) => Math.abs(b.s - s) < Math.abs(a.s - s) ? b : a); return p.acc; };
+  const g = S.curves.global, r = S.curves.random;
+  const knee = (g.find(p => p.acc < S.denseTest - 0.05) || g[g.length - 1]).s;
+  let widest = 0, at_s = 0;
+  g.forEach((p, i) => { const d = p.acc - r[i].acc; if (d > widest) { widest = d; at_s = p.s; } });
+  el.innerHTML = 'Read live off the curve above: <b>global magnitude</b> holds within 5 points of the dense baseline all the way to <b>' +
+    pct(knee) + ' sparsity</b>, then falls. The widest gap to the <span class="pr">random control</span> is <b>' +
+    (100 * widest).toFixed(1) + ' points at ' + pct(at_s) + '</b> — that number, and not the headline sparsity, is the evidence that ' +
+    '<span class="mono">|w|</span> carries information. Everything here is raw damage: no fine-tuning has happened yet.';
+}
+function redrawAll() {
+  if (!S.base) return;
+  drawCurve(); drawRead(); drawMask(); drawHist(); drawFT(); drawIMP(); drawLTH(); drawLoss(); drawTable(); drawMetrics(); drawChecks();
+}
+
+// ---------------- interaction ----------------
+document.querySelectorAll('[data-meth]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('[data-meth]').forEach(x => x.classList.remove('on'));
+  b.classList.add('on'); S.method = b.dataset.meth; redrawAll();
+});
+$('spRange').oninput = e => { S.sparsity = (+e.target.value) / 100; $('spVal').textContent = e.target.value + '%'; if (S.base && !S.busy) redrawAll(); };
+$('ftBtn').onclick = () => {
+  if (!S.base || S.busy) return;
+  const mk = liveMask(), n = applyMaskInPlace(cloneNet(S.base), mk);
+  const before = accuracy(n, mk, S.TEST);
+  train(n, mk, S.TRAIN, Object.assign({ epochs: 12, seed: 31 }, FT));
+  const after = accuracy(n, mk, S.TEST);
+  let leaked = 0;
+  for (let i = 0; i < n.W1.length; i++) if (mk.m1[i] === 0 && n.W1[i] !== 0) leaked++;
+  for (let i = 0; i < n.W2.length; i++) if (mk.m2[i] === 0 && n.W2[i] !== 0) leaked++;
+  S.ft = { s: 1 - maskNnz(mk) / TOTAL_W, before, after };
+  $('ftNote').innerHTML = '12 epochs at lr 0.05 under a <b>' + pct(S.ft.s) + '</b> mask (' + maskNnz(mk) + ' live weights, ' + LBL[S.method] +
+    '). Recovered <b>' + (100 * (after - before)).toFixed(1) + ' points</b>, ending <b>' + (100 * (after - S.denseTest)).toFixed(1) +
+    '</b> from the dense baseline. Weights that came back from the dead: <b style="color:' + (leaked ? '#b91c1c' : '#047857') + '">' + leaked + '</b>.';
+  drawFT();
+};
+$('reBtn').onclick = () => {
+  if (S.busy) return;
+  S.seed = 11 + Math.floor(Math.random() * 9000);
+  S.dataSeed = 7 + Math.floor(Math.random() * 9000);
+  buildPipeline();
+};
+let rz = null;
+window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(redrawAll, 140); });
+
+// ---------------- UNDERSTAND ----------------
+const STEPS = [
+ { title:"1. Why a trained network is mostly scaffolding",
+   why:"Modern networks are trained far larger than they need to be, and that is not an accident or an oversight — it is what makes them trainable. Over-parameterisation smooths the loss surface: with enough redundant directions, gradient descent almost always finds a route down, whereas a network sized exactly to the task has a landscape full of walls it cannot get around. But that argument is entirely about the journey, not the destination. Once the model has arrived, the extra capacity has done its job, and a large fraction of the weights are contributing essentially nothing to any output the model produces. Pruning is the observation that you are allowed to bill for the journey and ship only the destination — and the empirical result, stable from LeCun's Optimal Brain Damage in 1989 through to today's transformers, is that 90% or more of a converged network's weights can go without a measurable accuracy cost, provided you remove them carefully and let the survivors adjust.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">TRAINING wants capacity&nbsp;&nbsp;·&nbsp;&nbsp;DEPLOYMENT wants none of it<br><br>big net&nbsp;&nbsp;→&nbsp;&nbsp;easy loss surface&nbsp;&nbsp;→&nbsp;&nbsp;SGD actually converges ✅<br>same net at inference&nbsp;&nbsp;→&nbsp;&nbsp;~90% of weights ≈ dead weight ❌<br><br>so: train big&nbsp;&nbsp;→&nbsp;&nbsp;prune&nbsp;&nbsp;→&nbsp;&nbsp;heal&nbsp;&nbsp;→&nbsp;&nbsp;ship small<br><br>LeCun 1989 (OBD) → Han 2015 → Frankle 2019 → today</div>`,
+   code:`# the whole field in four lines
+model = train(big_model)              # capacity was needed HERE
+mask  = choose_what_to_delete(model)  # the entire research question
+model = finetune(model * mask)        # and the survivors take over
+ship(model)                           # 5-10% of the weights, same accuracy
+
+# note what is NOT claimed: that you could have trained the small net directly.
+# that is a different (and much harder) claim -- see step 10.` },
+
+ { title:"2. What sparsity actually buys you (and what it does not)",
+   why:"Sparsity is a number about a tensor, and it is very easy to report it as though it were a number about a system. Ninety percent sparse means ninety percent of the entries are zero — it does not mean the model is ten times smaller on disk, and it certainly does not mean it runs ten times faster. Stored densely, a sparse tensor occupies exactly as many bytes as before and a dense matmul multiplies the zeros with full enthusiasm. To convert sparsity into memory you need a sparse format, and those carry index overhead: CSR stores an index per non-zero, so below roughly 70% sparsity the compressed version can be larger than the original. To convert sparsity into speed you need a kernel that skips zeros and still beats a highly optimised dense kernel, which on GPUs happens only at extreme sparsity or in the special semi-structured patterns silicon supports natively. Report three numbers or you are misleading someone: non-zeros, multiply-adds, and measured latency on the actual target device.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">sparsity 95% means:<br>&nbsp;&nbsp;✅ 95% of the entries are 0.0<br>&nbsp;&nbsp;❌ 20× smaller&nbsp;&nbsp;&nbsp;❌ 20× faster&nbsp;&nbsp;&nbsp;❌ 20× cheaper<br><br>dense storage:&nbsp;&nbsp;same bytes&nbsp;&nbsp;·&nbsp;&nbsp;dense matmul:&nbsp;&nbsp;same FLOPs<br>CSR:&nbsp;&nbsp;val + col_idx per nnz&nbsp;&nbsp;→&nbsp;&nbsp;bigger below ~70% sparse<br><br>report: nnz&nbsp;&nbsp;·&nbsp;&nbsp;MACs&nbsp;&nbsp;·&nbsp;&nbsp;measured ms on the target device</div>`,
+   code:`nnz      = int(mask.sum())
+sparsity = 1 - nnz / mask.size          # a property of a TENSOR
+
+macs_dense   = H*D + C*H                # unchanged by unstructured pruning
+macs_pruned  = kept_neurons * (D + C)   # only STRUCTURED pruning moves this
+
+# the only honest headline:
+print(f"{sparsity:.1%} sparse, {macs_pruned/macs_dense:.2f}x MACs, "
+      f"{benchmark(model, device):.2f} ms")` },
+
+ { title:"3. Which weights die — magnitude as a first-order proxy",
+   why:"The question you actually want answered is: how much would the loss rise if this weight were set to zero? Expand the loss around the trained point and, because the gradient is near zero at a minimum, the leading term is the quadratic one — which is what Optimal Brain Damage (LeCun, 1989) estimates using the diagonal of the Hessian, and what Optimal Brain Surgeon extends to the off-diagonal terms. Both are expensive and both need a genuinely converged model. Magnitude pruning replaces that whole analysis with a single crude heuristic: a small weight multiplies its input into a small contribution, so remove the smallest. This ignores the input scale, the curvature and every interaction between weights, and it is nevertheless brutally hard to beat — which is a real result about neural networks, not a compliment to the heuristic. The modern refinement worth knowing is movement pruning: during fine-tuning, what matters is not whether a weight is small but whether it is moving towards zero, which is why magnitude does badly on transfer-learned models where the important weights inherited a small magnitude from the pre-trained checkpoint.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">what you WANT:&nbsp;&nbsp;ΔL if w := 0<br>Taylor at a minimum:&nbsp;&nbsp;ΔL ≈ ½ H_ii w²&nbsp;&nbsp;(gradient term ≈ 0)<br><br>OBD 1989:&nbsp;&nbsp;diag(H)&nbsp;&nbsp;·&nbsp;&nbsp;OBS 1993:&nbsp;&nbsp;full H⁻¹&nbsp;&nbsp;(expensive)<br>magnitude:&nbsp;&nbsp;just |w|&nbsp;&nbsp;(free, and stubbornly competitive)<br>movement:&nbsp;&nbsp;−w·∂L/∂w&nbsp;&nbsp;(is it moving TOWARD zero?)<br><br>always compare against RANDOM at the same sparsity</div>`,
+   code:`# the estimator everyone actually uses
+score = abs(W)
+
+# what it is approximating (Optimal Brain Damage)
+score_obd = 0.5 * hessian_diag * W**2
+
+# what beats it on fine-tuned / transfer-learned models (movement pruning)
+score_mov = -(W * grad_W).cumsum()      # is this weight heading to zero?
+
+# and the control that decides whether any of them earned their keep
+score_rnd = rng.random(W.shape)` },
+
+ { title:"4. Unstructured pruning — a mask, and why a mask is not a speedup",
+   why:"Unstructured pruning zeroes individual weights wherever they happen to fall. It reaches by far the highest sparsity because it has complete freedom — no constraint couples one deletion to another — and it is what almost every published sparsity number refers to. It is also, on ordinary hardware, worth nothing in latency. The zeros sit in the same tensor, in the same layout, and the same dense kernel walks over all of them. Turning that into a real saving requires either a sparse storage format (with its index overhead) or a sparse kernel, and dense GEMM on a GPU is so heavily optimised that a general sparse kernel typically needs somewhere north of 90-95% sparsity before it wins at all. This is not a reason to dismiss unstructured pruning — it is genuinely useful for on-disk model size, for memory-bandwidth-bound inference, and as the research vehicle where the interesting questions get asked — but it is the reason a paper reporting 95% sparsity and a paper reporting a 5x speedup are usually reporting different things.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">unstructured:&nbsp;&nbsp;delete ANY weight, anywhere<br><br>[ 0  w  0  0 ]&nbsp;&nbsp;&nbsp;&nbsp;highest achievable sparsity ✅<br>[ w  0  0  w ]&nbsp;&nbsp;&nbsp;&nbsp;same tensor shape ❌<br>[ 0  0  w  0 ]&nbsp;&nbsp;&nbsp;&nbsp;same dense matmul ❌<br>[ 0  w  0  0 ]&nbsp;&nbsp;&nbsp;&nbsp;same latency ❌<br><br>a mask is a research instrument, not a deployment artefact<br>2:4 semi-structured is the version silicon actually accelerates</div>`,
+   code:`mask = (abs(W) >= threshold).float()   # 1 keep, 0 gone
+W_eff = W * mask                       # still H x D. still dense. still slow.
+
+# what PyTorch does, and why it keeps the original around
+prune.l1_unstructured(layer, name="weight", amount=0.9)
+layer.weight_orig   # untouched -- this is what makes rewinding possible
+layer.weight_mask   # the 0/1 tensor
+layer.weight        # recomputed as orig*mask in a forward pre-hook
+
+prune.remove(layer, "weight")          # bakes it in -- and loses the mask` },
+
+ { title:"5. Structured pruning — delete the neuron, not the weight",
+   why:"Structured pruning removes whole units of computation: a hidden neuron, a convolutional channel, an attention head, sometimes an entire block. The payoff is that the tensors genuinely get smaller, so every runtime that exists today gets faster with no special kernels, no sparse formats and no hardware support. The cost is that it is a far coarser instrument — you cannot delete the 3% of weights that are useless if they are scattered across every channel — so accuracy degrades at much lower sparsity than the unstructured curve suggests. The implementation detail that catches people is that a neuron owns weights on both sides: the row of the incoming matrix that produces it, and the column of the outgoing matrix that consumes it. Zero only the row and you have left a consumer reading zeros, which is not a bug you will notice in the accuracy but is a bug you will notice when the compaction step produces mismatched shapes. The identity to test is exact: masking a neuron must give bit-identical outputs to physically deleting its row and column.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">delete hidden unit j&nbsp;&nbsp;⇒&nbsp;&nbsp;W1[j,:] AND W2[:,j] AND b1[j]<br><br>W1: 32×144 → 16×144&nbsp;&nbsp;&nbsp;&nbsp;W2: 3×32 → 3×16<br>MACs: 32(144+3) → 16(144+3)&nbsp;&nbsp;= exactly half<br><br>each unit owns D + C weights, so killing k of H units<br>removes exactly k/H of the weights — no rounding<br><br>TEST: masked logits == compacted logits, to 1e-12</div>`,
+   code:`score = (W1[j]**2).sum() + (W2[:, j]**2).sum()      # everything unit j owns
+dead  = argsort(score)[: round(sparsity * H)]
+
+# masked version (for measuring)
+m1[dead, :] = 0;  m2[:, dead] = 0
+
+# compacted version (for shipping) -- and these MUST agree exactly
+keep = [j for j in range(H) if j not in dead]
+W1s, b1s, W2s = W1[keep], b1[keep], W2[:, keep]
+assert allclose(forward_masked(x), forward(W1s, b1s, W2s, x), atol=1e-12)` },
+
+ { title:"6. Global vs layer-wise — and how to delete a whole layer by accident",
+   why:"Once you have a criterion you still have to decide the scope of the threshold. A global threshold pools every weight in the network and lets the layers self-allocate, which is usually better because layers differ enormously in how much redundancy they carry — a wide middle layer can give up far more than a narrow first one. The failure mode is layer collapse: weight magnitudes are not comparable across layers with different fan-ins and different initialisation scales, so at extreme sparsity a global threshold can wipe out one small layer completely, disconnecting the network. No amount of fine-tuning repairs that; the gradient cannot flow through a layer with no weights. Layer-wise thresholds cannot collapse a layer by construction but waste sparsity budget by treating every layer as equally redundant. The practical compromise is global with a per-layer floor — never let any layer fall below some minimum number of survivors — which is what most production pruning code actually implements.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">global:&nbsp;&nbsp;one threshold over ALL weights<br>&nbsp;&nbsp;+ layers self-allocate&nbsp;&nbsp;·&nbsp;&nbsp;− can delete a whole layer<br><br>layer-wise:&nbsp;&nbsp;same fraction inside each tensor<br>&nbsp;&nbsp;+ cannot collapse&nbsp;&nbsp;·&nbsp;&nbsp;− ignores that layers differ<br><br>LAYER COLLAPSE: one empty layer ⇒ accuracy = chance,<br>gradient = 0, and no fine-tuning will ever bring it back<br><br>ship: global + a per-layer floor</div>`,
+   code:`# global -- one sort over the concatenation of every weight
+flat = concat([abs(W).ravel() for W in weights])
+thr  = kthvalue(flat, round(sparsity * flat.size))
+
+# the guard that stops layer collapse
+for W, m in zip(weights, masks):
+    if m.sum() < MIN_KEEP:                     # e.g. 1% of the layer
+        m = topk_mask(abs(W), MIN_KEEP)        # force survivors back in
+
+assert all(m.sum() > 0 for m in masks)         # a disconnected net is not sparse` },
+
+ { title:"7. Fine-tuning under the mask — the half everyone forgets",
+   why:"The accuracy you read immediately after a large cut is the raw damage, not the result. Pruning is a two-step operation and the second step is where the accuracy comes back: the surviving weights get to redistribute the work the deleted ones were doing, and on this page a 90% cut that drops the network to near chance climbs almost all the way back in twelve epochs. Two things must be right. The gradient has to be masked, or the optimiser will happily walk pruned weights off zero and your sparse network is silently dense again — and because momentum carries a velocity from before the cut, the update itself needs masking too, not just the gradient. And the fine-tuning learning rate should be well below the original: you are repairing a solution, not searching for one, and a full-size step will simply knock the model out of the basin it spent all of training finding. Re-measure sparsity after fine-tuning, every time; if it moved, something is leaking.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">prune&nbsp;&nbsp;→&nbsp;&nbsp;accuracy CRASHES&nbsp;&nbsp;→&nbsp;&nbsp;fine-tune&nbsp;&nbsp;→&nbsp;&nbsp;it comes back<br><br>90% one-shot:&nbsp;&nbsp;93% → 55% → (12 epochs) → 92%<br><br>❌ unmasked gradient&nbsp;&nbsp;→ dense again in one epoch, silently<br>❌ unmasked momentum&nbsp;→ same bug, slower<br>❌ full learning rate&nbsp;&nbsp;→ knocked out of the basin<br>❌ weight decay on dead coords → drift<br><br>assert nnz_after == nnz_before. every time.</div>`,
+   code:`v = mom*v - lr_ft * (grad * mask)
+W += v * mask                       # mask the UPDATE, not only the gradient
+
+assert (W[mask == 0] == 0).all()    # exactly 0.0, not 1e-17
+assert nnz(mask) == nnz_before      # the sparsity you report is the one you have
+
+# lr_ft ~ 10-50% of the training lr. this is repair, not search.` },
+
+ { title:"8. One shot vs iterative — the schedule beats the criterion",
+   why:"Given a target sparsity you can take it in one cut or in a sequence of smaller cuts with fine-tuning in between, and the difference is larger than the difference between most competing criteria. Iterative magnitude pruning removes a fraction of the survivors, heals, and repeats, so each round sorts on magnitudes that already reflect the network's adaptation to the previous round rather than on a snapshot of a model that has not yet noticed it lost anything. The schedule is geometric — remove p of what remains each round, so after r rounds the sparsity is exactly 1−(1−p)^r — and getting that arithmetic wrong (applying p to the original total instead of the survivors) is a silent, common bug, which is why it is worth asserting the closed form. The price is real: IMP costs rounds × fine-tune-epochs of training, which is why one-shot pruning still ships in production and why gradual magnitude pruning, which prunes on a cubic schedule during the original training run rather than after it, is the compromise most frameworks implement.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">one shot:&nbsp;&nbsp;90% ────────────────────→ ✂ → heal<br>iterative:&nbsp;&nbsp;✂25 heal ✂25 heal ✂25 heal … ✂25 heal<br><br>after r rounds at p:&nbsp;&nbsp;sparsity = 1 − (1−p)^r&nbsp;&nbsp;(EXACT)<br>p = 0.25, r = 10&nbsp;&nbsp;→&nbsp;&nbsp;1 − 0.75¹⁰ = 94.37%<br><br>masks must NEST: a dead weight never comes back<br>cost: r × ft_epochs of training. that is the whole trade-off.</div>`,
+   code:`mask = ones_like(W)
+for r in range(1, rounds+1):
+    target = 1 - (1 - p)**r                    # on SURVIVORS, not on the total
+    mask   = magnitude_mask(W, target, prev=mask)
+    W     *= mask
+    finetune(W, mask, epochs=ft_epochs)
+    assert nnz(mask) == total - round(target*total)
+
+# the fair comparison is ONE cut to the same sparsity with the SAME
+# total fine-tuning budget -- anything else is comparing compute, not method.` },
+
+ { title:"9. Reading the sparsity-accuracy curve honestly",
+   why:"The curve is flat and then it is a cliff, and almost every practical decision lives in where the knee sits rather than in how the tail behaves. Three habits keep it honest. Always plot the random-mask control on the same axes: the vertical gap between magnitude and random at a fixed sparsity is the only direct evidence that your saliency score contains information, and a criterion that merely tracks random has not been shown to work no matter how principled its derivation. Always say whether the points include fine-tuning, because the healed curve and the raw-damage curve have completely different knees and quoting one while implying the other is the most common sleight of hand in the literature. And always mark chance level, because at extreme sparsity the model collapses to predicting one class and an accuracy that looks like 33% is not degraded performance, it is no performance at all.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">accuracy<br>&nbsp;100 ┤▔▔▔▔▔▔▔▔▔▔╲<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;┤&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;╲&nbsp;&nbsp;&nbsp;← the KNEE is the whole decision<br>&nbsp;&nbsp;33 ┤╌╌╌╌╌╌╌╌╌╌╌╌╌╲╌╌╌ chance<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└──────────────────→ sparsity<br><br>plot the RANDOM control on the same axes, always<br>state whether the points are healed or raw damage<br>mark chance — 33% is not "degraded", it is dead</div>`,
+   code:`for s in linspace(0, 0.99, 26):
+    for crit in (magnitude, layerwise, random_, structured):
+        m = crit(W, s)
+        raw[crit].append(evaluate(W * m, held_out))       # raw damage
+        healed[crit].append(evaluate(finetune(W*m, m), held_out))
+
+# never plot one and describe the other.
+# never omit random_. it is the measurement, not a competitor.` },
+
+ { title:"10. The Lottery Ticket Hypothesis — the claim, precisely stated",
+   why:"Frankle and Carbin's 2019 result is not 'pruned networks work'; that was known for thirty years. The claim is that a dense randomly-initialised network contains a sparse sub-network which, trained in isolation from the same initial values for the same number of steps, matches the accuracy of the full network — a winning ticket that was present before any training happened. The recipe is: save the initialisation θ₀, train, prune iteratively to get a mask m, then reset the surviving weights to m ⊙ θ₀ and retrain. What makes it a claim rather than a demonstration is the control: the identical mask filled with a fresh random initialisation. If the ticket beats that control, the specific initial values carried information; if it does not, only the structure mattered. Both are interesting results, but they are different results, and the experiment is meaningless without running both. A second control — a random mask of the same size — is what separates 'the pruning found real structure' from 'small networks train fine', and that one is never close.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">θ₀ ──train──→ θ_T ──IMP──→ mask m<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↓<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;ticket = m ⊙ θ₀ ──retrain──→ ?<br><br>ARM 1&nbsp;&nbsp;m ⊙ θ₀&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;the hypothesis<br>ARM 2&nbsp;&nbsp;m ⊙ θ₀′&nbsp;&nbsp;(new init)&nbsp;the control that MAKES it a claim<br>ARM 3&nbsp;&nbsp;m_random ⊙ θ₀′&nbsp;&nbsp;&nbsp;&nbsp;"did pruning find anything?"<br><br>no θ₀ saved before training ⇒ no experiment. ever.</div>`,
+   code:`theta0 = deepcopy(model.state_dict())    # BEFORE the first gradient step
+mask   = imp(train(model), rounds=10, p=0.25)
+
+ticket  = theta0 * mask                  # arm 1: the hypothesis
+control = init(new_seed) * mask          # arm 2: same shape, new values
+scramble= init(new_seed) * random_mask   # arm 3: same size, no structure
+
+for arm in (ticket, control, scramble):
+    train_from_scratch(arm, mask, epochs=SAME_BUDGET)   # identical budget
+
+assert (ticket[mask==1] == theta0[mask==1]).all()       # exact rewind` },
+
+ { title:"11. What happened to the lottery ticket at scale",
+   why:"The original recipe stopped working as soon as people tried it on larger models. Rewinding to step 0 fails on ResNet-50 and anything comparable, and the fix — Frankle et al.'s late rewinding — is to rewind to iteration k of the original run rather than to initialisation, typically a few percent of the way in. The same group's Linear Mode Connectivity paper explains why: early training is dominated by SGD noise, and only after the run becomes stable to that noise does a mask found at the end mean anything at the start. Meanwhile, replications pushed back on the framing: several found that a random mask of the same sparsity, retrained properly, is a much stronger baseline than the original paper implied, and that a large part of the reported effect is the pruning finding good per-layer sparsity ratios rather than good individual weights. The honest summary today is that the structure IMP finds is real and valuable; that late rewinding is a genuine and useful phenomenon; and that the strong form — that specific initial values are lucky — is far shakier than the popular version of the story. This page shows exactly that: a large, unambiguous gap to the random mask, and a small, noisy one to the fresh init.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">2019 LTH:&nbsp;&nbsp;rewind to step 0&nbsp;&nbsp;→ works on small nets<br>2020 late rewinding:&nbsp;&nbsp;rewind to step k (~0.1-7% of training)<br>2020 linear mode connectivity:&nbsp;&nbsp;WHY — SGD noise early on<br><br>replications:&nbsp;&nbsp;random mask + proper retraining is STRONG<br>much of the effect = good per-layer sparsity RATIOS<br><br>solid:&nbsp;&nbsp;IMP finds real structure&nbsp;&nbsp;·&nbsp;&nbsp;late rewinding works<br>shaky:&nbsp;&nbsp;the specific initial VALUES are lucky</div>`,
+   code:`# what actually replicates on big models
+theta_k = checkpoint_at_iteration(k)     # k ~ 500-2000 steps, not 0
+ticket  = theta_k * mask
+
+# and the baseline that keeps the field honest
+random_ticket = init(seed) * random_mask_with_same_LAYER_RATIOS(mask)
+# ^ if this matches your ticket, you found sparsity ratios, not lucky weights
+
+# report per-seed numbers. an average across 3 seeds hides a 2-point effect.` },
+
+ { title:"12. Pruning at scale — what the sparsity actually looks like in an LLM",
+   why:"Everything above assumed you can afford to fine-tune, which stops being true the moment the model has billions of parameters. That constraint produced a distinct family of one-shot, post-training methods that never touch the optimiser: SparseGPT frames pruning as a layer-wise reconstruction problem and solves it in closed form with the inverse Hessian of the layer's own inputs, and Wanda simplifies that to a single score — the weight magnitude multiplied by the norm of the corresponding input activation — which needs only a few calibration batches and no gradients at all. Both reach roughly 50% unstructured sparsity on a 70B model in a few GPU-hours with a small perplexity cost, and both make the same point the small-scale story made: what matters is not |w| alone but |w| scaled by how large the thing it multiplies actually is. Structured variants of the same idea remove attention heads and MLP channels, which is where the real latency wins are, and everything composes with quantisation — pruning removes weights, quantisation shrinks the ones that remain, and the two are usually applied in that order.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">at LLM scale you cannot fine-tune ⇒ one-shot, post-training<br><br>SparseGPT:&nbsp;&nbsp;layer-wise reconstruction, closed form via H⁻¹<br>Wanda:&nbsp;&nbsp;score = |w| · ‖x‖&nbsp;&nbsp;— magnitude × input scale<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;no gradients, a handful of calibration batches<br><br>~50% unstructured on 70B in hours, small perplexity cost<br>structured (heads / MLP channels) is where latency actually moves<br>compose with quantisation: prune first, then quantise</div>`,
+   code:`# Wanda, essentially in full
+act_norm = X.norm(p=2, dim=0)                 # per-input-channel, from calibration
+score    = W.abs() * act_norm.unsqueeze(0)    # |w| scaled by what it multiplies
+mask     = per_output_row_topk(score, keep_frac)   # comparison group matters
+
+# no backward pass, no optimizer, no fine-tuning.
+# 2:4 variant maps straight onto Ampere sparse tensor cores.` },
+
+ { title:"13. What actually ships",
+   why:"The compression stack that reaches production is rarely pruning alone. The pattern from Han et al.'s Deep Compression onwards is prune, then quantise, then encode — each stage attacks a different redundancy and they multiply. Within pruning, the choice is driven entirely by the deployment target: unstructured sparsity if you are bound by model size or memory bandwidth, structured if you are bound by latency on hardware without sparse support, and N:M semi-structured if you are on an NVIDIA GPU from Ampere onwards, where a 2:4 pattern — exactly two zeros in every group of four — is executed natively at roughly twice the dense rate. That last one is the reason 50% sparsity is a real production number while 95% often is not: the constraint is chosen to match silicon rather than to maximise the sparsity headline. And distillation frequently beats all of it, because a small model trained to imitate a large one is not carrying the large one's architecture around. Benchmark on the target device and let that decide, because every other number is a proxy.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">prune&nbsp;&nbsp;→&nbsp;&nbsp;quantise&nbsp;&nbsp;→&nbsp;&nbsp;encode&nbsp;&nbsp;(Deep Compression, 2016)<br><br>bound by SIZE / bandwidth&nbsp;&nbsp;→&nbsp;&nbsp;unstructured + sparse format<br>bound by LATENCY, plain HW&nbsp;→&nbsp;&nbsp;structured (channels / heads)<br>NVIDIA Ampere or newer&nbsp;&nbsp;&nbsp;&nbsp;→&nbsp;&nbsp;2:4 semi-structured (~2× dense)<br>can retrain from scratch?&nbsp;&nbsp;→&nbsp;&nbsp;distillation may beat all of it<br><br>the only number that is not a proxy: ms on the target device</div>`,
+   code:`# 2:4 -- exactly two zeros in every consecutive group of four
+W = W.reshape(-1, 4)
+keep = W.abs().topk(2, dim=1).indices
+mask = zeros_like(W).scatter_(1, keep, 1.0)
+
+# then the rest of the stack
+model = quantise(model, int8)          # shrink what survived
+model = huffman_encode(model)          # and entropy-code the result
+
+benchmark(model, target_device)        # <-- the only number that matters
+# next: Neural Architecture Search -- stop pruning a guess, search the shape.`}
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s, i) => { const bn = document.createElement("button"); bn.className = "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-violet-400 text-sm"; bn.innerHTML = '<div class="font-semibold">' + s.title + '</div>'; bn.onclick = () => showStep(i); stepsEl.appendChild(bn); });
+function showStep(i) {
+  curS = i; const s = STEPS[i];
+  document.getElementById("concept").innerHTML = '<div class="fade-in w-full flex items-center justify-center">' + s.concept + '</div>';
+  document.getElementById("why").innerHTML = '<span class="fade-in inline-block">' + s.why + '</span>';
+  document.getElementById("code").textContent = s.code;
+  stepsEl.querySelectorAll("button").forEach((bn, idx) => { bn.className = idx === i ? "w-full text-left p-3 rounded-lg border-2 border-violet-500 bg-violet-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-violet-400 text-sm"; });
+}
+prevB.onclick = () => showStep(Math.max(0, curS - 1));
+nextB.onclick = () => showStep(Math.min(STEPS.length - 1, curS + 1));
+let tm = null;
+autoB.onclick = () => {
+  if (tm) { clearInterval(tm); tm = null; autoB.textContent = "▶ Auto-play"; return; }
+  autoB.textContent = "⏸ Pause"; showStep(0);
+  tm = setInterval(() => { if (curS >= STEPS.length - 1) { clearInterval(tm); tm = null; autoB.textContent = "▶ Replay"; return; } showStep(curS + 1); }, 4600);
+};
+showStep(0);
+function copy(btn) { const pre = btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500); }
+
+buildPipeline();
+</script>
+</body>
+</html>

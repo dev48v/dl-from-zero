@@ -62,6 +62,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 58 — Spectral Normalization](https://dev48v.infy.uk/dl/day58-spectral-normalization.html) — `day58-spectral-normalization.html`
 - [DeepLearningFromZero · Day 59 — Dilated (Atrous) Convolutions](https://dev48v.infy.uk/dl/day59-dilated-convolutions.html) — `day59-dilated-convolutions.html`
 - [DeepLearningFromZero · Day 60 — Grad-CAM](https://dev48v.infy.uk/dl/day60-grad-cam.html) — `day60-grad-cam.html`
+- [DeepLearningFromZero · Day 61 — Network Pruning](https://dev48v.infy.uk/dl/day61-network-pruning.html) — `day61-network-pruning.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk
