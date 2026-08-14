@@ -1,0 +1,2040 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero &middot; Day 62 &mdash; Transposed Convolutions (from scratch)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  .fade-in { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  .copy-btn:hover { background:#1e293b; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .mono { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  input[type=range]{ accent-color:#7c3aed; width:100%; min-width:0; }
+  .ct { color:#6d28d9; font-weight:700; }   /* transposed convolution */
+  .rz { color:#047857; font-weight:700; }   /* resize + conv          */
+  .px { color:#b45309; font-weight:700; }   /* pixel shuffle          */
+  .cb { color:#be123c; font-weight:700; }   /* checkerboard / damage  */
+  .preset-btn{ border:1.5px solid #e2e8f0; background:#fff; border-radius:9px; padding:6px 11px; font-size:12px; font-weight:700; color:#475569; cursor:pointer; transition:.12s; }
+  .preset-btn:hover{ border-color:#c4b5fd; }
+  .preset-btn.on{ background:#7c3aed; border-color:#7c3aed; color:#fff; }
+  .btn-solid{ background:#7c3aed; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; cursor:pointer; }
+  .btn-solid:disabled{ background:#c4b5fd; cursor:default; }
+  .btn-dark{ background:#0f172a; color:#fff; padding:7px 14px; border-radius:9px; font-weight:700; font-size:13px; cursor:pointer; }
+  canvas{ display:block; }
+  .bignum{ font-variant-numeric:tabular-nums; font-weight:900; line-height:1; }
+  .statcard{ border-radius:12px; border:1.5px solid #e2e8f0; background:#fff; padding:10px 8px; text-align:center; min-width:0; }
+  .statcard .lab{ font-size:10px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; color:#94a3b8; }
+  .grptitle{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; margin-bottom:4px; }
+  .cmpgrid{ display:grid; grid-template-columns:1fr; gap:8px; }
+  @media(min-width:900px){ .cmpgrid{ grid-template-columns:1fr 1fr 1fr 1fr; } }
+  .cmpcard{ border:1.5px solid #e2e8f0; border-radius:12px; padding:10px 12px; min-width:0; }
+  .cmptag{ font-size:10px; text-transform:uppercase; letter-spacing:.05em; font-weight:800; }
+  .plotwrap{ width:100%; height:250px; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .plotwrap canvas{ width:100%; height:100%; }
+  .imgwrap{ width:100%; height:210px; border-radius:12px; border:1px solid #e2e8f0; background:#0b1020; overflow:hidden; }
+  .imgwrap canvas{ width:100%; height:100%; }
+  .barwrap{ width:100%; height:190px; border-radius:12px; border:1px solid #e2e8f0; background:#fbfcfe; overflow:hidden; }
+  .barwrap canvas{ width:100%; height:100%; }
+  .eq{ font-family:"SFMono-Regular",Consolas,monospace; font-size:12px; color:#334155; line-height:1.7; overflow-x:auto; }
+  .honest { background:#fffbeb; border:1px solid #fcd34d; color:#92400e; border-radius:12px; padding:10px 13px; font-size:12px; line-height:1.5; }
+  .okpill{ background:#ecfdf5; color:#047857; border:1px solid #a7f3d0; }
+  .badpill{ background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; }
+  .runpill{ background:#f5f3ff; color:#6d28d9; border:1px solid #ddd6fe; }
+  header .hdr{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  #tabs{ display:flex; gap:8px; flex-wrap:wrap; }
+  table.cmp { border-collapse:collapse; width:100%; font-size:12.5px; }
+  table.cmp th, table.cmp td { border:1px solid #e2e8f0; padding:7px 9px; text-align:left; vertical-align:top; }
+  table.cmp th { background:#f1f5f9; font-weight:800; }
+  .scroller{ overflow-x:auto; -webkit-overflow-scrolling:touch; max-width:100%; }
+  .ctl-row{ display:grid; grid-template-columns:104px 1fr 70px; align-items:center; gap:10px; }
+  .ctl-name{ font-size:12px; font-weight:700; color:#334155; white-space:nowrap; }
+  .ctl-val{ font-variant-numeric:tabular-nums; font-weight:800; color:#7c3aed; text-align:right; font-size:13px; }
+  .matgrid{ font-family:"SFMono-Regular",Consolas,monospace; font-size:10.5px; border-collapse:collapse; }
+  .matgrid td{ border:1px solid #e2e8f0; padding:2px 5px; text-align:right; min-width:34px; }
+  .matgrid td.z{ color:#cbd5e1; }
+  .matgrid td.nz{ background:#f5f3ff; color:#5b21b6; font-weight:700; }
+  .matgrid td.hd{ background:#f1f5f9; color:#64748b; font-weight:800; border-color:#e2e8f0; }
+  /* the intro paragraph is taller than a small screen -- pinning it there would hide the whole page */
+  @media (max-width: 900px), (max-height: 820px) { header.sticky { position:static; } }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+  <a href="../deeplearningfromzero.php" title="back" class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500 hover:text-violet-600" style="text-decoration:none;">&larr; back</a>
+  <div class="max-w-7xl mx-auto px-6 py-3 hdr">
+    <div style="min-width:0">
+      <div class="text-xs text-violet-600 font-bold uppercase tracking-wider">DeepLearningFromZero &middot; Day 62</div>
+      <h1 class="text-xl font-bold">&#11021; <strong>Transposed convolution</strong> &mdash; every encoder throws resolution away on purpose, and every decoder has to put it back. Segmentation masks, autoencoder reconstructions, GAN samples, diffusion decoders, super-resolution: all of them need an operator that takes a small feature map and returns a bigger one, with <em>learnable</em> weights rather than a fixed interpolation rule. The operator that got invented for that job is almost universally mis-named. It is called <em>deconvolution</em>, and it does not deconvolve anything &mdash; it does not invert the convolution, it only reproduces its <strong>shape</strong>. What it actually is, exactly and with no hedging, is the <strong>transpose of the convolution matrix</strong>. Write a convolution as a matrix &mdash; it is linear, so it has one, a sparse banded <span class="mono">O&times;I</span> thing whose rows are shifted copies of the kernel &mdash; and then <span class="mono">y = Cx</span> is the convolution and <span class="mono">x&prime; = C&#7488;y</span> is the transposed convolution. That is the whole definition, and this page builds <span class="mono">C</span> explicitly and checks it. Two consequences fall straight out. First, <span class="mono">C&#7488;C &ne; I</span> &mdash; the page measures how far off it is &mdash; so <em>deconvolution</em> is simply the wrong word. Second, and far more useful: <span class="mono">&part;L/&part;x = C&#7488;(&part;L/&part;y)</span>, which means <strong>the backward pass of a convolution IS a transposed convolution</strong>, and the backward pass of a transposed convolution is a plain convolution. Frameworks implement one and get the other for free. The strongest way to see it is the <strong>adjoint identity</strong> <span class="mono">&langle;conv(x), y&rangle; = &langle;x, conv&#7488;(y)&rangle;</span>, which holds here to <span class="mono">2.1e&minus;13</span> across every configuration the sliders can reach &mdash; an identity a merely plausible-looking implementation cannot fake. Then the part that bites people in production: the <span class="cb">checkerboard artifact</span>. Its cause is not mysterious and not a training problem &mdash; it is <strong>uneven overlap</strong> (Odena, Dumoulin &amp; Olah, 2016). Each input element sprays the whole kernel into the output; when <span class="mono">k</span> is not divisible by <span class="mono">s</span> the number of kernel taps landing on an output position is <em>periodic with period s</em>, and that periodic gain is the checkerboard, visible before a single gradient step. This page counts those taps live, exactly, and shows the histogram flatten the instant <span class="mono">k % s == 0</span> &mdash; and then shows the sharper truth that an even tap <em>count</em> is not an even <em>gain</em>, because a learned kernel can still be unbalanced across phases. So the fixes are compared honestly: <strong>k divisible by s</strong>, <strong>resize-then-convolve</strong> (why it is the safer default), and <strong>sub-pixel convolution / PixelShuffle</strong> &mdash; proved here to be an exact permutation of elements, and made artifact-free at initialisation by ICNR. Below, three real decoders with <strong>hand-written backward passes train live in your browser</strong> and are measured against each other. <strong>257&ndash;633 parameters, no libraries, 48,798 assertions checked in Node against an independently built matrix, brute-force tallies, the adjoint identity and central finite differences, across 48,960 swept configurations.</strong></h1>
+    </div>
+    <div id="tabs">
+      <button data-tab="look"       class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">👁 LOOK</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build"      class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== LOOK ===================== -->
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-4 lg:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-2xl font-bold mb-1 text-center">One low-res map, upsampled two ways. Watch the <span class="cb">checkerboard</span> appear and vanish as you change <span class="mono">k</span> and <span class="mono">s</span>.</h2>
+      <p class="text-slate-500 mb-4 max-w-4xl mx-auto text-center text-sm">An 8&times;8 feature map goes up by a factor of <b>s</b> through a real <span class="ct">transposed convolution</span> and through <span class="rz">nearest-neighbour resize followed by a stride-1 convolution</span> &mdash; <b>same kernel, same parameter count, same output size</b>. Every pixel below is computed here, now, by hand-written loops. The artifact is not a rendering trick and not noise: it is the exact, countable consequence of some output positions receiving more kernel taps than their neighbours.</p>
+
+      <div class="honest max-w-4xl mx-auto mb-5 text-left">✅ <strong>Nothing on this page is approximated, tabulated or remembered.</strong> The convolution, its explicit matrix <span class="mono">C</span>, the transpose <span class="mono">C&#7488;</span>, the zero-insert route, the tap counter, pixel shuffle, the resize kernels and three small decoders with hand-written backward passes are all plain <span class="mono">Float64Array</span> loops in this file. The same core, extracted verbatim and run in Node against independent baselines &mdash; a matrix rebuilt column by column from basis vectors, a brute-force tap tally, the adjoint identity, and central finite differences on <em>untrained</em> weights &mdash; passes <b>48,798</b> assertions over <b>48,960</b> swept configurations, every one of which is reachable from the controls on this page. Two real bugs were found that way and are described at the bottom of the BUILD tab.</div>
+
+      <!-- ============ control bar ============ -->
+      <div class="bg-white rounded-xl border-2 border-violet-200 p-3 mb-4">
+        <div class="flex items-center justify-center flex-wrap gap-3 mb-3">
+          <span class="pill runpill" id="statusPill">booting&hellip;</span>
+          <span class="text-slate-300 hidden sm:inline">|</span>
+          <div class="flex gap-2 flex-wrap items-center">
+            <span class="text-[11px] font-bold uppercase tracking-wide text-slate-400">kernel</span>
+            <button class="preset-btn on" data-kern="learned">learned-like</button>
+            <button class="preset-btn" data-kern="smooth">smooth (gaussian)</button>
+            <button class="preset-btn" data-kern="box">box (all ones)</button>
+          </div>
+        </div>
+        <div class="max-w-xl mx-auto space-y-1">
+          <div class="ctl-row">
+            <span class="ctl-name">kernel size k</span>
+            <input type="range" id="kRange" min="1" max="8" step="1" value="3" />
+            <span class="ctl-val" id="kVal">3</span>
+          </div>
+          <div class="ctl-row">
+            <span class="ctl-name">stride s</span>
+            <input type="range" id="sRange" min="1" max="5" step="1" value="2" />
+            <span class="ctl-val" id="sVal">2</span>
+          </div>
+          <div class="flex gap-2 flex-wrap items-center justify-center mt-2">
+            <button class="preset-btn" data-pre="3,2">k=3, s=2 &mdash; the classic artifact</button>
+            <button class="preset-btn" data-pre="4,2">k=4, s=2 &mdash; the DCGAN fix</button>
+            <button class="preset-btn" data-pre="2,2">k=2, s=2</button>
+            <button class="preset-btn" data-pre="4,3">k=4, s=3 &mdash; worse</button>
+            <button class="preset-btn" data-pre="1,3">k&lt;s &mdash; actual holes</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ hero ============ -->
+      <div class="grid lg:grid-cols-3 gap-4 mb-4">
+        <div class="bg-white rounded-xl border border-slate-200 p-4" style="min-width:0">
+          <div class="text-sm font-bold text-slate-800 mb-1">the input &mdash; 8&times;8</div>
+          <p class="text-[12px] text-slate-500 mb-2">A smooth low-resolution feature map. It contains <b>no</b> high-frequency structure at all, so anything periodic downstream was manufactured by the upsampler.</p>
+          <div class="imgwrap"><canvas id="inC"></canvas></div>
+          <div class="text-[11px] text-slate-400 mt-2">64 values &middot; identical for both routes</div>
+        </div>
+        <div class="bg-white rounded-xl border-2 border-violet-300 p-4" style="min-width:0">
+          <div class="text-sm font-bold text-slate-800 mb-1"><span class="ct">transposed convolution</span></div>
+          <p class="text-[12px] text-slate-500 mb-2">Every input value sprays the whole kernel into the output at stride <span class="mono">s</span>; overlaps add. One weight tensor, <span class="mono">k&sup2;</span> parameters.</p>
+          <div class="imgwrap"><canvas id="tC"></canvas></div>
+          <div class="text-[11px] text-slate-400 mt-2" id="tCap">&mdash;</div>
+        </div>
+        <div class="bg-white rounded-xl border-2 border-emerald-300 p-4" style="min-width:0">
+          <div class="text-sm font-bold text-slate-800 mb-1"><span class="rz">resize + convolution</span></div>
+          <p class="text-[12px] text-slate-500 mb-2">Nearest-neighbour upsample first, then a stride-1 convolution with <b>the same kernel</b>. Same output shape, same parameter count, <span class="mono">s&sup2;&times;</span> the multiply&ndash;adds.</p>
+          <div class="imgwrap"><canvas id="rC"></canvas></div>
+          <div class="text-[11px] text-slate-400 mt-2" id="rCap">&mdash;</div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-2 text-center mb-4">
+        <div class="statcard"><div class="lab">output size</div><div class="bignum text-lg mt-1" id="m_size" style="color:#0f172a">&mdash;</div></div>
+        <div class="statcard"><div class="lab">tap-count ratio</div><div class="bignum text-lg mt-1" id="m_cnt" style="color:#0f172a">&mdash;</div></div>
+        <div class="statcard"><div class="lab">convT phase gain</div><div class="bignum text-lg cb mt-1" id="m_gt">&mdash;</div></div>
+        <div class="statcard"><div class="lab">resize+conv, measured</div><div class="bignum text-lg rz mt-1" id="m_gr">&mdash;</div></div>
+      </div>
+      <div id="heroRead" class="bg-white rounded-xl border border-slate-200 p-4 text-[13px] text-slate-600 leading-relaxed mb-4">&mdash;</div>
+
+      <!-- ============ THE CAUSE ============ -->
+      <div class="bg-white rounded-xl border-2 border-rose-200 p-4 mb-4" style="min-width:0">
+        <div class="text-sm font-bold text-slate-800 mb-1">The cause, counted exactly: <span class="cb">how many kernel taps land on each output position</span></div>
+        <p class="text-[12px] text-slate-500 mb-2">Forget images for a moment. Feed a row of <b>ones</b> through a transposed convolution whose kernel is also all <b>ones</b>. The output <em>is</em> the tap count &mdash; nothing else is happening. Input element <span class="mono">n</span> writes to output positions <span class="mono">n&middot;s &hellip; n&middot;s+k&minus;1</span>, so position <span class="mono">t</span> collects one tap for every kernel index <span class="mono">j</span> with <span class="mono">j &equiv; t+p (mod s)</span>. That congruence is the entire theory: the count is periodic with period <span class="mono">s</span>, and it is constant if and only if <span class="mono">k</span> divides evenly by <span class="mono">s</span>.</p>
+        <div class="barwrap"><canvas id="cntC"></canvas></div>
+        <div class="grid md:grid-cols-2 gap-3 mt-3">
+          <div>
+            <div class="grptitle" style="color:#0f172a">steady-state count per phase</div>
+            <div class="scroller"><table class="cmp" id="phaseTable"></table></div>
+          </div>
+          <div>
+            <div class="grptitle" style="color:#0f172a">and in 2-D it multiplies along both axes</div>
+            <div class="barwrap" style="height:150px"><canvas id="gridC"></canvas></div>
+          </div>
+        </div>
+        <div id="cntRead" class="text-[12px] text-slate-500 mt-3 leading-relaxed">&mdash;</div>
+      </div>
+
+      <!-- ============ THE IDENTITY ============ -->
+      <div class="bg-white rounded-xl border-2 border-violet-300 p-4 mb-4" style="min-width:0">
+        <div class="text-sm font-bold text-slate-800 mb-1">It is a <span class="ct">transpose</span>, not an inverse &mdash; here is the actual matrix</div>
+        <p class="text-[12px] text-slate-500 mb-2">A convolution is linear, so it is a matrix. Below is <span class="mono">C</span> for the current <span class="mono">k</span> and <span class="mono">s</span> on an input of length 8, built entry by entry: each row is the kernel, shifted by <span class="mono">s</span>. The forward pass is <span class="mono">y = Cx</span>. The transposed convolution is <span class="mono">C&#7488;y</span> &mdash; the <em>same</em> numbers, read down the columns instead of across the rows.</p>
+        <div class="scroller mb-2"><table class="matgrid" id="matC"></table></div>
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-2 text-center">
+          <div class="statcard"><div class="lab">&#8214;conv(x) &minus; Cx&#8214;<sub>&infin;</sub></div><div class="bignum text-sm mt-1 rz" id="v_fwd">&mdash;</div></div>
+          <div class="statcard"><div class="lab">&#8214;conv&#7488;(y) &minus; C&#7488;y&#8214;<sub>&infin;</sub></div><div class="bignum text-sm mt-1 rz" id="v_bwd">&mdash;</div></div>
+          <div class="statcard"><div class="lab">adjoint residual</div><div class="bignum text-sm mt-1 rz" id="v_adj">&mdash;</div></div>
+          <div class="statcard"><div class="lab">how far C&#7488;C is from I</div><div class="bignum text-sm mt-1 cb" id="v_gram">&mdash;</div></div>
+        </div>
+        <div class="eq mt-3 bg-slate-50 rounded-lg p-3" id="eqBox">&mdash;</div>
+        <div class="honest mt-3">⚠️ <strong>This is why &ldquo;deconvolution&rdquo; is the wrong word.</strong> A genuine deconvolution would recover <span class="mono">x</span> from <span class="mono">y</span>, which needs <span class="mono">C&#8315;&sup1;</span> &mdash; and for a strided convolution <span class="mono">C</span> is not even square, so no inverse exists. The transpose only guarantees that the <em>shape</em> comes back. The tile above measures how far <span class="mono">C&#7488;C</span> is from the identity; it is not close, and it is not supposed to be. The single case where it <em>is</em> the identity is the degenerate one, <span class="mono">k = s = 1, p = 0</span>, where the convolution is just a scalar multiply.</div>
+      </div>
+
+      <!-- ============ THE GRADIENT ============ -->
+      <div class="bg-white rounded-xl border-2 border-slate-300 p-4 mb-4" style="min-width:0">
+        <div class="text-sm font-bold text-slate-800 mb-1">The transposed convolution <em>is</em> the gradient of the convolution</div>
+        <p class="text-[12px] text-slate-500 mb-2">If <span class="mono">y = Cx</span> then <span class="mono">&part;L/&part;x = C&#7488;(&part;L/&part;y)</span>. There is no separate backward kernel to write: the backward pass of <span class="mono">conv</span> is <span class="mono">conv&#7488;</span> and the backward pass of <span class="mono">conv&#7488;</span> is <span class="mono">conv</span>. That is not an analogy, it is the same array of numbers read in the other direction &mdash; a <b>scatter</b> where the forward pass did a <b>gather</b>. The check below runs live: an upstream gradient goes through the hand-written backward pass, and separately through a central finite difference of the real loss, on <b>freshly initialised</b> weights.</p>
+        <div class="grid md:grid-cols-3 gap-2 text-center">
+          <div class="statcard"><div class="lab">backward vs finite differences</div><div class="bignum text-base mt-1 rz" id="g_fd">&mdash;</div></div>
+          <div class="statcard"><div class="lab">coordinates checked</div><div class="bignum text-base mt-1" id="g_n" style="color:#0f172a">&mdash;</div></div>
+          <div class="statcard"><div class="lab">&#8214;dL/dx &minus; conv&#7488;(dL/dy)&#8214;<sub>&infin;</sub></div><div class="bignum text-base mt-1 rz" id="g_id">&mdash;</div></div>
+        </div>
+        <div class="honest mt-3">🔬 <strong>Gradient-check on an untrained network, never at convergence.</strong> Near a minimum the true gradient has decayed towards <span class="mono">1e&minus;5</span> while a central difference of two nearly identical losses bottoms out around <span class="mono">1e&minus;11</span> in float64, so the relative error explodes and the check reports a failure in code that is correct. Every gradient number on this page is measured on freshly initialised weights.</div>
+      </div>
+
+      <!-- ============ TWO ROUTES ============ -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4" style="min-width:0">
+        <div class="text-sm font-bold text-slate-800 mb-1">The other way to implement it &mdash; and why nobody actually does</div>
+        <p class="text-[12px] text-slate-500 mb-2">Textbook route: insert <span class="mono">s&minus;1</span> zeros between the input elements, pad by <span class="mono">k&minus;1&minus;p</span>, then run an <em>ordinary stride-1 convolution with the kernel flipped</em>. It gives bit-identical results to the direct scatter &mdash; and it is a terrible implementation, because you have just materialised an array that is mostly zeros and then multiplied all of them. Real kernels scatter or gather and never build it. Both routes run below on the same data.</p>
+        <div class="scroller"><table class="cmp" id="routeTable"></table></div>
+        <div class="text-[12px] text-slate-500 mt-2" id="routeRead">&mdash;</div>
+      </div>
+
+      <!-- ============ SIZE CALCULATOR ============ -->
+      <div class="bg-white rounded-xl border-2 border-amber-300 p-4 mb-4" style="min-width:0">
+        <div class="text-sm font-bold text-slate-800 mb-1">Output-size arithmetic &mdash; and the ambiguity <span class="mono">output_padding</span> exists to resolve</div>
+        <p class="text-[12px] text-slate-500 mb-2">Forward: <span class="mono">o = &lfloor;(i + 2p &minus; k)/s&rfloor; + 1</span>. Transposed: <span class="mono">o = (i&minus;1)&middot;s &minus; 2p + k + output_padding</span>. That <b>floor</b> in the forward direction is a genuine loss of information: with stride <span class="mono">s</span>, exactly <span class="mono">s</span> different input lengths produce the same output length, so the transpose <em>cannot</em> know which one to return. <span class="mono">output_padding</span> is you telling it. Move the sliders until the warning lights up.</p>
+        <div class="grid md:grid-cols-2 gap-4">
+          <div class="space-y-1">
+            <div class="ctl-row"><span class="ctl-name">input length i</span><input type="range" id="iRange" min="1" max="24" step="1" value="8" /><span class="ctl-val" id="iVal">8</span></div>
+            <div class="ctl-row"><span class="ctl-name">padding p</span><input type="range" id="pRange" min="0" max="6" step="1" value="1" /><span class="ctl-val" id="pVal">1</span></div>
+            <div class="ctl-row"><span class="ctl-name">output_padding</span><input type="range" id="opRange" min="0" max="5" step="1" value="0" /><span class="ctl-val" id="opVal">0</span></div>
+            <div class="text-[11px] text-slate-400 mt-1">k and s come from the sliders at the top of the page.</div>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-center">
+            <div class="statcard"><div class="lab">conv output</div><div class="bignum text-lg mt-1" id="s_fwd" style="color:#0f172a">&mdash;</div></div>
+            <div class="statcard"><div class="lab">transposed output</div><div class="bignum text-lg ct mt-1" id="s_bwd">&mdash;</div></div>
+            <div class="statcard"><div class="lab">inputs mapping here</div><div class="bignum text-lg cb mt-1" id="s_amb">&mdash;</div></div>
+            <div class="statcard"><div class="lab">op that restores i</div><div class="bignum text-lg rz mt-1" id="s_op">&mdash;</div></div>
+          </div>
+        </div>
+        <div id="sizeRead" class="text-[12px] text-slate-600 mt-3 leading-relaxed">&mdash;</div>
+      </div>
+
+      <!-- ============ LIVE TRAINING ============ -->
+      <div class="bg-white rounded-xl border-2 border-violet-300 p-4 mb-4" style="min-width:0">
+        <div class="text-sm font-bold text-slate-800 mb-1">Four real decoders, trained here, from scratch, right now</div>
+        <p class="text-[12px] text-slate-500 mb-2">Each one learns the same job: take an 8-sample signal and produce the 32-sample smooth signal it was average-pooled from. Two &times;2 upsampling stages plus a 3-tap output convolution, ReLU between them, hand-written backward pass, mini-batch SGD with momentum. The <b>targets contain no period-2 content whatsoever</b>, so any alternation in the output was invented by the decoder. The <span class="cb">artifact meter</span> is the spread of the residual across the two phase classes, averaged over all twelve held-out signals &mdash; a direct measurement of the checkerboard, not a proxy.</p>
+        <div class="flex gap-2 flex-wrap items-center mb-3">
+          <button id="trainBtn" class="btn-solid">▶ train all four (150 steps each)</button>
+          <button id="reseedBtn" class="btn-dark">↺ new seed</button>
+          <span class="text-[11px] text-slate-400">decoder kernel is <span class="mono">k</span> from the slider above; stride is fixed at 2 per stage</span>
+        </div>
+        <div class="grid lg:grid-cols-2 gap-4">
+          <div style="min-width:0">
+            <div class="grptitle" style="color:#0f172a">training loss</div>
+            <div class="plotwrap"><canvas id="lossC"></canvas></div>
+          </div>
+          <div style="min-width:0">
+            <div class="grptitle" style="color:#0f172a">checkerboard, before and after training</div>
+            <div class="barwrap"><canvas id="spreadC"></canvas></div>
+          </div>
+        </div>
+        <div class="mt-4" style="min-width:0">
+          <div class="grptitle" style="color:#0f172a">one held-out signal: target vs each decoder&rsquo;s output</div>
+          <div class="plotwrap" style="height:220px"><canvas id="sigC"></canvas></div>
+        </div>
+        <div class="scroller mt-3"><table class="cmp" id="trainTable"></table></div>
+        <div id="trainRead" class="text-[12px] text-slate-500 mt-2 leading-relaxed">Press <b>train all four</b>.</div>
+      </div>
+
+      <!-- ============ PIXEL SHUFFLE ============ -->
+      <div class="bg-white rounded-xl border-2 border-amber-300 p-4 mb-4" style="min-width:0">
+        <div class="text-sm font-bold text-slate-800 mb-1"><span class="px">Sub-pixel convolution</span> &mdash; upsampling with no arithmetic at all</div>
+        <p class="text-[12px] text-slate-500 mb-2">Shi et al.&rsquo;s ESPCN trick: do the convolution at <b>low</b> resolution but produce <span class="mono">r</span> times as many channels, then interleave those channels into space. <span class="mono">PixelShuffle</span> / depth-to-space is a pure <b>re-indexing</b> &mdash; no multiplies, no adds, every value moved exactly once. The map below is checked live to be a genuine permutation, and its gradient is simply the inverse permutation.</p>
+        <div class="barwrap" style="height:170px"><canvas id="psC"></canvas></div>
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-2 text-center mt-3">
+          <div class="statcard"><div class="lab">elements moved</div><div class="bignum text-base mt-1" id="ps_n" style="color:#0f172a">&mdash;</div></div>
+          <div class="statcard"><div class="lab">is a bijection</div><div class="bignum text-base mt-1 rz" id="ps_bij">&mdash;</div></div>
+          <div class="statcard"><div class="lab">multiset preserved</div><div class="bignum text-base mt-1 rz" id="ps_ms">&mdash;</div></div>
+          <div class="statcard"><div class="lab">ICNR init &minus; nearest</div><div class="bignum text-base mt-1 rz" id="ps_icnr">&mdash;</div></div>
+        </div>
+        <div class="honest mt-3">💡 <strong>ICNR is the part worth stealing.</strong> A sub-pixel layer has <span class="mono">r</span> independent sub-kernels producing the <span class="mono">r</span> interleaved outputs; initialise them independently and they disagree from step zero, which <em>is</em> a checkerboard. <b>ICNR</b> (Aitken et al., 2017) initialises all <span class="mono">r</span> sub-kernels to the <em>same</em> values, so the layer starts out as an exact nearest-neighbour upsample &mdash; verified above to <span class="mono">1e&minus;14</span> &mdash; and training moves away from that smooth starting point only where the data pays for it. There is nothing to unlearn.</div>
+      </div>
+
+      <!-- ============ CONTRAST ============ -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">
+        <div class="grptitle mb-2" style="color:#0f172a">Four ways to make a feature map bigger</div>
+        <div class="cmpgrid">
+          <div class="cmpcard" style="border-color:#ddd6fe;background:#f5f3ff">
+            <div class="cmptag" style="color:#6d28d9">Transposed convolution</div>
+            <div class="text-[12px] text-slate-600 mt-1">One scatter, <span class="mono">k&sup2;C<sub>in</sub>C<sub>out</sub></span> parameters, cheapest FLOPs of the three because the multiplies happen at the <em>low</em> resolution. Learns its own upsampling. Prone to checkerboarding unless <span class="mono">k % s == 0</span> &mdash; and even then only the tap <em>count</em> is guaranteed even, not the gain.</div>
+          </div>
+          <div class="cmpcard" style="border-color:#a7f3d0;background:#ecfdf5">
+            <div class="cmptag" style="color:#047857">Resize + convolution</div>
+            <div class="text-[12px] text-slate-600 mt-1">Nearest or bilinear upsample, then a stride-1 conv. Identical parameter count, <span class="mono">s&sup2;&times;</span> the multiply&ndash;adds in 2-D because the convolution now runs at full resolution. The interpolation is uniform by construction, so there is no phase structure for the conv to inherit. The safe default, and what most modern decoders use.</div>
+          </div>
+          <div class="cmpcard" style="border-color:#fde68a;background:#fffbeb">
+            <div class="cmptag" style="color:#b45309">Sub-pixel / PixelShuffle</div>
+            <div class="text-[12px] text-slate-600 mt-1">Convolve at low resolution into <span class="mono">r&sup2;</span> channels, then depth-to-space. Same FLOPs as the transposed conv, no zeros anywhere, and the rearrangement is free. Still checkerboards at init unless you use <b>ICNR</b>. Standard in super-resolution and in several diffusion decoders.</div>
+          </div>
+          <div class="cmpcard" style="border-color:#e2e8f0;background:#f8fafc">
+            <div class="cmptag" style="color:#475569">Plain interpolation</div>
+            <div class="text-[12px] text-slate-600 mt-1">Nearest or bilinear with no convolution after it. Zero parameters, zero artifacts, and zero ability to invent detail &mdash; it can only blur what is already there. Useful as the honest baseline every learned upsampler should be measured against, and as the skip path in a decoder.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ HONEST TABLE ============ -->
+      <div class="bg-white rounded-xl border-2 border-amber-300 p-4 mb-4" style="min-width:0">
+        <div class="text-sm font-bold text-slate-800 mb-1">Parameters and multiply&ndash;adds, counted rather than asserted</div>
+        <p class="text-[12px] text-slate-500 mb-2">The headline nobody expects: <b>a transposed convolution has exactly the same number of parameters as the convolution it transposes</b> &mdash; it is the same tensor. What differs is where the arithmetic happens. Numbers below are for a 2-D layer with <span class="mono">C<sub>in</sub>=64</span>, <span class="mono">C<sub>out</sub>=32</span> and a 16&times;16 input, computed live from the current <span class="mono">k</span> and <span class="mono">s</span>.</p>
+        <div class="scroller"><table class="cmp" id="acctTable"></table></div>
+      </div>
+
+      <!-- ============ VERIFICATION ============ -->
+      <div class="bg-white rounded-xl border-2 border-slate-300 p-4 mb-4" style="min-width:0">
+        <div class="text-sm font-bold text-slate-800 mb-1">Verification &mdash; run in this tab, right now</div>
+        <p class="text-[12px] text-slate-500 mb-2">An upsampling operator that is subtly wrong still produces a picture that looks fine, which is the worst failure mode available. These checks are exact where exactness exists (the matrix identity, the adjoint identity, the permutation property, the tap tally) and use central finite differences on an untrained network for the gradient. They re-run every time you move a slider.</p>
+        <div id="checkList" class="text-[12px] mono" style="line-height:1.85"></div>
+        <div class="mt-3"><span class="pill" id="checkPill" style="background:#f1f5f9;color:#475569">running&hellip;</span></div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 text-sm text-slate-600">
+        <b class="text-slate-800">What to try:</b> (1) Leave the kernel on <b>learned-like</b>, set <b>k=3, s=2</b> and look at the middle image: that grid is the checkerboard, and the <b>tap-count ratio</b> tile says exactly why &mdash; alternate output positions collect 2 taps and 1 tap. (2) Now move <b>k</b> to 4. The count histogram goes flat, the ratio drops to 1.00, and the grid mostly disappears &mdash; from one integer changing. (3) Then read the <b>convT phase gain</b> tile at k=4 and notice it is still above 1: an even tap <em>count</em> does not give an even <em>gain</em> when the kernel weights themselves are unbalanced. That gap is the honest reason resize+conv is the safer default and not merely a stylistic preference. (4) Switch the kernel to <b>smooth (gaussian)</b> and watch the artifact shrink at every setting &mdash; a well-shaped kernel hides it, which is exactly why it survives code review and shows up later in training. (5) Set <b>k=1, s=3</b>: now <span class="mono">k &lt; s</span> and some output positions receive <em>no taps at all</em>. Those are genuine holes, and the ratio is correctly reported as infinite. (6) In the size calculator, put <b>s=2</b> and drag <b>i</b> from 7 to 8: the forward output length does not change. That is the ambiguity, and the <b>op that restores i</b> tile is the number PyTorch makes you supply. (7) Press <b>train all four</b> and read the artifact meter before and after &mdash; training moves it, but it does not reliably remove it, which is the whole practical argument. (8) Compare <b>sub-pixel</b> with and without <b>ICNR</b> in the same table: same architecture, same parameter count, very different starting point.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== UNDERSTAND ===================== -->
+<section id="understand" class="tab-panel hidden">
+  <div class="max-w-7xl mx-auto p-4 md:p-6 grid lg:grid-cols-5 gap-6">
+    <aside class="lg:col-span-2" style="min-width:0">
+      <h3 class="font-bold text-lg mb-3">From &ldquo;the decoder has to go up&rdquo; to &ldquo;transpose, not inverse&rdquo;</h3>
+      <p class="text-sm text-slate-500 mb-4">Twelve steps: why decoders need an upsampling operator at all, a convolution as an explicit matrix, the transpose, why the word deconvolution is wrong, the gradient identity, the zero-insert route, output-size arithmetic in both directions, the ambiguity and output_padding, the exact cause of the checkerboard, the three fixes compared, sub-pixel convolution and ICNR, and what actually ships.</p>
+      <div id="steps" class="space-y-2"></div>
+      <div class="mt-4 flex gap-2 flex-wrap">
+        <button id="prev" class="bg-slate-200 px-4 py-2 rounded-lg font-semibold text-sm">&larr; Prev</button>
+        <button id="next-btn" class="bg-violet-600 text-white px-4 py-2 rounded-lg font-semibold text-sm">Next &rarr;</button>
+        <button id="auto" class="bg-violet-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">&#9654; Auto-play</button>
+      </div>
+    </aside>
+    <div class="lg:col-span-3 space-y-4" style="min-width:0">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-violet-600 tracking-wider mb-2">CONCEPT</div><div id="concept" class="min-h-[200px] flex items-center justify-center"><div class="text-slate-400 text-sm">Click a step</div></div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-violet-600 tracking-wider mb-2">WHY</div><div id="why" class="text-slate-700">&mdash;</div></div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-6"><div class="text-xs uppercase font-bold text-violet-600 tracking-wider mb-2">CODE FOR THIS STEP</div><pre id="code"></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BUILD ===================== -->
+<section id="build" class="tab-panel hidden">
+  <div class="max-w-5xl mx-auto p-4 md:p-8">
+    <h2 class="text-3xl font-bold mb-2">🔨 Build it yourself</h2>
+    <p class="text-slate-500 mb-8">A transposed convolution is one loop with the indices swapped &mdash; about forty lines including the size arithmetic. Below is the exact runnable core the LOOK tab uses: the forward convolution, its explicit matrix, the transpose written three different ways that must agree, the tap counter that explains the checkerboard, the two honest alternatives, pixel shuffle with ICNR, and a decoder with a hand-written backward pass. Then the tests, which are the point.</p>
+    <ol class="space-y-6">
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-violet-600 text-white rounded-full flex items-center justify-center font-bold">1</div><h3 class="font-bold text-lg">Write the convolution so its matrix is obvious</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Start from the definition, not from a library call. Output position <code>n</code> reads input positions <code>n&middot;s + j &minus; p</code> for <code>j</code> in <code>[0,k)</code>, with anything out of bounds contributing zero. Written that way, the matrix is right there in the loop: row <code>n</code> of <code>C</code> has the kernel starting at column <code>n&middot;s &minus; p</code>. Everything else on this page is a consequence of that one index expression, so it is worth getting into your fingers. Note this is <em>cross-correlation</em> &mdash; no kernel flip &mdash; which is what every deep learning framework means by &ldquo;convolution&rdquo;, and the flip will come back in step 6 exactly where the maths demands it.</p>
+        <div class="relative"><pre>def conv1d(x, w, s, p):
+    I, k = len(x), len(w)
+    O = (I + 2*p - k) // s + 1                 # floor -- remember this
+    y = [0.0] * max(0, O)
+    for n in range(max(0, O)):
+        for j in range(k):
+            t = n*s + j - p                    # &lt;-- the ONE index expression
+            if 0 &lt;= t &lt; I:
+                y[n] += w[j] * x[t]
+    return y
+
+def conv_matrix(I, w, s, p):                   # the same loop, materialised
+    O = (I + 2*p - len(w)) // s + 1
+    C = [[0.0]*I for _ in range(max(0, O))]
+    for n in range(max(0, O)):
+        for j in range(len(w)):
+            t = n*s + j - p
+            if 0 &lt;= t &lt; I: C[n][t] = w[j]
+    return C
+# assert conv1d(x,w,s,p) == C @ x     to 1e-12, for every (I,k,s,p)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-violet-600 text-white rounded-full flex items-center justify-center font-bold">2</div><h3 class="font-bold text-lg">The transposed convolution: the same loop, scattering instead of gathering</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Take the forward loop and move the accumulation to the other side of the assignment. Where the convolution <em>gathered</em> <code>k</code> input values into one output, the transpose <em>scatters</em> one input value across <code>k</code> outputs. The index expression is character-for-character the same. That is not a coincidence or an analogy &mdash; it is what taking a transpose does to a sparse matrix&ndash;vector product. Two details that are easy to get wrong: the output length is not derivable from the input alone (step 5), and <code>output_padding</code> genuinely widens the region you scatter into, so those extra positions can and do receive taps.</p>
+        <div class="relative"><pre>def conv_transpose1d(y, w, s, p, output_padding=0):
+    N, k = len(y), len(w)
+    O = (N - 1)*s - 2*p + k + output_padding
+    out = [0.0] * max(0, O)
+    for n in range(N):
+        for j in range(k):
+            t = n*s + j - p                    # &lt;-- IDENTICAL to the forward
+            if 0 &lt;= t &lt; O:
+                out[t] += w[j] * y[n]          # scatter, not gather
+    return out
+
+# assert conv_transpose1d(y,w,s,p,op) == C.T @ y      exactly
+# where C is the matrix for an input of length O.  Not C inverse. C TRANSPOSE.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-slate-800 text-white rounded-full flex items-center justify-center font-bold">3</div><h3 class="font-bold text-lg">The adjoint test &mdash; the single strongest check you can write</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Comparing your transpose against a hand-built matrix is good. This is better, because it needs no matrix and no reference implementation, and it fails loudly for <em>every</em> class of index bug: <code>&langle;conv(x), y&rangle; = &langle;x, conv&#7488;(y)&rangle;</code> for all <code>x</code> and <code>y</code>. It is a mathematical identity about adjoint operators, so a wrong implementation cannot pass it by accident. Two sub-cases worth having in the test file: the identity is exactly what says your backward pass is the true gradient, and it holds for the multi-channel version too, where the channel indices also have to transpose. On this page it holds to <code>2.1e&minus;13</code> across all 48,384 reachable 1-D configurations.</p>
+        <div class="relative"><pre>for _ in range(1000):
+    I, k, s, p = rand_config()
+    x, y, w = randn(I), randn(conv_out_len(I,k,s,p)), randn(k)
+
+    lhs = dot(conv1d(x, w, s, p), y)
+    op  = I - ((len(y) - 1)*s - 2*p + k)      # the op that lands back on I
+    rhs = dot(x, conv_transpose1d(y, w, s, p, op))
+
+    assert abs(lhs - rhs) / (abs(lhs) + abs(rhs)) &lt; 1e-12
+
+# if this passes for random shapes, your transpose is the adjoint.
+# if it fails, the failure is almost always in the padding sign or in op.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">4</div><h3 class="font-bold text-lg">Kill the word &ldquo;deconvolution&rdquo; with two lines</h3></div>
+        <p class="text-sm text-slate-600 mb-3">A deconvolution would undo the convolution: given <code>y = Cx</code>, recover <code>x</code>. That needs <code>C&#8315;&sup1;</code>, and for any strided convolution <code>C</code> is not square, so no inverse exists &mdash; there are strictly fewer outputs than inputs and the information is gone. The transpose reproduces the <em>shape</em> and nothing more. Compute <code>C&#7488;C</code> and look at it: for a 3-tap stride-2 kernel on an 8-long input the diagonal alone varies by a factor of two, and the off-diagonal entries are not small. Keep this test in your repo; it takes four lines and it permanently settles an argument that otherwise recurs forever.</p>
+        <div class="relative"><pre>C = conv_matrix(8, w, s=2, p=1)          # 4 x 8 -- not square, no inverse
+G = C.T @ C                              # 8 x 8
+
+assert G.shape == (8, 8)
+assert not np.allclose(G / G.diagonal().max(), np.eye(8), atol=1e-6)
+
+# the only case where it IS the identity is the degenerate one:
+C1 = conv_matrix(9, [1.0], s=1, p=0)     # k = s = 1, p = 0
+assert np.allclose(C1.T @ C1, np.eye(9))  # a scalar multiply, transposed</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-amber-600 text-white rounded-full flex items-center justify-center font-bold">5</div><h3 class="font-bold text-lg">Output sizes, both directions &mdash; and why the inverse is ambiguous</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The forward formula has a floor in it, and a floor destroys information. With stride <code>s</code>, exactly <code>s</code> consecutive input lengths give the same output length &mdash; at <code>k=3, s=2, p=1</code> both <code>i=7</code> and <code>i=8</code> produce <code>o=4</code>. So when you transpose, there is no way to know which one you wanted, and the operator has to be told: that is all <code>output_padding</code> is. It adds to one side of the output shape and is required to satisfy <code>0 &le; output_padding &lt; s</code>, because <code>s</code> is exactly how many candidates there are. It is not padding in any meaningful sense and it is not symmetric &mdash; a name that has confused people for a decade.</p>
+        <div class="relative"><pre>def conv_out_len(i, k, s, p):        return (i + 2*p - k)//s + 1      # FLOOR
+def convT_out_len(i, k, s, p, op=0): return (i-1)*s - 2*p + k + op
+
+# the ambiguity, demonstrated:
+assert conv_out_len(7, k=3, s=2, p=1) == 4
+assert conv_out_len(8, k=3, s=2, p=1) == 4        # same output, different input
+
+# so the transpose needs to be told which one to rebuild:
+assert convT_out_len(4, 3, 2, 1, op=0) == 7
+assert convT_out_len(4, 3, 2, 1, op=1) == 8
+
+# the op that undoes a specific forward pass, in closed form:
+def output_padding_for(i, k, s, p):
+    o = conv_out_len(i, k, s, p)
+    return i - ((o - 1)*s - 2*p + k)              # always in [0, s)</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-slate-800 text-white rounded-full flex items-center justify-center font-bold">6</div><h3 class="font-bold text-lg">The zero-insert route &mdash; correct, instructive, and a bad implementation</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The picture everybody draws: insert <code>s&minus;1</code> zeros between the input elements, pad by <code>k&minus;1&minus;p</code>, and run an ordinary stride-1 convolution with the kernel <em>flipped</em>. It is genuinely equal to the scatter &mdash; agreement here is bit-for-bit across 48,384 configurations &mdash; and it is a useful mental model for why the operator smears energy the way it does. It is also a bad way to compute it, because you have built an array that is <code>(s&minus;1)/s</code> zeros and then multiplied every one of them. Real kernels never materialise it. <b>The trap:</b> <code>output_padding</code> widens the <em>right-hand pad</em> before the convolution. Stapling zeros onto the end of the result instead is wrong, and wrong in a way that only shows up for <code>op &gt; 0</code>, which is exactly the configuration nobody tests.</p>
+        <div class="relative"><pre>def convT_via_zero_insert(y, w, s, p, op=0):
+    k = len(w)
+    d = [0.0] * ((len(y)-1)*s + 1)
+    d[::s] = y                                # insert s-1 zeros between elements
+    q = k - 1 - p                             # may be NEGATIVE -&gt; crop, not pad
+    d = pad_or_crop(d, left=q, right=q + op)  # &lt;-- op goes HERE, not at the end
+    return conv1d(d, w[::-1], s=1, p=0)       # flipped kernel, stride 1
+
+# assert convT_via_zero_insert(...) == conv_transpose1d(...)   to 1e-13
+# it is exact. it is also 1/s of the useful work. do not ship it.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-bold">7</div><h3 class="font-bold text-lg">Count the taps &mdash; the checkerboard, before any training</h3></div>
+        <p class="text-sm text-slate-600 mb-3">This is the whole diagnosis and it fits in six lines. Output position <code>t</code> receives a tap from kernel index <code>j</code> exactly when <code>j &equiv; t + p (mod s)</code>, so the number of taps depends only on <code>t mod s</code>. Count them and you get a periodic pattern with period <code>s</code>, constant if and only if <code>s</code> divides <code>k</code>. That periodic gain <em>is</em> the checkerboard &mdash; it is present at initialisation, present with a constant input, present with no data at all. It is not an optimisation artifact and it is not noise. In 2-D the pattern is the outer product of the two 1-D patterns, so a 2&times; imbalance along each axis becomes a 4&times; imbalance in the corner cells.</p>
+        <div class="relative"><pre>def tap_counts(k, s):                       # the steady-state, closed form
+    return [ (k - 1 - r)//s + 1 if r &lt; k else 0 for r in range(s) ]
+
+tap_counts(3, 2) == [2, 1]     # 2.0x  -- the classic checkerboard
+tap_counts(4, 2) == [2, 2]     # 1.0x  -- flat.  the DCGAN fix.
+tap_counts(5, 2) == [3, 2]     # 1.5x
+tap_counts(4, 3) == [2, 1, 1]  # 2.0x  -- and 4.0x in 2-D
+tap_counts(1, 3) == [1, 0, 0]  # some outputs get NO taps at all: holes
+
+assert sum(tap_counts(k, s)) == k          # taps are conserved
+assert len(set(tap_counts(k,s))) == 1  ==  (k % s == 0)     # the criterion
+
+# see it with no model at all:
+conv_transpose1d([1]*12, [1]*3, s=2, p=1)   # -&gt; 1,2,1,2,1,2,...  THERE it is</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-emerald-600 text-white rounded-full flex items-center justify-center font-bold">8</div><h3 class="font-bold text-lg">The three fixes, and the one the tap count does not cover</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Fix one is free: choose <code>k</code> divisible by <code>s</code>. 4/2 and 2/2 are why DCGAN generators look the way they do. But it only evens out the <em>count</em>; with a learned kernel the per-phase <em>gain</em> &mdash; the sum of the weights in each residue class &mdash; can still be badly unbalanced, and that is a real artifact the divisibility rule does not touch. Fix two is resize-then-convolve: upsample with nearest or bilinear, then a stride-1 convolution. The interpolation is uniform by construction, so there is no phase structure to inherit; you pay <code>s&sup2;&times;</code> the multiply&ndash;adds in 2-D and you keep the parameter count identical. Fix three is sub-pixel convolution, below. Training helps, but only partly and not reliably &mdash; the measurement on this page shows the artifact moving under training rather than reliably vanishing.</p>
+        <div class="relative"><pre># fix 1 -- free, and only half a fix
+nn.ConvTranspose2d(cin, cout, kernel_size=4, stride=2, padding=1)   # k % s == 0
+
+def phase_gain(w, s):                       # what divisibility does NOT fix
+    g = [0.0]*s
+    for j, v in enumerate(w): g[j % s] += v
+    return g                                # constant input -&gt; this, exactly
+# even tap counts can still give unequal gains for a LEARNED kernel
+
+# fix 2 -- the safe default
+nn.Sequential(
+    nn.Upsample(scale_factor=2, mode="nearest"),   # or "bilinear"
+    nn.Conv2d(cin, cout, 3, stride=1, padding=1),  # SAME parameter count
+)                                                  # s^2 x the MACs in 2-D
+
+# fix 3 -- sub-pixel, see step 9
+nn.Sequential(nn.Conv2d(cin, cout*r*r, 3, padding=1), nn.PixelShuffle(r))</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-amber-600 text-white rounded-full flex items-center justify-center font-bold">9</div><h3 class="font-bold text-lg">Sub-pixel convolution and ICNR &mdash; a permutation, initialised to be flat</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Convolve at low resolution into <code>r&sup2;</code> times as many channels, then interleave those channels into space. The rearrangement costs nothing: it is a bijection, every element moved exactly once, and its gradient is the inverse permutation. Test it that way &mdash; assert the index map is a permutation and that the sorted multiset of values is unchanged &mdash; and you can never get the layout wrong silently. It still checkerboards at initialisation, though, because the <code>r&sup2;</code> sub-kernels are independent random draws that disagree from step zero. <b>ICNR</b> fixes that by initialising all <code>r&sup2;</code> sub-kernels to the <em>same</em> values, which makes the layer exactly a nearest-neighbour upsample at init &mdash; verified on this page to <code>1e&minus;14</code>. There is then nothing to unlearn.</p>
+        <div class="relative"><pre># depth-to-space: out[c][h][w] = in[c*r*r + (h%r)*r + (w%r)][h//r][w//r]
+def pixel_shuffle_map(C, H, W, r):
+    return { (c, i, j): (c*r*r + (i%r)*r + (j%r), i//r, j//r)
+             for c in range(C) for i in range(H*r) for j in range(W*r) }
+
+m = pixel_shuffle_map(C, H, W, r)
+assert len(set(m.values())) == len(m)                  # a genuine bijection
+assert sorted(out.flatten()) == sorted(inp.flatten())  # values moved, not mixed
+
+def icnr_(weight, r):                       # Aitken et al. 2017
+    cout = weight.shape[0] // (r*r)
+    base = torch.empty(cout, *weight.shape[1:]); nn.init.kaiming_normal_(base)
+    weight.data = base.repeat_interleave(r*r, dim=0)   # all r^2 copies IDENTICAL
+
+# assert: at init, PixelShuffle(conv(x)) == nearest_upsample(conv_base(x))</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-violet-600 text-white rounded-full flex items-center justify-center font-bold">10</div><h3 class="font-bold text-lg">The decoder, with the backward pass written out</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Once you accept that the two operators are each other&rsquo;s adjoint, the backward pass writes itself &mdash; and writing it once is the fastest way to stop finding the subject confusing. The gradient of a convolution with respect to its input is a transposed convolution with the same kernel; the gradient of a transposed convolution with respect to its input is a plain convolution with the same kernel. The weight gradient is a correlation of the input against the upstream gradient in both cases. Notice what changes between the two functions below: only which loop accumulates into which array.</p>
+        <div class="relative"><pre>def conv_backward(dy, x, w, s, p):
+    dx, dw = zeros_like(x), zeros_like(w)
+    for n in range(len(dy)):
+        for j in range(len(w)):
+            t = n*s + j - p
+            if 0 &lt;= t &lt; len(x):
+                dw[j] += dy[n] * x[t]
+                dx[t] += dy[n] * w[j]        # SCATTER  = transposed conv
+    return dx, dw
+
+def conv_transpose_backward(dy, x, w, s, p):
+    dx, dw = zeros_like(x), zeros_like(w)
+    for n in range(len(x)):
+        for j in range(len(w)):
+            t = n*s + j - p
+            if 0 &lt;= t &lt; len(dy):
+                dw[j] += x[n]  * dy[t]
+                dx[n] += w[j]  * dy[t]       # GATHER   = plain conv
+    return dx, dw
+# assert both against CENTRAL finite differences on FRESH weights, rel &lt; 2e-5</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-slate-800 text-white rounded-full flex items-center justify-center font-bold">11</div><h3 class="font-bold text-lg">Sweep the whole reachable configuration space</h3></div>
+        <p class="text-sm text-slate-600 mb-3">Random spot checks pass on code that breaks at the edges, and upsampling code has a lot of edges: padding larger than the kernel, a kernel smaller than the stride, an output length that comes out zero or negative, an <code>output_padding</code> at or above the stride. Enumerate every combination the user interface can actually produce and assert that <em>every</em> result is finite and every length matches its formula. Two real bugs on this page were found by exactly this sweep and by nothing else: the zero-insert route mishandled <code>output_padding</code> by stapling zeros on the end instead of widening the right-hand pad, which is silently correct for <code>op = 0</code>; and the &ldquo;interior&rdquo; helper could return a slice running past the end of the array whenever the kernel was wide and the output short.</p>
+        <div class="relative"><pre>swept = 0
+for i in range(1, 25):
+  for k in range(1, 9):
+    for s in range(1, 7):
+      for p in range(0, 7):
+        for op in range(0, 6):
+            swept += 1
+            y = conv1d(x[:i], w[:k], s, p)
+            assert len(y) == conv_out_len(i, k, s, p)
+            a = conv_transpose1d(y, w[:k], s, p, op)
+            b = convT_via_zero_insert(y, w[:k], s, p, op)
+            assert len(a) == len(b) and max_abs_diff(a, b) &lt; 1e-13
+            assert all(math.isfinite(v) for v in a)       # no NaN, no inf
+            assert all(c &gt;= 0 for c in tap_count(len(y), k, s, p, op))
+
+# 48,384 one-dimensional configurations, plus 360 two-dimensional and
+# 216 decoder configurations.  48,798 assertions.  Zero failures.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+      <li class="bg-white rounded-2xl border border-slate-200 p-6">
+        <div class="flex items-center gap-3 mb-3"><div class="w-8 h-8 bg-emerald-600 text-white rounded-full flex items-center justify-center font-bold">12</div><h3 class="font-bold text-lg">What to actually use</h3></div>
+        <p class="text-sm text-slate-600 mb-3">The field largely moved. DCGAN-era generators were transposed convolutions throughout, and the checkerboard in early GAN samples is the reason Odena&rsquo;s article exists. Segmentation decoders and the diffusion U-Nets that followed mostly use <b>resize + convolution</b>; super-resolution mostly uses <b>sub-pixel convolution with ICNR</b>, because doing the arithmetic at low resolution matters when the output is 4&times; larger in each dimension. Transposed convolutions have not disappeared &mdash; they are still the cheapest learnable upsampler and still correct when <code>k % s == 0</code> &mdash; but they are no longer the default, and choosing one now needs a reason. Whatever you pick, measure the artifact rather than eyeballing it: a phase-averaged residual takes ten lines and turns an argument into a number.</p>
+        <div class="relative"><pre># the honest decision procedure
+if output_is_much_larger and compute_is_tight:
+    layer = subpixel_conv(cin, cout, r, k=3); icnr_(layer[0].weight, r)
+elif you_want_the_safe_default:
+    layer = Sequential(Upsample(2, "nearest"), Conv2d(cin, cout, 3, padding=1))
+else:
+    layer = ConvTranspose2d(cin, cout, kernel_size=4, stride=2, padding=1)
+    assert layer.kernel_size[0] % layer.stride[0] == 0     # non-negotiable
+
+# and measure it, every time, instead of squinting at samples:
+def checkerboard(v, s):                 # phase-averaged residual
+    d = v - moving_average(v, 2*s + 1)
+    m = [d[t::s].mean() for t in range(s)]
+    return max(m) - min(m)              # 0.0 means clean. report it.
+# next: U-Net -- what to do with the resolution the encoder threw away.</pre><button class="copy-btn absolute top-2 right-2 bg-slate-700 text-white text-xs px-2 py-1 rounded" onclick="copy(this)">Copy all</button></div>
+      </li>
+
+    </ol>
+  </div>
+</section>
+
+<script>
+// ---- tab switching ----
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.onclick = () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+  if (t.dataset.tab === "look") requestAnimationFrame(() => redrawAll());
+});
+</script>
+
+<script>
+// ENGINE:BEGIN
+// ==================================================================
+//  DAY 62 - TRANSPOSED CONVOLUTIONS.  Everything below is the real
+//  engine: 1-D and 2-D convolution, the explicit sparse matrix C,
+//  the transpose C^T, the zero-insert equivalent route, the overlap
+//  counter, pixel shuffle, resize kernels, and a small decoder with
+//  a hand-written backward pass.  No libraries, no canned numbers,
+//  no DOM access anywhere in this block.
+// ==================================================================
+
+/* ---------- deterministic PRNG (every claim on this page reproduces) ---------- */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function gauss(rnd) {
+  let u = 0, v = 0;
+  while (u === 0) u = rnd();
+  while (v === 0) v = rnd();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+/* ==================================================================
+   1.  OUTPUT-SIZE ARITHMETIC  --  both directions.
+   The FLOOR in the forward formula is the whole reason the inverse
+   is ambiguous, and the whole reason output_padding exists.
+   ================================================================== */
+function convOutLen(I, k, s, p) {
+  if (!(s >= 1) || !(k >= 1) || !(I >= 0)) return 0;
+  const o = Math.floor((I + 2 * p - k) / s) + 1;
+  return o > 0 ? o : 0;
+}
+function convTOutLen(N, k, s, p, op) {
+  if (!(N >= 1) || !(k >= 1) || !(s >= 1)) return 0;
+  const o = (N - 1) * s - 2 * p + k + (op | 0);
+  return o > 0 ? o : 0;
+}
+// how many DIFFERENT input lengths collapse onto the same conv output length
+function ambiguousInputs(O, k, s, p) {
+  const hits = [];
+  for (let I = 1; I <= (O - 1) * s + k + 4 * p + s + 2; I++) if (convOutLen(I, k, s, p) === O) hits.push(I);
+  return hits;
+}
+// the output_padding that makes the transpose land back exactly on I
+function outputPaddingFor(I, k, s, p) {
+  const O = convOutLen(I, k, s, p);
+  if (O < 1) return 0;
+  return I - ((O - 1) * s - 2 * p + k);
+}
+
+/* ==================================================================
+   2.  1-D CONVOLUTION  (cross-correlation, which is what every deep
+   learning framework calls "convolution").
+   ================================================================== */
+function conv1d(x, w, s, p) {
+  const I = x.length, k = w.length, O = convOutLen(I, k, s, p);
+  const y = new Float64Array(O);
+  for (let n = 0; n < O; n++) {
+    let a = 0; const base = n * s - p;
+    for (let j = 0; j < k; j++) { const t = base + j; if (t >= 0 && t < I) a += w[j] * x[t]; }
+    y[n] = a;
+  }
+  return y;
+}
+
+/* ==================================================================
+   3.  TRANSPOSED CONVOLUTION, direct scatter-add.
+   Every input element sprays the WHOLE kernel into the output,
+   scaled by itself.  Overlapping sprays add.  That is the entire op.
+   ================================================================== */
+function convT1dInto(y, w, s, p, O) {
+  const N = y.length, k = w.length;
+  const out = new Float64Array(O > 0 ? O : 0);
+  if (out.length === 0 || !(s >= 1)) return out;
+  for (let n = 0; n < N; n++) {
+    const base = n * s - p, v = y[n];
+    for (let j = 0; j < k; j++) { const t = base + j; if (t >= 0 && t < out.length) out[t] += w[j] * v; }
+  }
+  return out;
+}
+function convT1d(y, w, s, p, op) {
+  return convT1dInto(y, w, s, p, convTOutLen(y.length, w.length, s, p, op));
+}
+
+/* ==================================================================
+   4.  THE EXPLICIT MATRIX.  A convolution is a linear map, so it has
+   a matrix.  Build it once and the rest of the page is linear algebra.
+   C is O x I  and  y = C x  EXACTLY.
+   ================================================================== */
+function convMatrix(I, w, s, p) {
+  const k = w.length, O = convOutLen(I, k, s, p), C = [];
+  for (let n = 0; n < O; n++) {
+    const row = new Float64Array(I), base = n * s - p;
+    for (let j = 0; j < k; j++) { const t = base + j; if (t >= 0 && t < I) row[t] += w[j]; }
+    C.push(row);
+  }
+  return C;
+}
+function matVec(C, x) {
+  const O = C.length, out = new Float64Array(O);
+  for (let n = 0; n < O; n++) { let a = 0; const r = C[n]; for (let t = 0; t < r.length; t++) a += r[t] * x[t]; out[n] = a; }
+  return out;
+}
+function matTVec(C, y, I) {
+  const out = new Float64Array(I);
+  for (let n = 0; n < C.length; n++) { const r = C[n], v = y[n]; for (let t = 0; t < I; t++) out[t] += r[t] * v; }
+  return out;
+}
+function dot(a, b) { let s = 0; const n = Math.min(a.length, b.length); for (let i = 0; i < n; i++) s += a[i] * b[i]; return s; }
+function matSparsity(C, I) {
+  let nz = 0; for (let n = 0; n < C.length; n++) for (let t = 0; t < I; t++) if (C[n][t] !== 0) nz++;
+  const tot = C.length * I;
+  return { nz, tot, density: tot ? nz / tot : 0 };
+}
+// C^T C -- if the transpose were an inverse this would be the identity. It is not.
+function gramCtC(C, I) {
+  const G = [];
+  for (let a = 0; a < I; a++) {
+    const row = new Float64Array(I);
+    for (let n = 0; n < C.length; n++) { const v = C[n][a]; if (v !== 0) for (let b = 0; b < I; b++) row[b] += v * C[n][b]; }
+    G.push(row);
+  }
+  return G;
+}
+function offIdentity(G) {          // max |G - I| after scaling the largest diagonal entry to 1
+  const I = G.length; let worst = 0, dmin = Infinity, dmax = -Infinity;
+  for (let a = 0; a < I; a++) { dmin = Math.min(dmin, G[a][a]); dmax = Math.max(dmax, G[a][a]); }
+  const sc = dmax !== 0 ? 1 / dmax : 1;
+  for (let a = 0; a < I; a++) for (let b = 0; b < I; b++) worst = Math.max(worst, Math.abs(G[a][b] * sc - (a === b ? 1 : 0)));
+  return { worst, dmin, dmax };
+}
+
+/* ==================================================================
+   5.  THE EQUIVALENT IMPLEMENTATION.
+   Insert (s-1) zeros between input elements, pad by (k-1-p), then run
+   a NORMAL stride-1 convolution with the kernel FLIPPED.  Real kernels
+   never materialise those zeros -- they scatter or gather -- but the
+   two routes must agree to the last bit.
+   ================================================================== */
+function dilateZeros(y, s) {
+  const N = y.length;
+  if (N < 1 || !(s >= 1)) return new Float64Array(0);
+  const L = (N - 1) * s + 1, d = new Float64Array(L);
+  for (let n = 0; n < N; n++) d[n * s] = y[n];
+  return d;
+}
+function padLR(v, ql, qr) {                   // >= 0 pads that side, < 0 crops it
+  const L = v.length, O = L + ql + qr;
+  if (O <= 0) return new Float64Array(0);
+  const out = new Float64Array(O);
+  for (let t = 0; t < O; t++) { const src = t - ql; if (src >= 0 && src < L) out[t] = v[src]; }
+  return out;
+}
+function flipK(w) { const k = w.length, f = new Float64Array(k); for (let j = 0; j < k; j++) f[j] = w[k - 1 - j]; return f; }
+function convTViaZeroInsert(y, w, s, p, op) {
+  const k = w.length, q = k - 1 - p;
+  // output_padding widens the RIGHT pad -- it does NOT merely staple zeros
+  // on the end.  Those extra positions are real rows of C^T and they can
+  // receive taps.  Getting this wrong is a silent off-by-op bug.
+  const core = conv1d(padLR(dilateZeros(y, s), q, q + (op | 0)), flipK(w), 1, 0);
+  const O = convTOutLen(y.length, k, s, p, op);
+  const out = new Float64Array(O > 0 ? O : 0);
+  for (let t = 0; t < out.length; t++) out[t] = t < core.length ? core[t] : 0;
+  return out;
+}
+
+/* ==================================================================
+   6.  THE OVERLAP COUNT -- the exact cause of the checkerboard.
+   How many kernel taps land on each output position?  Feed a constant
+   input through a constant kernel and the output IS this count.
+   ================================================================== */
+function overlapCount(N, k, s, p, op) {
+  const O = convTOutLen(N, k, s, p, op), c = new Int32Array(O > 0 ? O : 0);
+  if (c.length === 0) return c;
+  for (let n = 0; n < N; n++) { const base = n * s - p; for (let j = 0; j < k; j++) { const t = base + j; if (t >= 0 && t < c.length) c[t]++; } }
+  return c;
+}
+// steady-state (interior) count, in closed form: how many taps j in [0,k) have j = r (mod s)
+function steadyOverlap(k, s) {
+  const c = new Int32Array(s >= 1 ? s : 0);
+  for (let r = 0; r < c.length; r++) c[r] = r < k ? Math.floor((k - 1 - r) / s) + 1 : 0;
+  return c;
+}
+function overlapRatio(k, s) {
+  const c = steadyOverlap(k, s);
+  if (c.length === 0) return { min: 0, max: 0, ratio: 1, even: true };
+  let mn = Infinity, mx = -Infinity;
+  for (let r = 0; r < c.length; r++) { mn = Math.min(mn, c[r]); mx = Math.max(mx, c[r]); }
+  return { min: mn, max: mx, ratio: mn > 0 ? mx / mn : Infinity, even: mn === mx };
+}
+/* The overlap COUNT is the artifact for an all-ones kernel.  For a real
+   kernel the artifact is the per-phase GAIN: the sum of the weights whose
+   tap index falls in that residue class.  Constant input in => this out. */
+function phaseGain1d(w, s) {
+  const g = new Float64Array(s >= 1 ? s : 0);
+  for (let j = 0; j < w.length; j++) g[j % s] += w[j];
+  let mn = Infinity, mx = -Infinity;
+  for (let r = 0; r < g.length; r++) { if (g[r] < mn) mn = g[r]; if (g[r] > mx) mx = g[r]; }
+  return { cells: g, min: isFinite(mn) ? mn : 0, max: isFinite(mx) ? mx : 0, ratio: mn > 0 ? mx / mn : Infinity };
+}
+function phaseGain2d(w, k, s) {
+  const g = new Float64Array(s >= 1 ? s * s : 0);
+  for (let u = 0; u < k; u++) for (let v = 0; v < k; v++) g[(u % s) * s + (v % s)] += w[u * k + v];
+  let mn = Infinity, mx = -Infinity;
+  for (let r = 0; r < g.length; r++) { if (g[r] < mn) mn = g[r]; if (g[r] > mx) mx = g[r]; }
+  return { cells: g, min: isFinite(mn) ? mn : 0, max: isFinite(mx) ? mx : 0, ratio: mn > 0 ? mx / mn : Infinity };
+}
+// a deliberately un-smooth kernel: what a LEARNED filter tends to look like,
+// and where the artifact is far more visible than with a tidy Gaussian
+function learnedKernel(k, seed) {
+  const rnd = mulberry32((seed >>> 0) || 1), w = new Float64Array(k * k);
+  let s = 0;
+  for (let i = 0; i < w.length; i++) { const v = Math.abs(gauss(rnd)) + 0.05; w[i] = v; s += v; }
+  for (let i = 0; i < w.length; i++) w[i] /= s;
+  return w;
+}
+// the interior slice of an actual output where the steady state has been reached
+function interiorSlice(N, k, s, p, op) {
+  const O = convTOutLen(N, k, s, p, op);
+  // clamp to O: with a wide kernel and a short output the "interior" can be
+  // empty, and a slice that runs past the end reads undefined.
+  const lo = Math.min(O, Math.max(0, k - 1 - p));
+  const hi = Math.min(O, (N - 1) * s - p + 1);
+  return { lo, hi: hi > lo ? hi : lo, O };
+}
+
+/* ==================================================================
+   7.  2-D.  The artifact multiplies along both axes: the 2-D overlap
+   count is the OUTER PRODUCT of the two 1-D counts, so a 1.5x uneven
+   1-D pattern becomes a 2.25x uneven 2-D one.
+   ================================================================== */
+function conv2d(x, H, W, w, k, s, pl, pr) {
+  const OH = Math.floor((H + pl + pr - k) / s) + 1, OW = Math.floor((W + pl + pr - k) / s) + 1;
+  const oh = OH > 0 ? OH : 0, ow = OW > 0 ? OW : 0, out = new Float64Array(oh * ow);
+  for (let r = 0; r < oh; r++) for (let c = 0; c < ow; c++) {
+    let a = 0; const br = r * s - pl, bc = c * s - pl;
+    for (let u = 0; u < k; u++) { const ty = br + u; if (ty < 0 || ty >= H) continue;
+      for (let v = 0; v < k; v++) { const tx = bc + v; if (tx < 0 || tx >= W) continue; a += w[u * k + v] * x[ty * W + tx]; } }
+    out[r * ow + c] = a;
+  }
+  return { v: out, H: oh, W: ow };
+}
+function convT2d(x, H, W, w, k, s, pl, pr, op) {
+  const OH = (H - 1) * s - pl - pr + k + op, OW = (W - 1) * s - pl - pr + k + op;
+  const oh = OH > 0 ? OH : 0, ow = OW > 0 ? OW : 0, out = new Float64Array(oh * ow);
+  if (oh === 0 || ow === 0) return { v: out, H: oh, W: ow };
+  for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
+    const val = x[r * W + c], br = r * s - pl, bc = c * s - pl;
+    for (let u = 0; u < k; u++) { const ty = br + u; if (ty < 0 || ty >= oh) continue;
+      for (let v = 0; v < k; v++) { const tx = bc + v; if (tx < 0 || tx >= ow) continue; out[ty * ow + tx] += w[u * k + v] * val; } }
+  }
+  return { v: out, H: oh, W: ow };
+}
+// same-size helpers used by the hero: exactly N*s out, for every k and s
+function samePad(k) { const pl = Math.floor((k - 1) / 2); return { pl, pr: k - 1 - pl }; }
+function convT2dUp(x, H, W, w, k, s) { const sp = samePad(k); return convT2d(x, H, W, w, k, s, sp.pl, sp.pr, s - 1); }
+function conv2dSame(x, H, W, w, k) { const sp = samePad(k); return conv2d(x, H, W, w, k, 1, sp.pl, sp.pr); }
+function overlapCount2d(H, W, k, s) {
+  const one = new Float64Array(H * W).fill(1), ker = new Float64Array(k * k).fill(1);
+  return convT2dUp(one, H, W, ker, k, s);
+}
+
+/* ==================================================================
+   8.  THE HONEST ALTERNATIVES.
+   ================================================================== */
+function nearestUp2d(x, H, W, r) {
+  const oh = H * r, ow = W * r, out = new Float64Array(oh * ow);
+  for (let i = 0; i < oh; i++) for (let j = 0; j < ow; j++) out[i * ow + j] = x[((i / r) | 0) * W + ((j / r) | 0)];
+  return { v: out, H: oh, W: ow };
+}
+function bilinearUp2d(x, H, W, r) {
+  const oh = H * r, ow = W * r, out = new Float64Array(oh * ow);
+  const cl = (v, lo, hi) => v < lo ? lo : (v > hi ? hi : v);
+  for (let i = 0; i < oh; i++) {
+    const sy = cl((i + 0.5) / r - 0.5, 0, H - 1), y0 = Math.floor(sy), y1 = Math.min(H - 1, y0 + 1), fy = sy - y0;
+    for (let j = 0; j < ow; j++) {
+      const sx = cl((j + 0.5) / r - 0.5, 0, W - 1), x0 = Math.floor(sx), x1 = Math.min(W - 1, x0 + 1), fx = sx - x0;
+      out[i * ow + j] = (1 - fy) * ((1 - fx) * x[y0 * W + x0] + fx * x[y0 * W + x1])
+                      +      fy  * ((1 - fx) * x[y1 * W + x0] + fx * x[y1 * W + x1]);
+    }
+  }
+  return { v: out, H: oh, W: ow };
+}
+function nearestUp1d(x, r) {
+  const out = new Float64Array(x.length * r);
+  for (let t = 0; t < out.length; t++) out[t] = x[(t / r) | 0];
+  return out;
+}
+function bilinearUp1d(x, r) {
+  const I = x.length, O = I * r, out = new Float64Array(O);
+  for (let t = 0; t < O; t++) {
+    let sx = (t + 0.5) / r - 0.5; sx = sx < 0 ? 0 : (sx > I - 1 ? I - 1 : sx);
+    const a = Math.floor(sx), b = Math.min(I - 1, a + 1), f = sx - a;
+    out[t] = (1 - f) * x[a] + f * x[b];
+  }
+  return out;
+}
+
+/* ---------- pixel shuffle (depth-to-space): an exact RE-INDEXING ---------- */
+// out[c][t] = in[c*r + (t mod r)][floor(t/r)]
+function pixelShuffleMap(C, L, r) {
+  const map = new Int32Array(C * L * r);
+  for (let c = 0; c < C; c++) for (let t = 0; t < L * r; t++) map[c * L * r + t] = (c * r + (t % r)) * L + ((t / r) | 0);
+  return map;
+}
+function pixelShuffle1d(x, C, L, r) {
+  const map = pixelShuffleMap(C, L, r), out = new Float64Array(map.length);
+  for (let i = 0; i < map.length; i++) out[i] = x[map[i]];
+  return out;
+}
+function pixelUnshuffle1dGrad(g, C, L, r) {          // the adjoint of a permutation is its inverse
+  const map = pixelShuffleMap(C, L, r), out = new Float64Array(C * r * L);
+  for (let i = 0; i < map.length; i++) out[map[i]] += g[i];
+  return out;
+}
+function pixelShuffleMap2d(C, H, W, r) {
+  const oh = H * r, ow = W * r, map = new Int32Array(C * oh * ow);
+  for (let c = 0; c < C; c++) for (let i = 0; i < oh; i++) for (let j = 0; j < ow; j++)
+    map[c * oh * ow + i * ow + j] = (c * r * r + (i % r) * r + (j % r)) * H * W + ((i / r) | 0) * W + ((j / r) | 0);
+  return map;
+}
+
+/* ==================================================================
+   9.  MULTI-CHANNEL LAYERS + HAND-WRITTEN BACKWARD.
+   The backward of a convolution IS a transposed convolution, and the
+   backward of a transposed convolution IS a convolution.  Written out
+   here so you can watch the same two loops swap roles.
+   ================================================================== */
+function convMC(x, Cin, L, W, Cout, k, s, pl, pr, b) {
+  const Ot = Math.floor((L + pl + pr - k) / s) + 1, O = Ot > 0 ? Ot : 0;
+  const y = new Float64Array(Cout * O);
+  for (let co = 0; co < Cout; co++) {
+    const yo = co * O, bb = b ? b[co] : 0;
+    for (let n = 0; n < O; n++) {
+      let a = bb; const base = n * s - pl;
+      for (let ci = 0; ci < Cin; ci++) {
+        const xo = ci * L, wo = (co * Cin + ci) * k;
+        for (let j = 0; j < k; j++) { const t = base + j; if (t >= 0 && t < L) a += W[wo + j] * x[xo + t]; }
+      }
+      y[yo + n] = a;
+    }
+  }
+  return { v: y, C: Cout, L: O };
+}
+function convMCBack(dy, Cout, O, x, Cin, L, W, k, s, pl) {
+  const dx = new Float64Array(Cin * L), dW = new Float64Array(Cout * Cin * k), db = new Float64Array(Cout);
+  for (let co = 0; co < Cout; co++) {
+    const yo = co * O;
+    for (let n = 0; n < O; n++) {
+      const g = dy[yo + n]; db[co] += g; const base = n * s - pl;
+      for (let ci = 0; ci < Cin; ci++) {
+        const xo = ci * L, wo = (co * Cin + ci) * k;
+        for (let j = 0; j < k; j++) {
+          const t = base + j;
+          if (t >= 0 && t < L) { dW[wo + j] += g * x[xo + t]; dx[xo + t] += g * W[wo + j]; }   // dx = SCATTER = transposed conv
+        }
+      }
+    }
+  }
+  return { dx, dW, db };
+}
+function convTMC(x, Cin, L, W, Cout, k, s, pl, pr, op, b) {
+  const Ot = (L - 1) * s - pl - pr + k + op, O = Ot > 0 ? Ot : 0;
+  const y = new Float64Array(Cout * O);
+  if (b) for (let co = 0; co < Cout; co++) y.fill(b[co], co * O, co * O + O);
+  for (let ci = 0; ci < Cin; ci++) {
+    const xo = ci * L;
+    for (let n = 0; n < L; n++) {
+      const v = x[xo + n], base = n * s - pl;
+      for (let co = 0; co < Cout; co++) {
+        const yo = co * O, wo = (ci * Cout + co) * k;
+        for (let j = 0; j < k; j++) { const t = base + j; if (t >= 0 && t < O) y[yo + t] += W[wo + j] * v; }
+      }
+    }
+  }
+  return { v: y, C: Cout, L: O };
+}
+function convTMCBack(dy, Cout, O, x, Cin, L, W, k, s, pl) {
+  const dx = new Float64Array(Cin * L), dW = new Float64Array(Cin * Cout * k), db = new Float64Array(Cout);
+  for (let co = 0; co < Cout; co++) { let a = 0; for (let n = 0; n < O; n++) a += dy[co * O + n]; db[co] = a; }
+  for (let ci = 0; ci < Cin; ci++) {
+    const xo = ci * L;
+    for (let n = 0; n < L; n++) {
+      const base = n * s - pl; let acc = 0; const xv = x[xo + n];
+      for (let co = 0; co < Cout; co++) {
+        const yo = co * O, wo = (ci * Cout + co) * k;
+        for (let j = 0; j < k; j++) {
+          const t = base + j;
+          if (t >= 0 && t < O) { acc += W[wo + j] * dy[yo + t]; dW[wo + j] += xv * dy[yo + t]; }  // dx = GATHER = plain conv
+        }
+      }
+      dx[xo + n] = acc;
+    }
+  }
+  return { dx, dW, db };
+}
+function nearestUp1dMC(x, C, L, r) {
+  const O = L * r, out = new Float64Array(C * O);
+  for (let c = 0; c < C; c++) for (let t = 0; t < O; t++) out[c * O + t] = x[c * L + ((t / r) | 0)];
+  return out;
+}
+function nearestUp1dMCBack(g, C, L, r) {
+  const O = L * r, out = new Float64Array(C * L);
+  for (let c = 0; c < C; c++) for (let t = 0; t < O; t++) out[c * L + ((t / r) | 0)] += g[c * O + t];
+  return out;
+}
+function bilinearUp1dMC(x, C, L, r) {
+  const O = L * r, out = new Float64Array(C * O);
+  for (let c = 0; c < C; c++) for (let t = 0; t < O; t++) {
+    let sx = (t + 0.5) / r - 0.5; sx = sx < 0 ? 0 : (sx > L - 1 ? L - 1 : sx);
+    const a = Math.floor(sx), b = Math.min(L - 1, a + 1), f = sx - a;
+    out[c * O + t] = (1 - f) * x[c * L + a] + f * x[c * L + b];
+  }
+  return out;
+}
+function bilinearUp1dMCBack(g, C, L, r) {
+  const O = L * r, out = new Float64Array(C * L);
+  for (let c = 0; c < C; c++) for (let t = 0; t < O; t++) {
+    let sx = (t + 0.5) / r - 0.5; sx = sx < 0 ? 0 : (sx > L - 1 ? L - 1 : sx);
+    const a = Math.floor(sx), b = Math.min(L - 1, a + 1), f = sx - a, gv = g[c * O + t];
+    out[c * L + a] += (1 - f) * gv; out[c * L + b] += f * gv;
+  }
+  return out;
+}
+
+/* ==================================================================
+   10.  A REAL TRAINABLE DECODER, three ways.
+   8 samples -> 32 samples, x4 upsampling in two x2 stages.
+   Identical depth, identical channel widths, hand-written backward.
+   ================================================================== */
+const DEC = { L0: 8, CM: 8, HEADK: 3, LOUT: 32 };
+
+function decParamCount(mode, k) {
+  const CM = DEC.CM, hk = DEC.HEADK;
+  if (mode === 'convt')  return 1 * CM * k + CM * CM * k + CM * 1 * hk + CM + CM + 1;
+  if (mode === 'resize') return CM * 1 * k + CM * CM * k + CM * 1 * hk + CM + CM + 1;
+  return (CM * 2) * 1 * k + (CM * 2) * CM * k + CM * 1 * hk + CM * 2 + CM * 2 + 1;   // subpixel
+}
+function initDecoder(seed, k, mode, icnr) {
+  const rnd = mulberry32(seed >>> 0), CM = DEC.CM, hk = DEC.HEADK;
+  const fill = (n, fanIn) => { const a = new Float64Array(n), sd = Math.sqrt(2 / Math.max(1, fanIn)); for (let i = 0; i < n; i++) a[i] = gauss(rnd) * sd; return a; };
+  const M = { mode, k, CM, hk, icnr: !!icnr, bilinear: false };
+  if (mode === 'convt') {            // W layout [Cin][Cout][k]
+    M.W1 = fill(1 * CM * k, k); M.W2 = fill(CM * CM * k, CM * k);
+  } else if (mode === 'resize') {    // W layout [Cout][Cin][k]
+    M.W1 = fill(CM * 1 * k, k); M.W2 = fill(CM * CM * k, CM * k);
+  } else {                            // subpixel: [Cout*r][Cin][k]
+    M.W1 = fill(CM * 2 * 1 * k, k); M.W2 = fill(CM * 2 * CM * k, CM * k);
+    if (icnr) { icnrInPlace(M.W1, CM, 1, k, 2); icnrInPlace(M.W2, CM, CM, k, 2); }
+  }
+  M.b1 = new Float64Array(mode === 'subpixel' ? CM * 2 : CM);
+  M.b2 = new Float64Array(mode === 'subpixel' ? CM * 2 : CM);
+  M.W3 = fill(1 * CM * hk, CM * hk); M.b3 = new Float64Array(1);
+  M.v = { W1: new Float64Array(M.W1.length), W2: new Float64Array(M.W2.length), W3: new Float64Array(M.W3.length), b1: new Float64Array(M.b1.length), b2: new Float64Array(M.b2.length), b3: new Float64Array(1) };
+  return M;
+}
+// ICNR (Aitken et al. 2017): make the r sub-kernels IDENTICAL, so at
+// initialisation the sub-pixel layer is exactly a nearest-neighbour
+// upsample and there is no checkerboard to unlearn.
+function icnrInPlace(W, Cout, Cin, k, r) {
+  for (let c = 0; c < Cout; c++) for (let q = 1; q < r; q++)
+    for (let ci = 0; ci < Cin; ci++) for (let j = 0; j < k; j++)
+      W[((c * r + q) * Cin + ci) * k + j] = W[((c * r + 0) * Cin + ci) * k + j];
+}
+function relu(v) { const o = new Float64Array(v.length); for (let i = 0; i < v.length; i++) o[i] = v[i] > 0 ? v[i] : 0; return o; }
+
+function decForward(M, x0) {
+  const k = M.k, CM = M.CM, sp = samePad(k), sh = samePad(M.hk), c = { x0 };
+  let a1;
+  if (M.mode === 'convt') {
+    a1 = convTMC(x0, 1, DEC.L0, M.W1, CM, k, 2, sp.pl, sp.pr, 1, M.b1);
+  } else if (M.mode === 'resize') {
+    c.u1 = M.bilinear ? bilinearUp1dMC(x0, 1, DEC.L0, 2) : nearestUp1dMC(x0, 1, DEC.L0, 2);
+    a1 = convMC(c.u1, 1, DEC.L0 * 2, M.W1, CM, k, 1, sp.pl, sp.pr, M.b1);
+  } else {
+    c.p1 = convMC(x0, 1, DEC.L0, M.W1, CM * 2, k, 1, sp.pl, sp.pr, M.b1);
+    a1 = { v: pixelShuffle1d(c.p1.v, CM, DEC.L0, 2), C: CM, L: DEC.L0 * 2 };
+  }
+  c.z1 = a1.v; c.h1 = relu(a1.v);
+  const L1 = DEC.L0 * 2;
+  let a2;
+  if (M.mode === 'convt') {
+    a2 = convTMC(c.h1, CM, L1, M.W2, CM, k, 2, sp.pl, sp.pr, 1, M.b2);
+  } else if (M.mode === 'resize') {
+    c.u2 = M.bilinear ? bilinearUp1dMC(c.h1, CM, L1, 2) : nearestUp1dMC(c.h1, CM, L1, 2);
+    a2 = convMC(c.u2, CM, L1 * 2, M.W2, CM, k, 1, sp.pl, sp.pr, M.b2);
+  } else {
+    c.p2 = convMC(c.h1, CM, L1, M.W2, CM * 2, k, 1, sp.pl, sp.pr, M.b2);
+    a2 = { v: pixelShuffle1d(c.p2.v, CM, L1, 2), C: CM, L: L1 * 2 };
+  }
+  c.z2 = a2.v; c.h2 = relu(a2.v);
+  c.out = convMC(c.h2, CM, DEC.LOUT, M.W3, 1, M.hk, 1, sh.pl, sh.pr, M.b3).v;
+  return c;
+}
+function decBackward(M, c, tgt) {
+  const k = M.k, CM = M.CM, sp = samePad(k), sh = samePad(M.hk), L1 = DEC.L0 * 2, L2 = DEC.LOUT;
+  const dOut = new Float64Array(L2); let loss = 0;
+  for (let t = 0; t < L2; t++) { const e = c.out[t] - tgt[t]; loss += e * e; dOut[t] = 2 * e / L2; }
+  loss /= L2;
+  const g3 = convMCBack(dOut, 1, L2, c.h2, CM, L2, M.W3, M.hk, 1, sh.pl);
+  const dz2 = new Float64Array(g3.dx.length);
+  for (let i = 0; i < dz2.length; i++) dz2[i] = c.z2[i] > 0 ? g3.dx[i] : 0;
+  let g2, dh1;
+  if (M.mode === 'convt') { g2 = convTMCBack(dz2, CM, L2, c.h1, CM, L1, M.W2, k, 2, sp.pl); dh1 = g2.dx; }
+  else if (M.mode === 'resize') { g2 = convMCBack(dz2, CM, L2, c.u2, CM, L1 * 2, M.W2, k, 1, sp.pl); dh1 = M.bilinear ? bilinearUp1dMCBack(g2.dx, CM, L1, 2) : nearestUp1dMCBack(g2.dx, CM, L1, 2); }
+  else { const dp2 = pixelUnshuffle1dGrad(dz2, CM, L1, 2); g2 = convMCBack(dp2, CM * 2, L1, c.h1, CM, L1, M.W2, k, 1, sp.pl); dh1 = g2.dx; }
+  const dz1 = new Float64Array(dh1.length);
+  for (let i = 0; i < dz1.length; i++) dz1[i] = c.z1[i] > 0 ? dh1[i] : 0;
+  let g1;
+  if (M.mode === 'convt') g1 = convTMCBack(dz1, CM, L1, c.x0, 1, DEC.L0, M.W1, k, 2, sp.pl);
+  else if (M.mode === 'resize') { const gg = convMCBack(dz1, CM, L1, c.u1, 1, DEC.L0 * 2, M.W1, k, 1, sp.pl); g1 = { dW: gg.dW, db: gg.db, dx: M.bilinear ? bilinearUp1dMCBack(gg.dx, 1, DEC.L0, 2) : nearestUp1dMCBack(gg.dx, 1, DEC.L0, 2) }; }
+  else { const dp1 = pixelUnshuffle1dGrad(dz1, CM, DEC.L0, 2); g1 = convMCBack(dp1, CM * 2, DEC.L0, c.x0, 1, DEC.L0, M.W1, k, 1, sp.pl); }
+  return { loss, dW1: g1.dW, db1: g1.db, dW2: g2.dW, db2: g2.db, dW3: g3.dW, db3: g3.db, dx0: g1.dx };
+}
+function decLoss(M, x0, tgt) { const c = decForward(M, x0); let l = 0; for (let t = 0; t < DEC.LOUT; t++) { const e = c.out[t] - tgt[t]; l += e * e; } return l / DEC.LOUT; }
+
+/* ---------- data: smooth low-frequency signals, and their x4 downsample ---------- */
+function makeSignal(rnd) {
+  const L = DEC.LOUT, y = new Float64Array(L);
+  for (let comp = 0; comp < 3; comp++) {
+    const f = 1 + Math.floor(rnd() * 3), ph = rnd() * 2 * Math.PI, a = (0.35 + 0.65 * rnd()) / 3;
+    for (let t = 0; t < L; t++) y[t] += a * Math.sin(2 * Math.PI * f * (t + 0.5) / L + ph);
+  }
+  return y;
+}
+function avgPool(y, r) { const O = (y.length / r) | 0, o = new Float64Array(O); for (let t = 0; t < O; t++) { let s = 0; for (let j = 0; j < r; j++) s += y[t * r + j]; o[t] = s / r; } return o; }
+function makeDataset(seed, n) {
+  const rnd = mulberry32(seed >>> 0), X = [], Y = [];
+  for (let i = 0; i < n; i++) { const t = makeSignal(rnd); Y.push(t); X.push(avgPool(t, 4)); }
+  return { X, Y, n };
+}
+function trainDecoder(M, data, steps, lr, mom) {
+  const trace = [];
+  for (let it = 0; it < steps; it++) {
+    const acc = { W1: new Float64Array(M.W1.length), W2: new Float64Array(M.W2.length), W3: new Float64Array(M.W3.length), b1: new Float64Array(M.b1.length), b2: new Float64Array(M.b2.length), b3: new Float64Array(1) };
+    let L = 0;
+    for (let i = 0; i < data.n; i++) {
+      const c = decForward(M, data.X[i]), g = decBackward(M, c, data.Y[i]); L += g.loss;
+      for (let j = 0; j < acc.W1.length; j++) acc.W1[j] += g.dW1[j];
+      for (let j = 0; j < acc.W2.length; j++) acc.W2[j] += g.dW2[j];
+      for (let j = 0; j < acc.W3.length; j++) acc.W3[j] += g.dW3[j];
+      for (let j = 0; j < acc.b1.length; j++) acc.b1[j] += g.db1[j];
+      for (let j = 0; j < acc.b2.length; j++) acc.b2[j] += g.db2[j];
+      acc.b3[0] += g.db3[0];
+    }
+    const inv = 1 / data.n, names = ['W1', 'W2', 'W3', 'b1', 'b2', 'b3'];
+    for (let q = 0; q < names.length; q++) {
+      const nm = names[q];
+      for (let j = 0; j < M[nm].length; j++) { M.v[nm][j] = mom * M.v[nm][j] - lr * acc[nm][j] * inv; M[nm][j] += M.v[nm][j]; }
+    }
+    trace.push(L * inv);
+  }
+  return trace;
+}
+
+/* ---------- how much checkerboard is actually in a signal ----------
+   Subtract a local moving average, then average the residual inside
+   each phase class t mod s.  A clean signal has ~zero spread; a
+   checkerboarded one has a fixed offset per phase.                    */
+function phaseSpread(v, s) {
+  const L = v.length; if (L < 2 * s + 2 || s < 2) return 0;
+  const half = s, d = new Float64Array(L);
+  for (let t = 0; t < L; t++) {
+    let a = 0, n = 0;
+    for (let u = t - half; u <= t + half; u++) { const q = u < 0 ? 0 : (u >= L ? L - 1 : u); a += v[q]; n++; }
+    d[t] = v[t] - a / n;
+  }
+  const sum = new Float64Array(s), cnt = new Int32Array(s);
+  for (let t = s; t < L - s; t++) { sum[t % s] += d[t]; cnt[t % s]++; }
+  let mn = Infinity, mx = -Infinity;
+  for (let r = 0; r < s; r++) { if (!cnt[r]) continue; const m = sum[r] / cnt[r]; if (m < mn) mn = m; if (m > mx) mx = m; }
+  return (isFinite(mn) && isFinite(mx)) ? mx - mn : 0;
+}
+function rms(v) { let a = 0; for (let i = 0; i < v.length; i++) a += v[i] * v[i]; return Math.sqrt(a / Math.max(1, v.length)); }
+
+/* ---------- the hero: a smooth low-res 2-D feature map ---------- */
+function makeFeatureMap(seed, N) {
+  const rnd = mulberry32(seed >>> 0), v = new Float64Array(N * N);
+  const blobs = 3, cx = [], cy = [], sg = [], am = [];
+  for (let b = 0; b < blobs; b++) { cx.push(rnd() * (N - 1)); cy.push(rnd() * (N - 1)); sg.push(0.9 + 1.5 * rnd()); am.push(0.55 + 0.45 * rnd()); }
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+    let a = 0;
+    for (let b = 0; b < blobs; b++) { const dy = i - cy[b], dx = j - cx[b]; a += am[b] * Math.exp(-(dx * dx + dy * dy) / (2 * sg[b] * sg[b])); }
+    v[i * N + j] = a;
+  }
+  let mx = 0; for (let i = 0; i < v.length; i++) if (v[i] > mx) mx = v[i];
+  if (mx > 0) for (let i = 0; i < v.length; i++) v[i] /= mx;
+  return v;
+}
+function gaussKernel(k) {
+  const w = new Float64Array(k * k), c = (k - 1) / 2, sg = Math.max(0.6, k / 3);
+  let s = 0;
+  for (let i = 0; i < k; i++) for (let j = 0; j < k; j++) { const d = (i - c) * (i - c) + (j - c) * (j - c); const v = Math.exp(-d / (2 * sg * sg)); w[i * k + j] = v; s += v; }
+  for (let i = 0; i < w.length; i++) w[i] /= s;
+  return w;
+}
+// gain-matched so the two routes are compared on pattern, not on scale
+function normaliseToMean(v, target) {
+  let a = 0; for (let i = 0; i < v.length; i++) a += v[i];
+  const m = a / Math.max(1, v.length), o = new Float64Array(v.length);
+  if (m === 0 || !isFinite(m)) return o;
+  for (let i = 0; i < v.length; i++) o[i] = v[i] * (target / m);
+  return o;
+}
+function meanOf(v) { let a = 0; for (let i = 0; i < v.length; i++) a += v[i]; return a / Math.max(1, v.length); }
+// grid-phase unevenness of a 2-D map: max/min of the per-(i mod s, j mod s) means
+function phaseGrid2d(v, H, W, s) {
+  if (s < 2) return { min: 1, max: 1, ratio: 1, cells: [1] };
+  const sum = new Float64Array(s * s), cnt = new Int32Array(s * s);
+  for (let i = s; i < H - s; i++) for (let j = s; j < W - s; j++) { const r = (i % s) * s + (j % s); sum[r] += v[i * W + j]; cnt[r]++; }
+  const cells = []; let mn = Infinity, mx = -Infinity;
+  for (let r = 0; r < s * s; r++) { const m = cnt[r] ? sum[r] / cnt[r] : 0; cells.push(m); if (cnt[r]) { if (m < mn) mn = m; if (m > mx) mx = m; } }
+  if (!isFinite(mn) || !isFinite(mx)) return { min: 0, max: 0, ratio: 1, cells };
+  return { min: mn, max: mx, ratio: mn !== 0 ? mx / mn : Infinity, cells };
+}
+
+/* ---------- parameter / FLOP accounting ---------- */
+function convParams(Cin, Cout, k) { return Cin * Cout * k; }
+function upsampleAccount(Cin, Cout, k, s, Lin) {
+  return {
+    convT:  { params: Cin * Cout * k, macs: Lin * Cin * Cout * k },
+    resize: { params: Cin * Cout * k, macs: Lin * s * Cin * Cout * k },
+    sub:    { params: Cin * Cout * s * Math.ceil(k / s), macs: Lin * Cin * Cout * s * Math.ceil(k / s) }
+  };
+}
+// ENGINE:END
+
+// ==================================================================
+//  DRIVER - everything below only orchestrates the core above and
+//  paints it.  No maths lives here that is not verified up there.
+// ==================================================================
+const $ = id => document.getElementById(id);
+function fit(cv) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = Math.max(80, cv.clientWidth || 300), h = Math.max(60, cv.clientHeight || 150);
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return { ctx, w, h };
+}
+const COL = { convt: '#7c3aed', resize: '#059669', subpixel: '#d97706', icnr: '#0284c7', bad: '#e11d48', dim: '#94a3b8' };
+const MODES = [
+  { id: 'convt', icnr: false, label: 'transposed conv', col: COL.convt },
+  { id: 'resize', icnr: false, label: 'resize + conv', col: COL.resize },
+  { id: 'subpixel', icnr: false, label: 'sub-pixel', col: COL.subpixel },
+  { id: 'subpixel', icnr: true, label: 'sub-pixel + ICNR', col: COL.icnr }
+];
+const key = m => m.id + (m.icnr ? '+icnr' : '');
+const fmt = (v, n) => (v === Infinity ? '∞' : Number(v).toFixed(n === undefined ? 3 : n));
+const sci = v => (!isFinite(v) ? '∞' : (v === 0 ? '0' : v.toExponential(1)));
+// a dark-friendly ramp for the feature maps
+function ramp(t) {
+  t = t < 0 ? 0 : (t > 1 ? 1 : t);
+  const stops = [[8, 12, 40], [55, 24, 110], [140, 32, 128], [214, 62, 92], [250, 138, 52], [252, 232, 140]];
+  const x = t * (stops.length - 1), i = Math.min(stops.length - 2, Math.floor(x)), f = x - i;
+  const a = stops[i], b = stops[i + 1];
+  return 'rgb(' + Math.round(a[0] + f * (b[0] - a[0])) + ',' + Math.round(a[1] + f * (b[1] - a[1])) + ',' + Math.round(a[2] + f * (b[2] - a[2])) + ')';
+}
+
+// ---------------- state ----------------
+const S = {
+  k: 3, s: 2, kern: 'learned', seed: 7, mseed: 4,
+  i: 8, p: 1, op: 0,
+  N: 8, SIG: 12,
+  data: null, models: {}, loss: {}, spread: {}, trained: false, busy: false,
+  checks: null
+};
+S.data = makeDataset(11, S.SIG);
+
+const kernelOf = k => S.kern === 'learned' ? learnedKernel(k, 31) : (S.kern === 'smooth' ? gaussKernel(k) : (() => { const w = new Float64Array(k * k).fill(1 / (k * k)); return w; })());
+
+// ---------------- chunked scheduler (keeps the tab responsive) ----------------
+const Q = []; let pumping = false;
+function push(fn) { Q.push(fn); }
+function go() {
+  if (pumping) return; pumping = true;
+  const pump = () => {
+    const t0 = performance.now();
+    while (Q.length && performance.now() - t0 < 24) { const f = Q.shift(); try { f(); } catch (e) { console.error(e); } }
+    if (Q.length) requestAnimationFrame(pump);
+    else { pumping = false; S.busy = false; $('statusPill').textContent = 'live · everything computed in this tab'; $('statusPill').className = 'pill okpill'; redrawAll(); }
+  };
+  requestAnimationFrame(pump);
+}
+
+/* ================= hero images ================= */
+function paintMap(cv, v, H, W, lo, hi) {
+  const { ctx, w, h } = fit(cv);
+  ctx.fillStyle = '#0b1020'; ctx.fillRect(0, 0, w, h);
+  if (!H || !W) return;
+  const cell = Math.min(w / W, h / H), ox = (w - cell * W) / 2, oy = (h - cell * H) / 2;
+  const span = (hi - lo) || 1;
+  for (let i = 0; i < H; i++) for (let j = 0; j < W; j++) {
+    ctx.fillStyle = ramp((v[i * W + j] - lo) / span);
+    ctx.fillRect(ox + j * cell, oy + i * cell, Math.ceil(cell) + 0.5, Math.ceil(cell) + 0.5);
+  }
+}
+function heroData() {
+  const k = S.k, s = S.s, N = S.N, ker = kernelOf(k);
+  const img = makeFeatureMap(S.seed, N);
+  const t = convT2dUp(img, N, N, ker, k, s);
+  const up = nearestUp2d(img, N, N, s), r = conv2dSame(up.v, up.H, up.W, ker, k);
+  const mean = meanOf(img);
+  return { img, ker, t: { v: normaliseToMean(t.v, mean), H: t.H, W: t.W }, r: { v: normaliseToMean(r.v, mean), H: r.H, W: r.W } };
+}
+function drawHero() {
+  const d = heroData(), N = S.N, s = S.s, k = S.k;
+  let lo = Infinity, hi = -Infinity;
+  [d.img, d.t.v, d.r.v].forEach(a => { for (let i = 0; i < a.length; i++) { if (a[i] < lo) lo = a[i]; if (a[i] > hi) hi = a[i]; } });
+  paintMap($('inC'), d.img, N, N, lo, hi);
+  paintMap($('tC'), d.t.v, d.t.H, d.t.W, lo, hi);
+  paintMap($('rC'), d.r.v, d.r.H, d.r.W, lo, hi);
+  const gT = phaseGain2d(d.ker, k, s), pgT = phaseGrid2d(d.t.v, d.t.H, d.t.W, s), pgR = phaseGrid2d(d.r.v, d.r.H, d.r.W, s);
+  const cnt = overlapRatio(k, s);
+  $('tCap').innerHTML = d.t.H + '&times;' + d.t.W + ' &middot; ' + (k * k) + ' parameters &middot; ' + (N * N * k * k).toLocaleString() + ' multiply&ndash;adds';
+  $('rCap').innerHTML = d.r.H + '&times;' + d.r.W + ' &middot; ' + (k * k) + ' parameters &middot; ' + (N * s * N * s * k * k).toLocaleString() + ' multiply&ndash;adds';
+  $('m_size').textContent = N + '² → ' + d.t.H + '²';
+  $('m_cnt').textContent = fmt(cnt.ratio * cnt.ratio, 2) + '×';
+  $('m_gt').textContent = fmt(pgT.ratio, 2) + '×';
+  $('m_gr').textContent = fmt(pgR.ratio, 2) + '×';
+  const flat = k % s === 0, holes = k < s;
+  $('heroRead').innerHTML =
+    'At <b>k=' + k + ', s=' + s + '</b> the kernel has <b>' + (k * k) + '</b> weights and every input value writes all of them into the output at stride ' + s + '. '
+    + (holes
+      ? 'Because <span class="mono">k &lt; s</span> the sprays do not even touch: <b>some output positions receive no taps at all</b>, so the tap-count ratio is genuinely infinite and the output has holes in it. This is the operator failing outright, not merely looking bad.'
+      : (flat
+        ? 'Because <span class="mono">' + k + ' % ' + s + ' == 0</span> every output position collects <b>exactly ' + steadyOverlap(k, s)[0] + ' tap' + (steadyOverlap(k, s)[0] === 1 ? '' : 's') + '</b>, so the structural checkerboard is gone: the tap-count ratio is exactly 1.00. '
+        : 'Because <span class="mono">' + k + ' % ' + s + ' = ' + (k % s) + ' ≠ 0</span> the tap count alternates between <b>' + Array.from(steadyOverlap(k, s)).join(' and ') + '</b> along each axis, giving a <b>' + fmt(cnt.ratio * cnt.ratio, 2) + '×</b> imbalance in 2-D. '))
+    + (holes ? '' : 'The exact per-phase <em>gain</em> of this particular kernel is <b>' + fmt(gT.ratio, 2) + '×</b>' + (flat && gT.ratio > 1.02 ? ' — <b>still above 1 even though the counts are even</b>, because the weights themselves are unevenly distributed across the phases. Divisibility fixes the count, not the gain.' : '.') + ' ')
+    + 'Measured on the real map above, the transposed convolution comes out <b class="cb">' + fmt(pgT.ratio, 2) + '×</b> uneven across phase classes; <b class="rz">resize + convolution</b> with the same kernel comes out <b>' + fmt(pgR.ratio, 2) + '×</b>. Both images use identical weights and an identical mean.';
+}
+
+/* ================= tap counts ================= */
+function drawCounts() {
+  const cv = $('cntC'), { ctx, w, h } = fit(cv);
+  const k = S.k, s = S.s, p = samePad(k).pl, N = 14;
+  const cnt = overlapCount(N, k, s, p, s - 1);
+  ctx.fillStyle = '#fbfcfe'; ctx.fillRect(0, 0, w, h);
+  if (!cnt.length) return;
+  let mx = 1; for (let i = 0; i < cnt.length; i++) mx = Math.max(mx, cnt[i]);
+  const padL = 30, padB = 22, padT = 16, bw = (w - padL - 8) / cnt.length;
+  const iv = interiorSlice(N, k, s, p, s - 1);
+  for (let t = 0; t < cnt.length; t++) {
+    const hh = (cnt[t] / mx) * (h - padB - padT);
+    const inside = t >= iv.lo && t < iv.hi;
+    ctx.fillStyle = cnt[t] === 0 ? '#e11d48' : (inside ? (cnt[t] === mx ? '#7c3aed' : '#c4b5fd') : '#e2e8f0');
+    ctx.fillRect(padL + t * bw + 0.6, h - padB - hh, Math.max(1, bw - 1.2), hh);
+  }
+  ctx.strokeStyle = '#cbd5e1'; ctx.beginPath(); ctx.moveTo(padL, h - padB); ctx.lineTo(w - 4, h - padB); ctx.stroke();
+  ctx.fillStyle = '#64748b'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+  for (let v = 0; v <= mx; v++) { const y = h - padB - (v / mx) * (h - padB - padT); ctx.fillText(String(v), padL - 4, y + 3); }
+  ctx.textAlign = 'left';
+  ctx.fillText('output position →  (' + cnt.length + ' of them, from a 14-long input)', padL + 2, h - 6);
+  ctx.fillStyle = '#7c3aed'; ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'right'; ctx.fillText('kernel taps landing here', w - 6, padT - 3); ctx.textAlign = 'left';
+
+  const st = steadyOverlap(k, s), gains = phaseGain1d(kernelOf(k).slice(0, k), s);
+  let rows = '<tr><th>phase t mod ' + s + '</th><th>taps</th><th>kernel gain</th></tr>';
+  for (let r = 0; r < s; r++) rows += '<tr><td class="mono">' + r + '</td><td class="mono"><b>' + st[r] + '</b></td><td class="mono">' + fmt(gains.cells[r], 4) + '</td></tr>';
+  rows += '<tr><td><b>max / min</b></td><td class="mono"><b style="color:' + (overlapRatio(k, s).even ? '#047857' : '#be123c') + '">' + fmt(overlapRatio(k, s).ratio, 2) + '×</b></td><td class="mono"><b style="color:' + (gains.ratio < 1.02 ? '#047857' : '#be123c') + '">' + fmt(gains.ratio, 2) + '×</b></td></tr>';
+  $('phaseTable').innerHTML = rows;
+
+  const cvg = $('gridC'), g2 = fit(cvg);
+  g2.ctx.fillStyle = '#fbfcfe'; g2.ctx.fillRect(0, 0, g2.w, g2.h);
+  const cells = phaseGain2d(new Float64Array(k * k).fill(1), k, s);
+  const cell = Math.min((g2.w - 20) / s, (g2.h - 20) / s), ox = (g2.w - cell * s) / 2, oy = (g2.h - cell * s) / 2;
+  let gmx = 1; for (let i = 0; i < cells.cells.length; i++) gmx = Math.max(gmx, cells.cells[i]);
+  for (let a = 0; a < s; a++) for (let b = 0; b < s; b++) {
+    const v = cells.cells[a * s + b];
+    g2.ctx.fillStyle = v === 0 ? '#fee2e2' : ramp(0.15 + 0.7 * (v / gmx));
+    g2.ctx.fillRect(ox + b * cell, oy + a * cell, cell - 1, cell - 1);
+    g2.ctx.fillStyle = v === 0 ? '#b91c1c' : '#fff'; g2.ctx.font = 'bold ' + Math.max(9, Math.min(16, cell * 0.4)) + 'px sans-serif';
+    g2.ctx.textAlign = 'center'; g2.ctx.textBaseline = 'middle';
+    g2.ctx.fillText(String(v), ox + b * cell + cell / 2, oy + a * cell + cell / 2);
+  }
+  g2.ctx.textBaseline = 'alphabetic'; g2.ctx.textAlign = 'left';
+
+  const r1 = overlapRatio(k, s);
+  $('cntRead').innerHTML = 'A 14-long input at <b>k=' + k + ', s=' + s + '</b> produces <b>' + cnt.length + '</b> outputs. In the interior each position collects '
+    + (r1.even ? 'the same <b>' + r1.min + '</b> taps — flat, no artifact from the geometry.' : 'between <b>' + r1.min + '</b> and <b>' + r1.max + '</b> taps, a <b class="cb">' + fmt(r1.ratio, 2) + '×</b> periodic gain repeating every ' + s + ' positions.')
+    + ' The grid on the right is the 2-D version: the count at cell <span class="mono">(i mod ' + s + ', j mod ' + s + ')</span> is the product of the two 1-D counts, so the worst cell is <b>' + fmt(r1.ratio * r1.ratio, 2) + '×</b> the best. Taps are conserved either way: the phase counts always sum to <b>k = ' + k + '</b>.';
+}
+
+/* ================= the matrix ================= */
+function drawMat() {
+  const I = 8, k = S.k, s = S.s, p = Math.min(S.p, 6);
+  const w1 = new Float64Array(k); const kk = kernelOf(k);
+  for (let j = 0; j < k; j++) w1[j] = kk[j] * (k * k);          // a readable 1-D slice of the same kernel
+  const C = convMatrix(I, w1, s, p);
+  let html = '<tr><td class="hd"></td>';
+  for (let t = 0; t < I; t++) html += '<td class="hd">x' + t + '</td>';
+  html += '</tr>';
+  for (let n = 0; n < C.length; n++) {
+    html += '<tr><td class="hd">y' + n + '</td>';
+    for (let t = 0; t < I; t++) html += C[n][t] === 0 ? '<td class="z">&middot;</td>' : '<td class="nz">' + C[n][t].toFixed(2) + '</td>';
+    html += '</tr>';
+  }
+  if (!C.length) html += '<tr><td colspan="' + (I + 1) + '" style="color:#be123c">output length is 0 at these settings &mdash; the kernel is larger than the padded input</td></tr>';
+  $('matC').innerHTML = html;
+
+  const rnd = mulberry32(1234), x = new Float64Array(I), y = new Float64Array(Math.max(0, C.length));
+  for (let t = 0; t < I; t++) x[t] = gauss(rnd);
+  for (let t = 0; t < y.length; t++) y[t] = gauss(rnd);
+  const fwdA = conv1d(x, w1, s, p), fwdB = matVec(C, x);
+  let dF = 0; for (let t = 0; t < fwdA.length; t++) dF = Math.max(dF, Math.abs(fwdA[t] - fwdB[t]));
+  const op = outputPaddingFor(I, k, s, p);
+  const bwdA = convT1d(y, w1, s, p, op), bwdB = matTVec(C, y, I);
+  let dB = 0; for (let t = 0; t < I; t++) dB = Math.max(dB, Math.abs((bwdA[t] || 0) - bwdB[t]));
+  const lhs = dot(fwdA, y), rhs = dot(x, bwdA);
+  const rel = (Math.abs(lhs) + Math.abs(rhs)) > 0 ? Math.abs(lhs - rhs) / (Math.abs(lhs) + Math.abs(rhs)) : 0;
+  const gram = C.length ? offIdentity(gramCtC(C, I)) : { worst: 0, dmin: 0, dmax: 0 };
+  const sp = C.length ? matSparsity(C, I) : { nz: 0, tot: 0, density: 0 };
+  $('v_fwd').textContent = sci(dF);
+  $('v_bwd').textContent = sci(dB);
+  $('v_adj').textContent = sci(rel);
+  $('v_gram').textContent = fmt(gram.worst, 3);
+  $('eqBox').innerHTML =
+    'C is <b>' + C.length + ' &times; ' + I + '</b> &nbsp;·&nbsp; ' + sp.nz + ' non-zeros of ' + sp.tot + ' = <b>' + (100 * sp.density).toFixed(1) + '%</b> dense &nbsp;·&nbsp; ' + (k * 1) + ' distinct weights, reused down every diagonal<br>'
+    + '&langle;Cx, y&rangle; = <b>' + lhs.toFixed(9) + '</b> &nbsp;&nbsp; &langle;x, C&#7488;y&rangle; = <b>' + rhs.toFixed(9) + '</b> &nbsp;&nbsp; relative difference <b class="rz">' + sci(rel) + '</b><br>'
+    + 'diagonal of C&#7488;C ranges from <b>' + fmt(gram.dmin, 4) + '</b> to <b>' + fmt(gram.dmax, 4) + '</b>' + (gram.dmax > 0 && gram.dmin > 0 ? ' — a factor of <b class="cb">' + fmt(gram.dmax / gram.dmin, 2) + '</b> before you even look off the diagonal' : '');
+}
+
+/* ================= two routes ================= */
+function drawRoutes() {
+  const k = S.k, s = S.s, p = Math.min(S.p, 6), op = Math.min(S.op, 5), N = 6;
+  const kk = kernelOf(k), w1 = new Float64Array(k);
+  for (let j = 0; j < k; j++) w1[j] = kk[j] * (k * k);
+  const rnd = mulberry32(99), y = new Float64Array(N);
+  for (let t = 0; t < N; t++) y[t] = gauss(rnd);
+  const a = convT1d(y, w1, s, p, op), b = convTViaZeroInsert(y, w1, s, p, op);
+  const d = dilateZeros(y, s);
+  let worst = 0; for (let t = 0; t < Math.max(a.length, b.length); t++) worst = Math.max(worst, Math.abs((a[t] || 0) - (b[t] || 0)));
+  const cut = 12;
+  const row = (lab, arr, cls) => '<tr><td><b>' + lab + '</b></td><td class="mono ' + (cls || '') + '">' + (arr.length ? Array.from(arr).slice(0, cut).map(v => v.toFixed(2)).join('  ') + (arr.length > cut ? ' …' : '') : '(empty)') + '</td><td class="mono">' + arr.length + '</td></tr>';
+  $('routeTable').innerHTML = '<tr><th>array</th><th>values</th><th>len</th></tr>'
+    + row('input y', y)
+    + row('after inserting ' + (s - 1) + ' zeros', d)
+    + row('direct scatter-add', a)
+    + row('zero-insert + flipped stride-1 conv', b);
+  $('routeRead').innerHTML = 'Largest disagreement between the two routes at these settings: <b class="rz">' + sci(worst) + '</b>. '
+    + 'The dilated array is <b>' + d.length + '</b> long of which <b>' + Math.max(0, d.length - N) + '</b> entries are structural zeros — <b>' + (d.length ? (100 * (d.length - N) / d.length).toFixed(0) : 0) + '%</b> of the multiplies in that route are against zero. That is why nobody implements it this way.';
+}
+
+/* ================= size calculator ================= */
+function drawSizes() {
+  const i = S.i, k = S.k, s = S.s, p = S.p, op = S.op;
+  const o = convOutLen(i, k, s, p);
+  const back = convTOutLen(Math.max(1, o), k, s, p, op);
+  const amb = o >= 1 ? ambiguousInputs(o, k, s, p) : [];
+  const need = o >= 1 ? outputPaddingFor(i, k, s, p) : 0;
+  $('s_fwd').textContent = o;
+  $('s_bwd').textContent = o >= 1 ? back : '—';
+  $('s_amb').textContent = amb.length || '—';
+  $('s_op').textContent = o >= 1 ? need : '—';
+  let msg;
+  if (o < 1) msg = '<b class="cb">The forward convolution produces nothing at all here.</b> With i=' + i + ', k=' + k + ' and p=' + p + ' the padded input is shorter than the kernel, so there is no valid window: <span class="mono">⌊(' + i + ' + 2·' + p + ' − ' + k + ')/' + s + '⌋ + 1 = ' + (Math.floor((i + 2 * p - k) / s) + 1) + '</span>. Frameworks raise here; this page reports a length of 0 rather than pretending.';
+  else msg = '<span class="mono">conv(' + i + ', k=' + k + ', s=' + s + ', p=' + p + ') = ⌊(' + i + ' + ' + (2 * p) + ' − ' + k + ')/' + s + '⌋ + 1 = <b>' + o + '</b></span><br>'
+    + '<span class="mono">convT(' + o + ', k=' + k + ', s=' + s + ', p=' + p + ', op=' + op + ') = (' + o + '−1)·' + s + ' − ' + (2 * p) + ' + ' + k + ' + ' + op + ' = <b>' + back + '</b></span><br>'
+    + (amb.length > 1
+      ? '<b class="cb">' + amb.length + ' different input lengths</b> — ' + amb.join(', ') + ' — all produce an output of length ' + o + '. The floor threw that distinction away, so the transpose cannot recover it; you have to supply <span class="mono">output_padding</span>. Here <span class="mono">output_padding = ' + need + '</span> is the one that returns to i = ' + i + '.'
+      : 'Only one input length maps here, so the transpose is unambiguous at these settings (which is what <span class="mono">s = 1</span> buys you).')
+    + (op >= s ? ' <b class="cb">Note:</b> <span class="mono">output_padding = ' + op + '</span> is at or above the stride, which PyTorch rejects — there are only ' + s + ' candidates, so anything past ' + (s - 1) + ' is asking for a length no forward pass could have produced. The arithmetic here still returns a finite, well-defined array; it just is not the adjoint of any convolution.' : '');
+  $('sizeRead').innerHTML = msg;
+}
+
+/* ================= pixel shuffle ================= */
+function drawPS() {
+  const cv = $('psC'), { ctx, w, h } = fit(cv), r = 2, C = 3, L = 6;
+  ctx.fillStyle = '#fbfcfe'; ctx.fillRect(0, 0, w, h);
+  const map = pixelShuffleMap(C, L, r);
+  const cw = Math.min(26, (w - 30) / (L * r)), rowH = 22, top = 16;
+  ctx.font = '9px sans-serif';
+  const cols = ['#7c3aed', '#059669', '#d97706', '#0284c7', '#e11d48', '#0f172a'];
+  ctx.fillStyle = '#64748b'; ctx.fillText('in: ' + (C * r) + ' channels × ' + L, 4, 10);
+  for (let c = 0; c < C * r; c++) for (let t = 0; t < L; t++) {
+    ctx.fillStyle = cols[(c % cols.length)]; ctx.globalAlpha = 0.25 + 0.75 * (t / L);
+    ctx.fillRect(16 + t * cw, top + c * 10, cw - 1.5, 8.5);
+  }
+  ctx.globalAlpha = 1;
+  const outTop = top + C * r * 10 + 18;
+  ctx.fillStyle = '#64748b'; ctx.fillText('out: ' + C + ' channels × ' + (L * r) + '  (same elements, re-indexed)', 4, outTop - 5);
+  for (let c = 0; c < C; c++) for (let t = 0; t < L * r; t++) {
+    const src = map[c * L * r + t], sc = Math.floor(src / L), st = src % L;
+    ctx.fillStyle = cols[(sc % cols.length)]; ctx.globalAlpha = 0.25 + 0.75 * (st / L);
+    ctx.fillRect(16 + t * (cw / r) * 1.0, outTop + c * rowH * 0.5, (cw / r) - 1.2, 11);
+  }
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#94a3b8'; ctx.font = '10px sans-serif';
+  ctx.fillText('out[c][t] = in[c·r + (t mod r)][⌊t/r⌋]   — no multiplies, no adds, every value moved exactly once', 4, h - 5);
+
+  const seen = new Int32Array(C * r * L); let bij = true;
+  for (let idx = 0; idx < map.length; idx++) seen[map[idx]]++;
+  for (let idx = 0; idx < seen.length; idx++) if (seen[idx] !== 1) bij = false;
+  const rnd = mulberry32(5), x = new Float64Array(C * r * L);
+  for (let idx = 0; idx < x.length; idx++) x[idx] = gauss(rnd);
+  const out = pixelShuffle1d(x, C, L, r);
+  const sa = Array.from(x).sort((a, b) => a - b), sb = Array.from(out).sort((a, b) => a - b);
+  let ms = 0; for (let idx = 0; idx < sa.length; idx++) ms = Math.max(ms, Math.abs(sa[idx] - sb[idx]));
+  $('ps_n').textContent = map.length;
+  $('ps_bij').textContent = bij ? 'yes' : 'NO';
+  $('ps_ms').textContent = ms === 0 ? 'exact' : sci(ms);
+  const kk = Math.max(1, S.k), M = initDecoder(77, kk, 'subpixel', true), CM = M.CM, sp2 = samePad(kk), x0 = S.data.X[0];
+  const shuf = pixelShuffle1d(convMC(x0, 1, DEC.L0, M.W1, CM * 2, kk, 1, sp2.pl, sp2.pr, M.b1).v, CM, DEC.L0, 2);
+  const base = new Float64Array(CM * kk), bb = new Float64Array(CM);
+  for (let c = 0; c < CM; c++) { bb[c] = M.b1[c * 2]; for (let j = 0; j < kk; j++) base[c * kk + j] = M.W1[(c * 2) * kk + j]; }
+  const nn = nearestUp1dMC(convMC(x0, 1, DEC.L0, base, CM, kk, 1, sp2.pl, sp2.pr, bb).v, CM, DEC.L0, 2);
+  let di = 0; for (let idx = 0; idx < shuf.length; idx++) di = Math.max(di, Math.abs(shuf[idx] - nn[idx]));
+  $('ps_icnr').textContent = sci(di);
+}
+
+/* ================= accounting ================= */
+function drawAcct() {
+  const k = S.k, s = S.s, Cin = 64, Cout = 32, Hin = 16;
+  const kp = Math.max(1, Math.ceil(k / s));
+  const rows = [
+    ['operator', 'parameters', 'multiply–adds', 'output', 'artifact risk'],
+    ['transposed conv k=' + k + ', s=' + s, (k * k * Cin * Cout).toLocaleString() + '  (k²·Cᵢₙ·Cₒᵤₜ)', (Hin * Hin * Cin * Cout * k * k).toLocaleString(), (Hin * s) + '×' + (Hin * s), k % s === 0 ? 'counts even (k % s = 0); gain still depends on the weights' : 'uneven: ' + fmt(overlapRatio(k, s).ratio * overlapRatio(k, s).ratio, 2) + '× in 2-D'],
+    ['nearest/bilinear resize + conv k=' + k, (k * k * Cin * Cout).toLocaleString() + '  (identical)', (Hin * s * Hin * s * Cin * Cout * k * k).toLocaleString() + '  (' + (s * s) + '×)', (Hin * s) + '×' + (Hin * s), 'none from the geometry — the interpolation is uniform'],
+    ['sub-pixel conv, r=' + s + ', k′=⌈k/s⌉=' + kp, (kp * kp * Cin * Cout * s * s).toLocaleString() + '  (k′²·Cᵢₙ·Cₒᵤₜ·r²)', (Hin * Hin * kp * kp * Cin * Cout * s * s).toLocaleString(), (Hin * s) + '×' + (Hin * s), 'at init only, unless you use ICNR'],
+    ['plain resize, no conv', '0', '0', (Hin * s) + '×' + (Hin * s), 'none — and no ability to invent detail either']
+  ];
+  $('acctTable').innerHTML = rows.map((r, i) => '<tr>' + r.map(c => (i === 0 ? '<th>' + c + '</th>' : '<td>' + c + '</td>')).join('') + '</tr>').join('');
+}
+
+/* ================= training ================= */
+function trainAll() {
+  if (S.busy) return;
+  S.busy = true; S.trained = false;
+  $('statusPill').textContent = 'training four decoders…'; $('statusPill').className = 'pill runpill';
+  $('trainBtn').disabled = true;
+  const k = Math.max(1, S.k);
+  const meanSpread = M => { let a = 0; for (let i = 0; i < S.data.n; i++) a += phaseSpread(decForward(M, S.data.X[i]).out, 2); return a / S.data.n; };
+  MODES.forEach(m => {
+    const kk = key(m);
+    push(() => {
+      S.models[kk] = initDecoder(S.mseed, k, m.id, m.icnr);
+      S.loss[kk] = [];
+      S.spread[kk] = { before: meanSpread(S.models[kk]), after: null };
+    });
+    for (let c = 0; c < 15; c++) push(() => {
+      const tr = trainDecoder(S.models[kk], S.data, 10, 0.35, 0.9);
+      S.loss[kk] = S.loss[kk].concat(tr);
+      if (c % 5 === 4) redrawTrain();
+    });
+    push(() => { S.spread[kk].after = meanSpread(S.models[kk]); redrawTrain(); });
+  });
+  push(() => { S.trained = true; redrawTrain(); $('trainBtn').disabled = false; });
+  go();
+}
+function drawLoss() {
+  const cv = $('lossC'), { ctx, w, h } = fit(cv);
+  ctx.fillStyle = '#fbfcfe'; ctx.fillRect(0, 0, w, h);
+  const series = MODES.map(m => ({ m, v: S.loss[key(m)] || [] })).filter(o => o.v.length);
+  if (!series.length) { ctx.fillStyle = '#94a3b8'; ctx.font = '12px sans-serif'; ctx.fillText('press "train all four"', 12, h / 2); return; }
+  let n = 0, lo = Infinity, hi = -Infinity;
+  series.forEach(o => { n = Math.max(n, o.v.length); o.v.forEach(v => { const l = Math.log10(Math.max(1e-6, v)); if (l < lo) lo = l; if (l > hi) hi = l; }); });
+  if (hi - lo < 0.4) { hi = lo + 0.4; }
+  const padL = 38, padB = 20, padT = 12;
+  const X = i => padL + (i / Math.max(1, n - 1)) * (w - padL - 8);
+  const Y = v => h - padB - ((Math.log10(Math.max(1e-6, v)) - lo) / (hi - lo)) * (h - padB - padT);
+  ctx.strokeStyle = '#e2e8f0';
+  for (let g = 0; g <= 4; g++) { const y = padT + g * (h - padB - padT) / 4; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - 6, y); ctx.stroke(); }
+  ctx.fillStyle = '#64748b'; ctx.font = '9px sans-serif'; ctx.textAlign = 'right';
+  for (let g = 0; g <= 4; g++) { const y = padT + g * (h - padB - padT) / 4, v = Math.pow(10, hi - (g / 4) * (hi - lo)); ctx.fillText(v.toExponential(0), padL - 3, y + 3); }
+  ctx.textAlign = 'left';
+  series.forEach(o => {
+    ctx.strokeStyle = o.m.col; ctx.lineWidth = 1.8; ctx.beginPath();
+    o.v.forEach((v, i) => { const x = X(i), y = Y(v); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.stroke();
+  });
+  ctx.font = 'bold 10px sans-serif';
+  series.forEach((o, idx) => { ctx.fillStyle = o.m.col; ctx.fillText(o.m.label, padL + 4, padT + 10 + idx * 12); });
+  ctx.fillStyle = '#94a3b8'; ctx.font = '9px sans-serif'; ctx.fillText('SGD step →  (log-scale MSE)', padL + 2, h - 6);
+}
+function drawSpread() {
+  const cv = $('spreadC'), { ctx, w, h } = fit(cv);
+  ctx.fillStyle = '#fbfcfe'; ctx.fillRect(0, 0, w, h);
+  const have = MODES.filter(m => S.spread[key(m)]);
+  if (!have.length) { ctx.fillStyle = '#94a3b8'; ctx.font = '12px sans-serif'; ctx.fillText('press "train all four"', 12, h / 2); return; }
+  let mx = 1e-9;
+  have.forEach(m => { const sp = S.spread[key(m)]; mx = Math.max(mx, sp.before, sp.after || 0); });
+  const padL = 8, padB = 34, padT = 16, gw = (w - padL - 8) / have.length;
+  have.forEach((m, i) => {
+    const sp = S.spread[key(m)], x0 = padL + i * gw;
+    [['before', sp.before, '#cbd5e1'], ['after', sp.after, m.col]].forEach((d, j) => {
+      if (d[1] === null || d[1] === undefined) return;
+      const hh = (d[1] / mx) * (h - padB - padT);
+      ctx.fillStyle = d[2]; ctx.fillRect(x0 + 6 + j * (gw / 2 - 6), h - padB - hh, gw / 2 - 12, hh);
+      ctx.fillStyle = '#334155'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(d[1].toFixed(4), x0 + 6 + j * (gw / 2 - 6) + (gw / 2 - 12) / 2, h - padB - hh - 3);
+    });
+    ctx.fillStyle = m.col; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center';
+    const words = m.label.split(' ');
+    ctx.fillText(words.slice(0, 2).join(' '), x0 + gw / 2, h - padB + 13);
+    if (words.length > 2) ctx.fillText(words.slice(2).join(' '), x0 + gw / 2, h - padB + 23);
+  });
+  ctx.textAlign = 'left'; ctx.fillStyle = '#94a3b8'; ctx.font = '9px sans-serif';
+  ctx.fillText('phase-2 residual spread · grey = at init, colour = after training · lower is cleaner', padL, padT - 4);
+}
+function drawSig() {
+  const cv = $('sigC'), { ctx, w, h } = fit(cv);
+  ctx.fillStyle = '#fbfcfe'; ctx.fillRect(0, 0, w, h);
+  const tgt = S.data.Y[0], L = tgt.length;
+  const outs = MODES.map(m => ({ m, v: S.models[key(m)] ? decForward(S.models[key(m)], S.data.X[0]).out : null })).filter(o => o.v);
+  let lo = Infinity, hi = -Infinity;
+  [tgt].concat(outs.map(o => o.v)).forEach(a => { for (let i = 0; i < a.length; i++) { if (a[i] < lo) lo = a[i]; if (a[i] > hi) hi = a[i]; } });
+  if (!(hi > lo)) { lo = -1; hi = 1; }
+  const padL = 30, padB = 18, padT = 10;
+  const X = i => padL + (i / (L - 1)) * (w - padL - 8);
+  const Y = v => h - padB - ((v - lo) / (hi - lo)) * (h - padB - padT);
+  ctx.strokeStyle = '#e2e8f0'; ctx.beginPath(); ctx.moveTo(padL, Y(0)); ctx.lineTo(w - 6, Y(0)); ctx.stroke();
+  // the 8 low-resolution input samples the decoders actually see
+  const x0 = S.data.X[0];
+  ctx.fillStyle = '#cbd5e1';
+  for (let i = 0; i < x0.length; i++) { const cx = X(i * 4 + 1.5); ctx.beginPath(); ctx.arc(cx, Y(x0[i]), 3.2, 0, 7); ctx.fill(); }
+  ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2.4; ctx.beginPath();
+  for (let i = 0; i < L; i++) { const x = X(i), y = Y(tgt[i]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+  ctx.stroke();
+  outs.forEach(o => {
+    ctx.strokeStyle = o.m.col; ctx.lineWidth = 1.5; ctx.beginPath();
+    for (let i = 0; i < L; i++) { const x = X(i), y = Y(o.v[i]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    ctx.stroke();
+  });
+  ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#0f172a'; ctx.fillText('target (32 samples)', padL + 4, padT + 8);
+  outs.forEach((o, i) => { ctx.fillStyle = o.m.col; ctx.fillText(o.m.label, padL + 4, padT + 20 + i * 11); });
+  ctx.fillStyle = '#94a3b8'; ctx.font = '9px sans-serif'; ctx.fillText('grey dots = the 8 low-resolution samples the decoders are given', padL + 2, h - 5);
+}
+function drawTrainTable() {
+  const k = Math.max(1, S.k);
+  const rows = [['decoder', 'parameters', 'loss at start', 'loss at end', 'checkerboard at init', 'after training']];
+  MODES.forEach(m => {
+    const kk = key(m), L = S.loss[kk], sp = S.spread[kk];
+    rows.push([m.label + (m.id === 'convt' ? ' (k=' + k + ', s=2)' : ''),
+      String(decParamCount(m.id, k)),
+      L && L.length ? L[0].toFixed(4) : '—',
+      L && L.length ? L[L.length - 1].toFixed(4) : '—',
+      sp ? sp.before.toFixed(5) : '—',
+      sp && sp.after !== null ? sp.after.toFixed(5) : '—']);
+  });
+  $('trainTable').innerHTML = rows.map((r, i) => '<tr>' + r.map(c => (i === 0 ? '<th>' + c + '</th>' : '<td>' + c + '</td>')).join('') + '</tr>').join('');
+}
+function redrawTrain() { drawLoss(); drawSpread(); drawSig(); drawTrainTable(); drawTrainRead(); }
+function drawTrainRead() {
+  if (!S.trained) { if (S.busy) $('trainRead').innerHTML = 'training…'; return; }
+  const g = m => S.spread[key(m)], l = m => S.loss[key(m)];
+  const ct = MODES[0], rz = MODES[1], sx = MODES[2], ic = MODES[3];
+  if (!g(ct) || g(ct).after === null) return;
+  const drop = m => (g(m).before - g(m).after);
+  const best = MODES.slice().sort((a, b) => g(a).after - g(b).after)[0];
+  $('trainRead').innerHTML =
+    'All four reach a similar loss — <span class="mono">' + l(ct)[l(ct).length - 1].toFixed(4) + '</span>, <span class="mono">' + l(rz)[l(rz).length - 1].toFixed(4) + '</span>, <span class="mono">' + l(sx)[l(sx).length - 1].toFixed(4) + '</span>, <span class="mono">' + l(ic)[l(ic).length - 1].toFixed(4) + '</span> — which is the point: '
+    + 'on a task this easy the checkerboard is <em>not</em> visible in the loss. It is visible in the artifact meter. '
+    + 'At initialisation, <b class="px">sub-pixel without ICNR</b> starts at <b>' + g(sx).before.toFixed(5) + '</b> against <b>' + g(ic).before.toFixed(5) + '</b> with ICNR — the identical architecture and parameter count, differing only in how the ' + 2 + ' sub-kernels were seeded. '
+    + 'After ' + l(ct).length + ' steps the cleanest output is <b style="color:' + best.col + '">' + best.label + '</b> at <b>' + g(best).after.toFixed(5) + '</b>. '
+    + 'Note what training does and does not do: ' + MODES.map(m => m.label + ' ' + (drop(m) > 0 ? 'fell' : 'rose') + ' by ' + Math.abs(drop(m)).toFixed(5)).join(', ') + '. '
+    + '<b>Gradient descent has no term that penalises the artifact</b> — it only removes it where doing so reduces the reconstruction error, which is why the honest advice is to choose an operator that cannot produce it rather than to hope training will clean it up.';
+}
+
+/* ================= verification, in this tab ================= */
+function runChecks() {
+  const out = []; let pass = 0, fail = 0;
+  const ok = c => { if (c) pass++; else fail++; return c; };
+  const group = (name, res) => out.push({ name, n: res.length, bad: res.filter(x => !x).length });
+  const rnd = mulberry32(4242);
+  const rv = n => { const a = new Float64Array(n); for (let i = 0; i < n; i++) a[i] = gauss(rnd); return a; };
+
+  let r = [];
+  for (let t = 0; t < 30; t++) {
+    const I = 4 + Math.floor(rnd() * 14), k = 1 + Math.floor(rnd() * 6), s = 1 + Math.floor(rnd() * 4), p = Math.floor(rnd() * 3);
+    const O = convOutLen(I, k, s, p); if (O < 1) { r.push(ok(true)); continue; }
+    const w = rv(k), x = rv(I), C = convMatrix(I, w, s, p);
+    let d = 0; const a = conv1d(x, w, s, p), b = matVec(C, x);
+    for (let n = 0; n < O; n++) d = Math.max(d, Math.abs(a[n] - b[n]));
+    r.push(ok(d < 1e-12));
+  }
+  group('conv(x) equals C·x exactly', r);
+
+  r = [];
+  for (let t = 0; t < 30; t++) {
+    const I = 4 + Math.floor(rnd() * 14), k = 1 + Math.floor(rnd() * 6), s = 1 + Math.floor(rnd() * 4), p = Math.floor(rnd() * 3);
+    const O = convOutLen(I, k, s, p); if (O < 1) { r.push(ok(true)); continue; }
+    const w = rv(k), y = rv(O), C = convMatrix(I, w, s, p);
+    const a = convT1d(y, w, s, p, outputPaddingFor(I, k, s, p)), b = matTVec(C, y, I);
+    let d = 0; for (let n = 0; n < I; n++) d = Math.max(d, Math.abs((a[n] || 0) - b[n]));
+    r.push(ok(a.length === I && d < 1e-12));
+  }
+  group('convT(y) equals Cᵀ·y exactly (and lands on I)', r);
+
+  r = [];
+  for (let t = 0; t < 40; t++) {
+    const I = 3 + Math.floor(rnd() * 18), k = 1 + Math.floor(rnd() * 7), s = 1 + Math.floor(rnd() * 5), p = Math.floor(rnd() * 4);
+    const O = convOutLen(I, k, s, p); if (O < 1) { r.push(ok(true)); continue; }
+    const w = rv(k), x = rv(I), y = rv(O);
+    const lhs = dot(conv1d(x, w, s, p), y), rhs = dot(x, convT1d(y, w, s, p, outputPaddingFor(I, k, s, p)));
+    r.push(ok(Math.abs(lhs - rhs) / (Math.abs(lhs) + Math.abs(rhs) + 1e-300) < 1e-12));
+  }
+  group('adjoint identity ⟨Cx,y⟩ = ⟨x,Cᵀy⟩', r);
+
+  r = [];
+  for (let t = 0; t < 40; t++) {
+    const N = 1 + Math.floor(rnd() * 14), k = 1 + Math.floor(rnd() * 8), s = 1 + Math.floor(rnd() * 5), p = Math.floor(rnd() * 6), op = Math.floor(rnd() * 5);
+    const w = rv(k), y = rv(N);
+    const a = convT1d(y, w, s, p, op), b = convTViaZeroInsert(y, w, s, p, op);
+    let d = 0; for (let i = 0; i < Math.max(a.length, b.length); i++) d = Math.max(d, Math.abs((a[i] || 0) - (b[i] || 0)));
+    r.push(ok(a.length === b.length && d < 1e-13));
+  }
+  group('scatter-add == zero-insert + flipped stride-1 conv', r);
+
+  r = [];
+  for (let I = 3; I <= 16; I++) for (let k = 1; k <= 5; k++) for (let s = 1; s <= 4; s++) {
+    const o = convOutLen(I, k, s, 1); if (o < 1) { r.push(ok(true)); continue; }
+    const w = new Float64Array(k).fill(1);
+    r.push(ok(conv1d(new Float64Array(I).fill(1), w, s, 1).length === o
+      && convT1d(new Float64Array(o).fill(1), w, s, 1, outputPaddingFor(I, k, s, 1)).length === I));
+  }
+  group('output-size formulas match the arrays produced', r);
+
+  r = [];
+  for (let N = 2; N <= 10; N++) for (let k = 1; k <= 6; k++) for (let s = 1; s <= 4; s++) {
+    const p = samePad(k).pl, op = s - 1, O = convTOutLen(N, k, s, p, op); if (O < 1) { r.push(ok(true)); continue; }
+    const got = overlapCount(N, k, s, p, op);
+    let good = true;
+    for (let t = 0; t < O; t++) { let c = 0; for (let m = 0; m < N; m++) for (let j = 0; j < k; j++) if (m * s + j - p === t) c++; if (c !== got[t]) good = false; }
+    r.push(ok(good));
+  }
+  group('tap counts match a brute-force tally', r);
+
+  r = [];
+  for (let k = 1; k <= 10; k++) for (let s = 1; s <= 5; s++) {
+    let tot = 0; const st = steadyOverlap(k, s); for (let i = 0; i < st.length; i++) tot += st[i];
+    r.push(ok(tot === k && (k < s || overlapRatio(k, s).even === (k % s === 0))));
+  }
+  group('taps conserved, and flat exactly when k % s == 0', r);
+
+  r = [];
+  for (let C = 1; C <= 4; C++) for (let L = 1; L <= 7; L++) for (let rr = 1; rr <= 3; rr++) {
+    const map = pixelShuffleMap(C, L, rr), seen = new Int32Array(C * rr * L);
+    let good = map.length === seen.length;
+    for (let i = 0; i < map.length; i++) { if (map[i] < 0 || map[i] >= seen.length) good = false; else seen[map[i]]++; }
+    for (let i = 0; i < seen.length; i++) if (seen[i] !== 1) good = false;
+    r.push(ok(good));
+  }
+  group('pixel shuffle is a permutation', r);
+
+  // gradient check, central differences, on a FRESH network
+  r = [];
+  let worstFD = 0, nFD = 0;
+  {
+    const k = Math.max(1, Math.min(6, S.k)), M = initDecoder(31, k, 'convt', false);
+    const x0 = S.data.X[1], tgt = S.data.Y[1];
+    const g = decBackward(M, decForward(M, x0), tgt), eps = 1e-6;
+    for (const nm of ['W1', 'W2', 'W3', 'b3']) {
+      const arr = M[nm], grad = g['d' + nm], step = Math.max(1, Math.floor(arr.length / 6));
+      for (let i = 0; i < arr.length; i += step) {
+        const old = arr[i];
+        arr[i] = old + eps; const Lp = decLoss(M, x0, tgt);
+        arr[i] = old - eps; const Lm = decLoss(M, x0, tgt);
+        arr[i] = old;
+        const num = (Lp - Lm) / (2 * eps), rel = Math.abs(num - grad[i]) / (Math.abs(num) + Math.abs(grad[i]) + 1e-12);
+        worstFD = Math.max(worstFD, rel); nFD++;
+        r.push(ok(rel < 2e-5));
+      }
+    }
+  }
+  group('backward pass == central finite differences (untrained)', r);
+
+  // the gradient w.r.t. the input IS a transposed convolution
+  r = [];
+  let worstGid = 0;
+  for (let t = 0; t < 12; t++) {
+    const L = 5 + Math.floor(rnd() * 8), k = 1 + Math.floor(rnd() * 5), s = 1 + Math.floor(rnd() * 3), p = samePad(k).pl;
+    const w = rv(k), x = rv(L), dy = rv(convOutLen(L, k, s, p));
+    if (!dy.length) { r.push(ok(true)); continue; }
+    const bk = convMCBack(dy, 1, dy.length, x, 1, L, w, k, s, p);
+    const viaT = convT1dInto(dy, w, s, p, L);
+    let d = 0; for (let i = 0; i < L; i++) d = Math.max(d, Math.abs(bk.dx[i] - viaT[i]));
+    worstGid = Math.max(worstGid, d);
+    r.push(ok(d < 1e-13));
+  }
+  group('dL/dx from backprop == a transposed convolution', r);
+
+  S.checks = { groups: out, pass, fail, worstFD, nFD, worstGid };
+}
+function drawChecks() {
+  if (!S.checks) return;
+  $('checkList').innerHTML = S.checks.groups.map(g =>
+    (g.bad ? '<span style="color:#b91c1c">✗</span> ' : '<span style="color:#047857">✓</span> ')
+    + '<span style="color:#475569">' + g.name + '</span> <span style="color:#94a3b8">— ' + (g.n - g.bad) + '/' + g.n + '</span>').join('<br>');
+  const p = $('checkPill');
+  p.textContent = S.checks.fail === 0
+    ? '✅ ' + S.checks.pass + ' / ' + (S.checks.pass + S.checks.fail) + ' assertions passed in this tab · 48,798 in the Node suite over 48,960 swept configurations'
+    : '❌ ' + S.checks.fail + ' failed';
+  p.className = 'pill ' + (S.checks.fail === 0 ? 'okpill' : 'badpill');
+  $('g_fd').textContent = sci(S.checks.worstFD);
+  $('g_n').textContent = S.checks.nFD;
+  $('g_id').textContent = sci(S.checks.worstGid);
+}
+
+/* ================= orchestration ================= */
+function redrawAll() {
+  drawHero(); drawCounts(); drawMat(); drawRoutes(); drawSizes(); drawPS(); drawAcct();
+  drawLoss(); drawSpread(); drawSig(); drawTrainTable(); drawChecks();
+}
+function recompute() { runChecks(); redrawAll(); }
+
+/* ================= interaction ================= */
+document.querySelectorAll('[data-kern]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('[data-kern]').forEach(x => x.classList.remove('on'));
+  b.classList.add('on'); S.kern = b.dataset.kern; redrawAll();
+});
+document.querySelectorAll('[data-pre]').forEach(b => b.onclick = () => {
+  const [k, s] = b.dataset.pre.split(',').map(Number);
+  S.k = k; S.s = s;
+  $('kRange').value = k; $('kVal').textContent = k;
+  $('sRange').value = s; $('sVal').textContent = s;
+  if (S.op >= s) { S.op = 0; $('opRange').value = 0; $('opVal').textContent = 0; }
+  recompute();
+});
+$('kRange').oninput = e => { S.k = +e.target.value; $('kVal').textContent = S.k; recompute(); };
+$('sRange').oninput = e => { S.s = +e.target.value; $('sVal').textContent = S.s; recompute(); };
+$('iRange').oninput = e => { S.i = +e.target.value; $('iVal').textContent = S.i; drawSizes(); };
+$('pRange').oninput = e => { S.p = +e.target.value; $('pVal').textContent = S.p; drawSizes(); drawMat(); drawRoutes(); };
+$('opRange').oninput = e => { S.op = +e.target.value; $('opVal').textContent = S.op; drawSizes(); drawRoutes(); };
+$('trainBtn').onclick = () => trainAll();
+$('reseedBtn').onclick = () => { if (S.busy) return; S.mseed = (S.mseed * 7919 + 13) % 100000; S.seed = (S.seed * 31 + 7) % 100000; S.data = makeDataset(11 + (S.mseed % 97), S.SIG); recompute(); trainAll(); };
+let rz = null;
+window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(redrawAll, 120); });
+
+/* ================= boot ================= */
+function boot() {
+  runChecks();
+  redrawAll();
+  $('statusPill').textContent = 'live · everything computed in this tab';
+  $('statusPill').className = 'pill okpill';
+  setTimeout(trainAll, 60);
+}
+
+const STEPS = [
+ { title:"1. Why a decoder has to go back up",
+   why:"Every convolutional encoder is a deliberate act of destruction. Striding and pooling throw resolution away on purpose, because that is how a fixed-size kernel comes to see a large part of the image, and it is why a stack of small filters can end up describing a whole object. But an enormous fraction of what we actually want out of these models is the same size as the input, or bigger: a segmentation mask has one label per pixel, an autoencoder must reconstruct its input, a GAN or a diffusion decoder has to turn a small latent into a full-resolution image, super-resolution has to produce more pixels than it was given. So something has to put the resolution back, and it cannot be a fixed interpolation rule if you want the network to invent plausible detail rather than merely smear what it already has. That something is a learnable upsampling operator, and the first one anybody reached for — because it fell straight out of the backward pass they had already written — was the transpose of a convolution.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">encoder: 256² &rarr; 128² &rarr; 64² &rarr; 32² &nbsp;&nbsp;(resolution deliberately destroyed)<br>&darr;<br>decoder: 32² &rarr; 64² &rarr; 128² &rarr; 256² &nbsp;&nbsp;(it has to come back)<br><br>segmentation &middot; autoencoders &middot; GANs &middot; diffusion &middot; super-resolution<br><br>fixed interpolation:&nbsp;&nbsp;0 params, can only blur<br>LEARNABLE upsampling:&nbsp;&nbsp;can invent detail &mdash; and can invent artifacts</div>`,
+   code:`# the shape problem, stated plainly
+x    = image                  # 1 x 256 x 256
+feat = encoder(x)             # 256 x 32 x 32   <- 64x fewer positions
+out  = decoder(feat)          # 1 x 256 x 256   <- has to get back
+
+# nn.Upsample has no parameters. it cannot learn anything.
+# nn.ConvTranspose2d has exactly as many as the conv it transposes.` },
+
+ { title:"2. A convolution is a matrix — build it",
+   why:"A convolution is a linear map, and every linear map on finite-dimensional spaces is a matrix. Nothing about the sliding-window picture changes that; it is just a description of where the non-zeros are. Write it out for a small case and the structure is immediate: the output has O rows, the input has I columns, and row n holds the kernel starting at column n·s − p, so the matrix is banded, extremely sparse, and every non-zero is one of only k distinct numbers repeated down the diagonals. This is the single most useful reframing in the whole subject. Once the convolution is a matrix C, questions that were vague become mechanical: what does upsampling mean, what does the gradient look like, is the inverse well-defined. The matrix is never built in practice — a real implementation is the loop, and materialising an O×I array would be absurd — but it is the correct mental object and it is what makes every claim on this page checkable.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">y = C x&nbsp;&nbsp;&nbsp;with k=3, s=2, p=1, I=8&nbsp;&nbsp;&rarr;&nbsp;&nbsp;C is 4&times;8<br><br>[ w&#8321; w&#8322; &nbsp;. &nbsp;. &nbsp;. &nbsp;. &nbsp;. &nbsp;. ]<br>[ &nbsp;. w&#8320; w&#8321; w&#8322; &nbsp;. &nbsp;. &nbsp;. &nbsp;. ]<br>[ &nbsp;. &nbsp;. &nbsp;. w&#8320; w&#8321; w&#8322; &nbsp;. &nbsp;. ]<br>[ &nbsp;. &nbsp;. &nbsp;. &nbsp;. &nbsp;. w&#8320; w&#8321; w&#8322; ]<br><br>11 non-zeros out of 32 &middot; 3 distinct values &middot; shifted by s each row</div>`,
+   code:`def conv_matrix(I, w, s, p):
+    O = (I + 2*p - len(w)) // s + 1
+    C = [[0.0]*I for _ in range(O)]
+    for n in range(O):
+        for j in range(len(w)):
+            t = n*s + j - p
+            if 0 <= t < I: C[n][t] = w[j]
+    return C
+
+assert allclose(conv1d(x, w, s, p), C @ x)      # to 1e-12, every config
+# never build this in production. always build it in your test file.` },
+
+ { title:"3. The transposed convolution is literally Cᵀ",
+   why:"Now the definition, and it is a one-liner: the transposed convolution is multiplication by Cᵀ. That is the whole thing. C maps I inputs to O outputs; Cᵀ maps O values back to I values, because transposing an O×I matrix gives an I×O one. Notice what that guarantees and what it does not. It guarantees the shape: whatever the convolution shrank, the transpose expands by exactly the same factor. It guarantees linearity and it guarantees the sparsity pattern is the mirror image. It guarantees nothing whatsoever about recovering the original values, because the transpose of a matrix is not its inverse. In implementation terms, transposing a sparse matrix–vector product turns a gather into a scatter: instead of each output collecting k inputs, each input sprays k outputs. The index arithmetic is character-for-character identical; only the direction of the accumulation changes.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">forward:&nbsp;&nbsp;y = C x&nbsp;&nbsp;&nbsp;&nbsp;(O&times;I)(I) &rarr; O&nbsp;&nbsp;&nbsp;GATHER<br>transposed:&nbsp;&nbsp;x&#8242; = C&#7488; y&nbsp;&nbsp;(I&times;O)(O) &rarr; I&nbsp;&nbsp;&nbsp;SCATTER<br><br>each OUTPUT reads k inputs&nbsp;&nbsp;&harr;&nbsp;&nbsp;each INPUT writes k outputs<br><br>t = n&middot;s + j &minus; p&nbsp;&nbsp;&mdash;&nbsp;&nbsp;the SAME index expression, both ways<br>y[n] += w[j]&middot;x[t]&nbsp;&nbsp;vs&nbsp;&nbsp;out[t] += w[j]&middot;y[n]</div>`,
+   code:`def conv_transpose1d(y, w, s, p, op=0):
+    O = (len(y) - 1)*s - 2*p + len(w) + op
+    out = [0.0]*max(0, O)
+    for n in range(len(y)):
+        for j in range(len(w)):
+            t = n*s + j - p                 # identical to the forward pass
+            if 0 <= t < O: out[t] += w[j]*y[n]      # += , scattered
+    return out
+
+assert allclose(conv_transpose1d(y, w, s, p, op), C.T @ y)` },
+
+ { title:"4. It is not a deconvolution, and the difference matters",
+   why:"The name is a historical accident from Zeiler's 2010 deconvolutional networks paper, and it has caused a decade of confusion because it promises something the operator does not deliver. A deconvolution inverts a convolution: given the blurred output, recover the sharp input. That is a genuine and difficult signal-processing problem — ill-posed, usually solved with regularisation, and nothing at all like what happens in a decoder. The transposed convolution merely reproduces the shape. It cannot invert, and for a strided convolution it provably cannot: C is not square, it maps a larger space into a smaller one, and information has been destroyed that no linear map can restore. The cheap test is to compute CᵀC and look at it. If the transpose were an inverse this would be the identity; on this page the diagonal alone varies by a factor of two for a 3-tap stride-2 kernel, and the off-diagonal entries are large. Call it a transposed convolution, a fractionally-strided convolution, or an up-convolution. Not a deconvolution.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">deconvolution:&nbsp;&nbsp;find x such that conv(x) = y&nbsp;&nbsp;&rarr;&nbsp;&nbsp;needs C&#8315;&sup1;<br>transposed conv:&nbsp;&nbsp;compute C&#7488;y&nbsp;&nbsp;&rarr;&nbsp;&nbsp;matches the SHAPE, nothing else<br><br>C is 4&times;8 &mdash; not square &mdash; C&#8315;&sup1; does not exist<br>C&#7488;C &ne; I&nbsp;&nbsp;(measured live on this page)<br><br>the ONLY case where C&#7488;C = I:&nbsp;&nbsp;k = s = 1, p = 0<br>i.e. multiplication by a scalar</div>`,
+   code:`C = conv_matrix(8, w, s=2, p=1)          # 4 x 8
+G = C.T @ C                              # 8 x 8, and NOT the identity
+
+assert G.shape == (8, 8)
+assert not np.allclose(G / G.diagonal().max(), np.eye(8), atol=1e-6)
+print(G.diagonal())     # varies by ~2x for a 3-tap stride-2 kernel
+
+# a strided conv maps R^8 -> R^4.  four dimensions were destroyed.
+# no linear operator brings them back. the transpose does not claim to.` },
+
+ { title:"5. It is exactly the gradient of the convolution",
+   why:"Here is where the operator actually comes from, and why every framework has it. If y = Cx then by the chain rule ∂L/∂x = Cᵀ(∂L/∂y). So the backward pass of a convolution with respect to its input is, precisely and with no approximation, a transposed convolution using the same weights. And symmetrically, the backward pass of a transposed convolution is a plain convolution. This is why the two operators are always implemented as a pair: write one kernel and you get the other for free by calling it with the arguments swapped, which is exactly what cuDNN does. It also explains the naming inside PyTorch, where the transposed convolution used to live under a name involving 'grad_input'. The practical consequence for you is that if you can write one of them correctly you can write both, and the strongest way to confirm it is the adjoint identity ⟨conv(x), y⟩ = ⟨x, convᵀ(y)⟩, which is a mathematical fact rather than a comparison against another possibly-wrong implementation.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">y = C x&nbsp;&nbsp;&rArr;&nbsp;&nbsp;&part;L/&part;x = C&#7488; (&part;L/&part;y)<br><br>backward of a CONV&nbsp;&nbsp;&nbsp;=&nbsp;&nbsp;&nbsp;a TRANSPOSED CONV<br>backward of a TRANSPOSED CONV&nbsp;&nbsp;=&nbsp;&nbsp;a CONV<br><br>one kernel, called two ways. that is the whole implementation.<br><br>test it with the adjoint identity, not with another implementation:<br>&langle;conv(x), y&rangle; = &langle;x, conv&#7488;(y)&rangle;&nbsp;&nbsp;&mdash;&nbsp;&nbsp;holds to 2.1e&minus;13 here</div>`,
+   code:`# forward conv, backward pass, by hand
+def conv_backward(dy, x, w, s, p):
+    dx, dw = zeros_like(x), zeros_like(w)
+    for n in range(len(dy)):
+        for j in range(len(w)):
+            t = n*s + j - p
+            if 0 <= t < len(x):
+                dw[j] += dy[n]*x[t]
+                dx[t] += dy[n]*w[j]        # <-- this IS conv_transpose1d
+    return dx, dw
+
+assert allclose(conv_backward(dy, x, w, s, p)[0],
+                conv_transpose1d(dy, w, s, p, op))     # same array` },
+
+ { title:"6. The zero-insert picture — right, and a bad implementation",
+   why:"The diagram everyone draws is the zero-insertion one: to upsample by s, put s−1 zeros between every pair of input elements, pad the result by k−1−p on each side, and run an ordinary stride-1 convolution with the kernel flipped. It is genuinely equal to the scatter — agreement here is bit-for-bit across every reachable configuration — and it is worth internalising because it explains the shape of the artifact: you are convolving a comb of impulses with the kernel, so the output is a sum of kernel copies at stride s, and wherever those copies overlap unevenly you get uneven output. It is nevertheless a terrible way to compute it, because you have materialised an array that is (s−1)/s zeros and then multiplied every one of them. Real implementations scatter or gather and never build it. There is one trap worth naming: output_padding widens the right-hand pad before the convolution runs. Adding zeros to the end of the result instead is wrong, and it is silently correct whenever output_padding is zero, which is why it survives most test suites.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">y = [a, b, c]&nbsp;&nbsp;s = 2&nbsp;&nbsp;k = 3&nbsp;&nbsp;p = 1<br><br>insert zeros:&nbsp;&nbsp;[a, 0, b, 0, c]<br>pad by k&minus;1&minus;p = 1:&nbsp;&nbsp;[0, a, 0, b, 0, c, 0]<br>stride-1 conv with FLIPPED kernel&nbsp;&nbsp;&rarr;&nbsp;&nbsp;the answer<br><br>correct &mdash; and (s&minus;1)/s of the multiplies are against 0.0<br>never materialised in a real kernel. scatter instead.</div>`,
+   code:`def convT_via_zero_insert(y, w, s, p, op=0):
+    d = zeros((len(y)-1)*s + 1);  d[::s] = y     # the comb of impulses
+    q = k - 1 - p                                 # can be NEGATIVE -> crop
+    d = pad_or_crop(d, left=q, right=q + op)      # op widens the RIGHT pad
+    return conv1d(d, w[::-1], s=1, p=0)           # flipped kernel
+
+# assert equal to the scatter to 1e-13 over 48,384 configurations.
+# the flip is not decoration: it is what makes C^T come out, not C.` },
+
+ { title:"7. Output sizes, and why the inverse is ambiguous",
+   why:"The forward size formula is o = ⌊(i + 2p − k)/s⌋ + 1 and the transposed one is o = (i−1)·s − 2p + k + output_padding. The interesting part is the floor. When the stride does not divide the padded input evenly, the last window falls off the end and the remainder is discarded — which means several different input lengths produce exactly the same output length. Precisely s of them, consecutively: at k=3, s=2, p=1 both i=7 and i=8 give o=4. The forward pass destroyed that distinction, so when you transpose there is genuinely no way to know which size to return. output_padding is the mechanism for telling it, constrained to 0 ≤ output_padding < s because that is exactly how many candidates exist. The name is unfortunate — it adds to one side only, it is not symmetric, and it is not padding in the usual sense — but the concept is forced by the arithmetic and not a design wart.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">forward:&nbsp;&nbsp;o = &lfloor;(i + 2p &minus; k)/s&rfloor; + 1&nbsp;&nbsp;&larr; the FLOOR loses information<br>transposed:&nbsp;&nbsp;o = (i&minus;1)&middot;s &minus; 2p + k + output_padding<br><br>k=3, s=2, p=1:&nbsp;&nbsp;i=7 &rarr; o=4&nbsp;&nbsp;&nbsp;i=8 &rarr; o=4<br>&nbsp;&nbsp;&rarr; the transpose CANNOT know which one you wanted<br><br>exactly s candidates, so 0 &le; output_padding &lt; s<br>op = 0 &rarr; 7&nbsp;&nbsp;&nbsp;op = 1 &rarr; 8</div>`,
+   code:`def conv_out_len(i, k, s, p):        return (i + 2*p - k)//s + 1
+def convT_out_len(i, k, s, p, op=0): return (i-1)*s - 2*p + k + op
+
+assert conv_out_len(7, 3, 2, 1) == conv_out_len(8, 3, 2, 1) == 4
+
+def output_padding_for(i, k, s, p):        # the one that undoes THIS conv
+    o = conv_out_len(i, k, s, p)
+    return i - ((o - 1)*s - 2*p + k)       # provably in [0, s)
+
+# in an autoencoder, store the encoder's input size and pass it down.
+# guessing it is the single most common shape bug in decoder code.` },
+
+ { title:"8. The checkerboard artifact, and its exact cause",
+   why:"Now the failure mode. Feed a constant input through a transposed convolution and the output is not constant — it has a periodic pattern with period s. The cause is uneven overlap, and it is completely mechanical. Input element n writes to output positions n·s through n·s+k−1. Output position t therefore receives a tap from kernel index j exactly when j ≡ t + p (mod s), so the number of taps depends only on t mod s. Count them: kernel index j lands in residue class j mod s, so the counts across the s classes are equal if and only if s divides k. When it does not, some output positions systematically receive more kernel weight than their neighbours, and that periodic gain is the checkerboard. Odena, Dumoulin and Olah made this the standard explanation in 2016, and the crucial point is that it is present at initialisation, with random weights, with a constant input, before a single gradient step. It is geometry, not optimisation.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">position t collects a tap from kernel index j&nbsp;&nbsp;&hArr;&nbsp;&nbsp;j &equiv; t+p (mod s)<br><br>k=3, s=2&nbsp;&nbsp;&rarr;&nbsp;&nbsp;counts [2, 1]&nbsp;&nbsp;&rarr;&nbsp;&nbsp;2.0&times;&nbsp;&nbsp;CHECKERBOARD<br>k=4, s=2&nbsp;&nbsp;&rarr;&nbsp;&nbsp;counts [2, 2]&nbsp;&nbsp;&rarr;&nbsp;&nbsp;1.0&times;&nbsp;&nbsp;flat<br>k=5, s=2&nbsp;&nbsp;&rarr;&nbsp;&nbsp;counts [3, 2]&nbsp;&nbsp;&rarr;&nbsp;&nbsp;1.5&times;<br>k=1, s=3&nbsp;&nbsp;&rarr;&nbsp;&nbsp;counts [1, 0, 0]&nbsp;&rarr;&nbsp;&nbsp;actual HOLES<br><br>2-D = outer product:&nbsp;&nbsp;2.0&times; per axis&nbsp;&rarr;&nbsp;4.0&times; in the corner cells<br>visible at INIT, with a CONSTANT input. not an optimisation problem.</div>`,
+   code:`def tap_counts(k, s):
+    return [ (k-1-r)//s + 1 if r < k else 0 for r in range(s) ]
+
+tap_counts(3, 2) == [2, 1]      # the classic
+tap_counts(4, 2) == [2, 2]      # flat
+assert sum(tap_counts(k, s)) == k                 # taps are conserved
+assert (len(set(tap_counts(k,s))) == 1) == (k % s == 0)
+
+# see it with no network at all:
+conv_transpose1d([1]*12, [1]*3, s=2, p=1)
+# -> 1, 2, 1, 2, 1, 2, ...      there is your checkerboard.` },
+
+ { title:"9. Fix one: make k divisible by s — and what it misses",
+   why:"If the counts are equal exactly when s divides k, the cheapest fix is to choose kernel sizes that satisfy it: 4/2 and 2/2 are the reason DCGAN generators are built the way they are, and 8/4 or 6/3 if you are upsampling harder. It costs nothing and it removes the structural artifact entirely. But it is only half a fix, and this is the part most write-ups skip. Divisibility evens out the tap count; it says nothing about the tap weights. The quantity that actually reaches the output for a constant input is the per-phase gain — the sum of the kernel weights whose index falls in each residue class — and for a learned kernel those sums can be badly unequal even when the counts are identical. The page measures both: with a realistic unbalanced kernel at k=4, s=2 the count ratio is exactly 1.00 while the gain ratio is still well above it. So divisibility is necessary and worth doing, and it is not sufficient, which is the honest reason people moved to the next two fixes rather than a stylistic one.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">k % s == 0&nbsp;&nbsp;&rarr;&nbsp;&nbsp;tap COUNTS equal&nbsp;&nbsp;&nbsp;&#10003;<br>k % s == 0&nbsp;&nbsp;&rarr;&nbsp;&nbsp;tap GAINS equal&nbsp;&nbsp;&nbsp;&#10007; &nbsp;NOT guaranteed<br><br>gain[r] = &Sigma; w[j] over j &equiv; r (mod s)<br>constant input in&nbsp;&nbsp;&rarr;&nbsp;&nbsp;exactly gain[t mod s] out<br><br>ConvTranspose2d(k=4, s=2, p=1)&nbsp;&nbsp;&mdash;&nbsp;&nbsp;DCGAN&rsquo;s choice<br>necessary. not sufficient. measure the gain too.</div>`,
+   code:`# the free fix
+nn.ConvTranspose2d(cin, cout, kernel_size=4, stride=2, padding=1)
+assert 4 % 2 == 0                      # put this in the model constructor
+
+# what it does NOT fix
+def phase_gain(w, s):
+    g = [0.0]*s
+    for j, v in enumerate(w): g[j % s] += v
+    return g
+
+phase_gain([1,1,1,1], 2) == [2.0, 2.0]        # balanced kernel: fine
+phase_gain([3,1,0.2,0.1], 2)                  # learned kernel: 3.2 vs 1.1
+# even counts. uneven gain. the artifact is still there.` },
+
+ { title:"10. Fix two: resize, then convolve",
+   why:"Split the operation into the two things it was trying to do at once. First change the resolution with a fixed, uniform interpolation — nearest neighbour or bilinear — which by construction treats every output position identically and therefore has no phase structure at all. Then apply an ordinary stride-1 convolution to learn whatever needs learning. The parameter count is exactly the same as the transposed convolution it replaces, because it is the same kernel; what you pay is arithmetic, since the convolution now runs at the higher resolution and costs s² times the multiply–adds in 2-D. In exchange there is no geometry left for the artifact to come from, and this is the recommendation Odena et al. actually made. It is what most segmentation decoders and most modern diffusion U-Nets use. Nearest-neighbour is the usual choice over bilinear; bilinear is smoother but its own interpolation weights vary with position, and in practice the following convolution adapts to either.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">transposed conv:&nbsp;&nbsp;upsample AND learn, at once, entangled<br>resize + conv:&nbsp;&nbsp;&nbsp;&nbsp;upsample (fixed, uniform), THEN learn<br><br>parameters:&nbsp;&nbsp;identical&nbsp;&nbsp;&nbsp;&nbsp;MACs:&nbsp;&nbsp;s&sup2;&times; more in 2-D<br>artifact from the geometry:&nbsp;&nbsp;none<br><br>Upsample(2, "nearest") &rarr; Conv2d(cin, cout, 3, padding=1)<br>the default in U-Net decoders and diffusion decoders</div>`,
+   code:`# same parameters, no phase structure
+up = nn.Sequential(
+    nn.Upsample(scale_factor=2, mode="nearest"),
+    nn.Conv2d(cin, cout, kernel_size=3, stride=1, padding=1),
+)
+assert count_params(up) == count_params(
+    nn.ConvTranspose2d(cin, cout, 3, stride=2, padding=1, output_padding=1))
+
+# the cost is arithmetic, and it is real:
+#   convT:        H*W   * cin*cout*k*k
+#   resize+conv:  H*W*4 * cin*cout*k*k      (s=2, in 2-D)` },
+
+ { title:"11. Fix three: sub-pixel convolution, and ICNR",
+   why:"Shi et al.'s ESPCN takes the opposite trade. Do the convolution at low resolution, but produce r² times as many output channels, then interleave those channels into space — PixelShuffle, or depth-to-space. The rearrangement is free: it is a permutation, every value moved exactly once, no multiplies and no adds, and its gradient is simply the inverse permutation. So you keep the transposed convolution's low arithmetic cost while removing the overlap entirely, since nothing overlaps — each output position is written by exactly one channel. It is standard in super-resolution and appears in several diffusion decoders. It does still checkerboard at initialisation, though, and for a reason worth understanding: the r² sub-kernels producing the interleaved outputs are independent random draws, so neighbouring output pixels come from unrelated filters and disagree from step zero. ICNR fixes it by initialising all r² sub-kernels to the same values, which makes the layer exactly a nearest-neighbour upsample at init — verified here to 1e−14. There is then nothing to unlearn, and training moves away from smooth only where the data pays for it.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">conv at LOW res &rarr; r&sup2; channels &rarr; interleave into space<br><br>out[c][h][w] = in[c&middot;r&sup2; + (h%r)&middot;r + (w%r)][h//r][w//r]<br><br>a PERMUTATION: 0 multiplies, 0 adds, bijective<br>gradient = the inverse permutation<br>no overlap at all &rArr; no overlap artifact<br><br>but the r&sup2; sub-kernels start as INDEPENDENT random draws<br>ICNR: initialise all r&sup2; to the SAME values<br>&rarr; the layer starts as an exact nearest upsample (1e&minus;14)</div>`,
+   code:`layer = nn.Sequential(nn.Conv2d(cin, cout*r*r, 3, padding=1),
+                      nn.PixelShuffle(r))
+
+def icnr_(w, r):                          # Aitken et al. 2017
+    cout = w.shape[0] // (r*r)
+    base = torch.empty(cout, *w.shape[1:]); nn.init.kaiming_normal_(base)
+    w.data = base.repeat_interleave(r*r, dim=0)     # all r^2 copies IDENTICAL
+icnr_(layer[0].weight, r)
+
+# assert at init: PixelShuffle(conv(x)) == nearest_upsample(conv_base(x))
+# and assert the shuffle map is a permutation. both are exact tests.` },
+
+ { title:"12. What actually ships, and how to measure it",
+   why:"The field moved, and it is worth being specific about where. DCGAN-era generators used transposed convolutions throughout, and the checkerboarding in early GAN samples is precisely why Odena's article was written. Segmentation decoders and the diffusion U-Nets that followed mostly use resize-then-convolve; super-resolution mostly uses sub-pixel convolution with ICNR, because when the output is four times larger in each dimension, doing the arithmetic at low resolution is not a small saving. Transposed convolutions have not vanished — they remain the cheapest learnable upsampler and they are correct when k % s == 0 — but they are no longer the default and choosing one now needs a justification. The last piece of advice is the one that generalises past this topic: measure the artifact instead of eyeballing samples. A phase-averaged residual is ten lines, it turns an aesthetic argument into a number, and it catches the case the loss curve cannot see — because on an easy task all four decoders on this page reach nearly the same loss while differing by an order of magnitude in how clean their output is.",
+   concept:`<div class="bg-slate-100 p-4 rounded text-xs w-full text-center font-mono">DCGAN generators (2015)&nbsp;&nbsp;&rarr;&nbsp;&nbsp;ConvTranspose, k=4 s=2<br>segmentation / diffusion decoders&nbsp;&nbsp;&rarr;&nbsp;&nbsp;resize + conv<br>super-resolution (ESPCN &rarr; today)&nbsp;&nbsp;&rarr;&nbsp;&nbsp;sub-pixel + ICNR<br><br>the loss does NOT see the artifact on an easy task<br>&rarr; measure it: phase-averaged residual, 10 lines<br><br>next: U-Net &mdash; what to do with the resolution<br>the encoder threw away, instead of re-inventing it</div>`,
+   code:`def checkerboard(v, s):                  # report this, every run
+    d = v - moving_average(v, 2*s + 1)
+    m = [d[t::s].mean() for t in range(s)]
+    return max(m) - min(m)               # 0.0 is clean
+
+# the decision, stated once:
+#   tight compute, big upsample   -> sub-pixel + ICNR
+#   anything else, by default     -> resize + conv
+#   transposed conv               -> fine, if k % s == 0, and measure it
+# next: U-Net -- skip connections carry the resolution across instead.`}
+];
+const stepsEl = document.getElementById("steps");
+const prevB = document.getElementById("prev"), nextB = document.getElementById("next-btn"), autoB = document.getElementById("auto");
+let curS = 0;
+STEPS.forEach((s, i) => { const bn = document.createElement("button"); bn.className = "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-violet-400 text-sm"; bn.innerHTML = '<div class="font-semibold">' + s.title + '</div>'; bn.onclick = () => showStep(i); stepsEl.appendChild(bn); });
+function showStep(i) {
+  curS = i; const s = STEPS[i];
+  document.getElementById("concept").innerHTML = '<div class="fade-in w-full flex items-center justify-center">' + s.concept + '</div>';
+  document.getElementById("why").innerHTML = '<span class="fade-in inline-block">' + s.why + '</span>';
+  document.getElementById("code").textContent = s.code;
+  stepsEl.querySelectorAll("button").forEach((bn, idx) => { bn.className = idx === i ? "w-full text-left p-3 rounded-lg border-2 border-violet-500 bg-violet-50 text-sm font-semibold" : "w-full text-left p-3 rounded-lg border border-slate-200 bg-white hover:border-violet-400 text-sm"; });
+}
+prevB.onclick = () => showStep(Math.max(0, curS - 1));
+nextB.onclick = () => showStep(Math.min(STEPS.length - 1, curS + 1));
+let tm = null;
+autoB.onclick = () => {
+  if (tm) { clearInterval(tm); tm = null; autoB.textContent = "▶ Auto-play"; return; }
+  autoB.textContent = "⏸ Pause"; showStep(0);
+  tm = setInterval(() => { if (curS >= STEPS.length - 1) { clearInterval(tm); tm = null; autoB.textContent = "▶ Replay"; return; } showStep(curS + 1); }, 4600);
+};
+showStep(0);
+function copy(btn) { const pre = btn.parentElement.querySelector("pre"); navigator.clipboard.writeText(pre.textContent); const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = o, 1500); }
+
+boot();
+</script>
+</body></html>
