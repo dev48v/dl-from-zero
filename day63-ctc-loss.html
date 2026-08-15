@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 63 — CTC loss (from scratch)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  table.grid td { border:1px solid #e2e8f0; padding:2px 4px; text-align:center; font-size:11px;
+                  font-variant-numeric:tabular-nums; }
+  table.grid th { font-size:11px; color:#64748b; padding:2px 4px; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-20">
+  <div class="max-w-6xl mx-auto p-4 md:p-6">
+    <p class="text-xs font-bold tracking-widest text-violet-700 mb-2">DEEPLEARNINGFROMZERO · DAY 63</p>
+    <h1 class="text-xl md:text-2xl font-black leading-tight mb-4">
+      🔤 CTC loss — how a network that emits <strong>T frames</strong> is trained against a label of
+      length <strong>U</strong>, when nobody told it which frame belongs to which letter. Every
+      earlier day in this series had an output that lined up with a target. Speech, handwriting and
+      OCR do not: the alignment is <em>latent</em>, and labelling it by hand is the expensive thing
+      CTC exists to avoid. The answer is to define the loss as the probability of
+      <strong>every alignment at once</strong> — insert a blank symbol, allow repeats, sum over all
+      valid paths — and compute that sum in O(T·U) with a forward–backward recursion instead of
+      enumerating exponentially many paths. This page implements the recursion, then does the thing
+      that makes it believable: for small T and U it <strong>brute-force enumerates every path</strong>
+      and checks the recursion agrees to floating-point noise. Gradients are checked the same way,
+      against finite differences. Then the parts people get wrong: log-space arithmetic,
+      the <code>a-a</code> versus <code>a-b</code> transition rule, and why greedy decoding
+      is not argmax over labellings.
+    </h1>
+    <div class="flex gap-2 flex-wrap" id="tabs">
+      <button data-tab="look" class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">🔤 RUN IT</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8 bg-slate-100">
+    <div class="max-w-5xl mx-auto space-y-5">
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <div class="grid md:grid-cols-3 gap-3">
+          <label class="text-sm">target label
+            <input id="target" type="text" value="cat" class="w-full border border-slate-300 rounded px-2 py-1 font-mono">
+          </label>
+          <label class="text-sm">frames T
+            <input id="T" type="number" min="2" max="12" value="6" class="w-full border border-slate-300 rounded px-2 py-1">
+          </label>
+          <label class="text-sm">alphabet
+            <input id="alpha" type="text" value="abct" class="w-full border border-slate-300 rounded px-2 py-1 font-mono">
+          </label>
+        </div>
+        <p class="text-sm text-slate-600 mt-3">
+          A random emission matrix is generated for T frames over the alphabet plus a blank. Both the
+          forward recursion and a full path enumeration run on it, live.
+        </p>
+        <button id="runBtn" class="mt-3 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-semibold">New emissions</button>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-4">
+        <div class="bg-white rounded-2xl shadow p-4">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-1">FORWARD RECURSION</p>
+          <p class="text-2xl font-black tabular-nums" id="pFwd">—</p>
+          <p class="text-xs text-slate-500">O(T·U), log-space.</p>
+        </div>
+        <div class="bg-white rounded-2xl shadow p-4">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-1">BRUTE-FORCE ENUMERATION</p>
+          <p class="text-2xl font-black tabular-nums" id="pBrute">—</p>
+          <p class="text-xs text-slate-500"><span id="nPaths">—</span> paths summed, no recursion.</p>
+        </div>
+        <div class="bg-white rounded-2xl shadow p-4">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-1">AGREEMENT</p>
+          <p class="text-2xl font-black tabular-nums" id="agree">—</p>
+          <p class="text-xs text-slate-500">Relative difference. Should be floating-point noise.</p>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5 overflow-auto">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">THE ALPHA TRELLIS (probabilities, not logs)</p>
+        <div id="trellis"></div>
+        <p class="text-xs text-slate-500 mt-3">
+          Rows are the extended label <code>blank c blank a blank t blank</code>; columns are frames.
+          Each cell is the total probability of all prefixes that reach that symbol by that frame.
+          The answer is the sum of the last two cells in the final column — the label may finish on
+          its last letter <em>or</em> on a trailing blank.
+        </p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-2">CHECK THE GRADIENT</p>
+        <p class="text-sm text-slate-600 mb-3">
+          Analytic gradients from the forward–backward pass, compared against central finite
+          differences on the same emissions. This is the check that catches a wrong transition rule,
+          which otherwise trains to something that merely looks plausible.
+        </p>
+        <button id="gradBtn" class="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold">Run gradient check</button>
+        <pre id="gradOut" class="mt-3 hidden"></pre>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-2">DECODING</p>
+        <p class="text-sm text-slate-600 mb-3">
+          Greedy decoding takes the argmax per frame, then collapses repeats and removes blanks. That
+          is <em>not</em> the most likely labelling — several paths can collapse to the same string,
+          and their probabilities add. This finds both.
+        </p>
+        <button id="decBtn" class="px-4 py-2 rounded-lg bg-slate-700 text-white text-sm font-semibold">Compare greedy vs true best</button>
+        <pre id="decOut" class="mt-3 hidden"></pre>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8">
+    <div class="max-w-3xl mx-auto space-y-6">
+
+      <h2 class="text-2xl font-black">The label is short. The output is long. Nobody aligned them.</h2>
+
+      <p>An acoustic model emits a distribution over symbols every 10ms — call it T = 300 frames for
+      three seconds of speech. The transcript is "cat": U = 3. To train with cross-entropy you would
+      need to know that frames 0–40 are "c", 41–95 are "a", and so on. That labelling is exactly what
+      nobody has, and producing it by hand is the cost CTC removes.</p>
+
+      <h3 class="text-xl font-bold">Two devices, and everything follows</h3>
+      <ol class="list-decimal ml-6 space-y-1">
+        <li>Add a <strong>blank</strong> symbol, written <code>-</code>. It means "no output here".</li>
+        <li>Define a <strong>collapse</strong>: merge runs of identical symbols, then delete blanks.</li>
+      </ol>
+      <p>So <code>cc-aa-t</code>, <code>-c-a-t-</code> and <code>ccaaat</code> all collapse to
+      <code>cat</code>. The loss is the total probability of <em>every</em> frame-path that collapses
+      to the target.</p>
+
+      <div class="bg-slate-100 rounded-xl p-4">
+        <p class="font-mono text-sm">P(cat | x) = Σ over paths π that collapse to "cat" of Π<sub>t</sub> y<sub>π(t)</sub><sup>t</sup></p>
+      </div>
+
+      <h3 class="text-xl font-bold">Why the blank is not optional</h3>
+      <p>Without a blank you cannot spell a word with a doubled letter. Collapse merges repeats, so
+      <code>ll</code> would always become <code>l</code> — "hello" would be unreachable. The blank
+      gives you a separator: <code>l-l</code> collapses to <code>ll</code>. That is why the extended
+      label interleaves blanks around every symbol, and why the trellis has 2U+1 rows rather than U.</p>
+
+      <h3 class="text-xl font-bold">The transition rule, which is the whole algorithm</h3>
+      <p>In the extended label <code>- c - a - t -</code>, from state <em>s</em> at frame <em>t</em>
+      you may come from:</p>
+      <ul class="list-disc ml-6 space-y-1">
+        <li><strong>s</strong> — stay (repeat the same symbol)</li>
+        <li><strong>s−1</strong> — advance one</li>
+        <li><strong>s−2</strong> — skip a blank, <em>but only if</em> the current symbol is not blank
+        <strong>and</strong> is different from the symbol at s−2</li>
+      </ul>
+      <div class="bg-amber-50 border-l-4 border-amber-500 p-4">
+        <p class="text-sm">That last condition is the one everyone gets wrong. Skipping the blank
+        between two <em>identical</em> letters would collapse them into one, so the path would spell
+        <code>cat</code> when the label is <code>ccat</code>. Get it wrong and the loss still
+        decreases during training — it is just computing the probability of the wrong set of paths.
+        Which is precisely why this page checks the recursion against brute force.</p>
+      </div>
+
+      <h3 class="text-xl font-bold">Work in log space, always</h3>
+      <p>These are products of 300 probabilities. In float64 that underflows to exactly zero well
+      before you finish, and then the gradient is 0/0. So every quantity is a log-probability and
+      addition becomes <code>logaddexp(a,b) = max + log1p(exp(−|a−b|))</code>, which is stable. The
+      page uses log space throughout and only exponentiates for display.</p>
+
+      <h3 class="text-xl font-bold">Decoding is a separate problem</h3>
+      <p>Greedy decoding — argmax each frame, then collapse — gives you the most likely
+      <em>path</em>. It does not give the most likely <em>labelling</em>, because many paths collapse
+      to the same string and their probabilities add. A labelling made of many mediocre paths can
+      beat one made of a single excellent path. That is what prefix beam search is for, and the
+      RUN IT tab shows a case where greedy and true-best disagree.</p>
+
+      <h3 class="text-xl font-bold">The assumption CTC makes, stated plainly</h3>
+      <p>CTC assumes outputs are <strong>conditionally independent across frames</strong> given the
+      input. That is false for language — the letter after "ca" is not independent of "ca" — and it
+      is why CTC systems are paired with an external language model. It is not a flaw to hide; it is
+      the trade that makes the sum over alignments tractable in the first place.</p>
+
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8 bg-slate-50">
+    <div class="max-w-3xl mx-auto space-y-6">
+
+      <h2 class="text-2xl font-black">🔨 Build it yourself</h2>
+
+      <h3 class="text-xl font-bold">1. Log-space addition, first</h3>
+      <pre>const NEG_INF = -Infinity;
+function logAdd(a, b){
+  if (a === NEG_INF) return b;
+  if (b === NEG_INF) return a;
+  const hi = Math.max(a, b), lo = Math.min(a, b);
+  return hi + Math.log1p(Math.exp(lo - hi));      // never exp() a large positive
+}</pre>
+
+      <h3 class="text-xl font-bold">2. Extend the label with blanks</h3>
+      <pre>// "cat" -&gt; [-, c, -, a, -, t, -]   length 2U+1
+function extend(label, blank){
+  const ext = [blank];
+  for (const c of label){ ext.push(c); ext.push(blank); }
+  return ext;
+}</pre>
+
+      <h3 class="text-xl font-bold">3. The forward recursion</h3>
+      <pre>function forward(logProbs, ext, idx){
+  const T = logProbs.length, S = ext.length;
+  const a = Array.from({length:T}, () =&gt; new Array(S).fill(NEG_INF));
+  a[0][0] = logProbs[0][idx(ext[0])];
+  if (S &gt; 1) a[0][1] = logProbs[0][idx(ext[1])];
+
+  for (let t = 1; t &lt; T; t++){
+    for (let s = 0; s &lt; S; s++){
+      let v = a[t-1][s];                                  // stay
+      if (s &gt; 0) v = logAdd(v, a[t-1][s-1]);              // advance
+      // skip a blank ONLY if this symbol is not blank and differs from s-2
+      if (s &gt; 1 &amp;&amp; ext[s] !== BLANK &amp;&amp; ext[s] !== ext[s-2])
+        v = logAdd(v, a[t-1][s-2]);
+      a[t][s] = v + logProbs[t][idx(ext[s])];
+    }
+  }
+  return a;
+}
+// loss = -logAdd(a[T-1][S-1], a[T-1][S-2])</pre>
+
+      <h3 class="text-xl font-bold">4. Now prove it, do not trust it</h3>
+      <p>For small T, enumerate every path in the alphabet<sup>T</sup>, collapse each one, and sum the
+      probability of those that collapse to the target. No recursion, no dynamic programming, no
+      shared code with step 3 — so agreement is evidence.</p>
+      <pre>function bruteForce(probs, target, symbols){
+  let total = 0, paths = 0;
+  const T = probs.length;
+  const rec = (t, path, p) =&gt; {
+    if (t === T){ paths++; if (collapse(path) === target) total += p; return; }
+    for (let k = 0; k &lt; symbols.length; k++) rec(t+1, path + symbols[k], p * probs[t][k]);
+  };
+  rec(0, "", 1);
+  return { total, paths };
+}</pre>
+      <p>This is exponential and that is fine — it is a test, not a trainer. Cap T at about 8 and
+      you get a genuine oracle for the recursion.</p>
+
+      <h3 class="text-xl font-bold">5. Break it on purpose, to see the test work</h3>
+      <p>Drop the <code>ext[s] !== ext[s-2]</code> condition and re-run. The recursion still produces
+      a smooth, plausible-looking number — and brute force immediately disagrees. That is the whole
+      value of an independent oracle: the bug does not announce itself.</p>
+
+      <h3 class="text-xl font-bold">6. Backward pass and the gradient</h3>
+      <pre>// beta mirrors alpha from the end; then for each frame t and symbol k:
+//   dL/d(logit) = y_k - (1/P) * sum over s where ext[s]==k of alpha[t][s]*beta[t][s]
+// Check it against central differences before you train anything with it.
+const num = (f, x, i, h) =&gt; (f(bump(x,i,+h)) - f(bump(x,i,-h))) / (2*h);</pre>
+
+      <h3 class="text-xl font-bold">7. Decoding — do not confuse the two questions</h3>
+      <pre>const greedy = probs =&gt; collapse(probs.map(row =&gt; symbols[argmax(row)]).join(""));
+// most likely PATH, collapsed. NOT the most likely LABELLING.
+// For the latter you must sum over paths per string - prefix beam search.</pre>
+
+      <h3 class="text-xl font-bold">✅ Day 63 of DeepLearningFromZero done — CTC loss.</h3>
+      <p class="text-slate-600">Tomorrow: prefix beam search for CTC — decoding the labelling rather
+      than the path, with the blank/non-blank split that makes it correct.</p>
+
+    </div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.addEventListener("click", () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+}));
+
+// ===== ENGINE:BEGIN =====
+// Pure, DOM-free CTC. Log-space throughout; a brute-force enumerator is included
+// deliberately so the recursion can be checked against something that shares no code.
+const NEG_INF = -Infinity;
+const BLANK = "-";
+
+function logAdd(a, b){
+  if (a === NEG_INF) return b;
+  if (b === NEG_INF) return a;
+  const hi = a > b ? a : b, lo = a > b ? b : a;
+  return hi + Math.log1p(Math.exp(lo - hi));
+}
+
+function softmaxRow(logits){
+  let mx = -Infinity;
+  for (let i = 0; i < logits.length; i++) if (logits[i] > mx) mx = logits[i];
+  let sum = 0;
+  const out = new Array(logits.length);
+  for (let i = 0; i < logits.length; i++){ out[i] = Math.exp(logits[i] - mx); sum += out[i]; }
+  for (let i = 0; i < out.length; i++) out[i] /= sum;
+  return out;
+}
+
+function extendLabel(label){
+  const ext = [BLANK];
+  for (let i = 0; i < label.length; i++){ ext.push(label[i]); ext.push(BLANK); }
+  return ext;
+}
+
+// collapse: merge runs, then drop blanks. This defines the whole problem.
+function collapse(path){
+  let out = "", prev = null;
+  for (let i = 0; i < path.length; i++){
+    const c = path[i];
+    if (c !== prev) { if (c !== BLANK) out += c; }
+    prev = c;
+  }
+  return out;
+}
+
+function ctcForward(logProbs, label, symbols){
+  const idx = {};
+  for (let i = 0; i < symbols.length; i++) idx[symbols[i]] = i;
+  const ext = extendLabel(label);
+  const T = logProbs.length, S = ext.length;
+  const a = [];
+  for (let t = 0; t < T; t++) a.push(new Array(S).fill(NEG_INF));
+  a[0][0] = logProbs[0][idx[ext[0]]];
+  if (S > 1) a[0][1] = logProbs[0][idx[ext[1]]];
+  for (let t = 1; t < T; t++){
+    for (let s = 0; s < S; s++){
+      let v = a[t-1][s];
+      if (s > 0) v = logAdd(v, a[t-1][s-1]);
+      if (s > 1 && ext[s] !== BLANK && ext[s] !== ext[s-2]) v = logAdd(v, a[t-1][s-2]);
+      a[t][s] = v === NEG_INF ? NEG_INF : v + logProbs[t][idx[ext[s]]];
+    }
+  }
+  const last = S > 1 ? logAdd(a[T-1][S-1], a[T-1][S-2]) : a[T-1][S-1];
+  return { alpha: a, logProb: last, ext: ext };
+}
+
+function ctcBackward(logProbs, label, symbols){
+  const idx = {};
+  for (let i = 0; i < symbols.length; i++) idx[symbols[i]] = i;
+  const ext = extendLabel(label);
+  const T = logProbs.length, S = ext.length;
+  const b = [];
+  for (let t = 0; t < T; t++) b.push(new Array(S).fill(NEG_INF));
+  b[T-1][S-1] = 0;
+  if (S > 1) b[T-1][S-2] = 0;
+  for (let t = T - 2; t >= 0; t--){
+    for (let s = 0; s < S; s++){
+      let v = b[t+1][s] + logProbs[t+1][idx[ext[s]]];
+      if (s + 1 < S) v = logAdd(v, b[t+1][s+1] + logProbs[t+1][idx[ext[s+1]]]);
+      if (s + 2 < S && ext[s+2] !== BLANK && ext[s+2] !== ext[s])
+        v = logAdd(v, b[t+1][s+2] + logProbs[t+1][idx[ext[s+2]]]);
+      b[t][s] = v;
+    }
+  }
+  return b;
+}
+
+function ctcLoss(logProbs, label, symbols){
+  return -ctcForward(logProbs, label, symbols).logProb;
+}
+
+// gradient wrt the LOGITS (pre-softmax), the standard CTC result
+function ctcGrad(logits, label, symbols){
+  const T = logits.length, K = symbols.length;
+  const probs = logits.map(softmaxRow);
+  const logProbs = probs.map(function(r){ return r.map(Math.log); });
+  const f = ctcForward(logProbs, label, symbols);
+  const b = ctcBackward(logProbs, label, symbols);
+  const ext = f.ext, S = ext.length;
+  const idx = {};
+  for (let i = 0; i < symbols.length; i++) idx[symbols[i]] = i;
+  const total = f.logProb;
+  const grad = [];
+  for (let t = 0; t < T; t++){
+    const g = new Array(K).fill(0);
+    const occ = new Array(K).fill(NEG_INF);
+    for (let s = 0; s < S; s++){
+      const k = idx[ext[s]];
+      occ[k] = logAdd(occ[k], f.alpha[t][s] + b[t][s]);
+    }
+    for (let k = 0; k < K; k++){
+      const post = occ[k] === NEG_INF ? 0 : Math.exp(occ[k] - total);
+      g[k] = probs[t][k] - post;
+    }
+    grad.push(g);
+  }
+  return { grad: grad, loss: -total };
+}
+
+// independent oracle: enumerate EVERY path, no recursion shared with the above
+function bruteForce(probs, label, symbols){
+  const T = probs.length;
+  let total = 0, paths = 0;
+  const stack = [{ t: 0, path: "", p: 1 }];
+  while (stack.length){
+    const cur = stack.pop();
+    if (cur.t === T){
+      paths++;
+      if (collapse(cur.path) === label) total += cur.p;
+      continue;
+    }
+    for (let k = 0; k < symbols.length; k++){
+      stack.push({ t: cur.t + 1, path: cur.path + symbols[k], p: cur.p * probs[cur.t][k] });
+    }
+  }
+  return { total: total, paths: paths };
+}
+
+// most likely LABELLING by exhaustive collapse-and-sum (small T only)
+function bestLabelling(probs, symbols, maxT){
+  const T = probs.length;
+  if (T > (maxT || 8)) return null;
+  const tally = {};
+  const stack = [{ t: 0, path: "", p: 1 }];
+  while (stack.length){
+    const cur = stack.pop();
+    if (cur.t === T){
+      const c = collapse(cur.path);
+      tally[c] = (tally[c] || 0) + cur.p;
+      continue;
+    }
+    for (let k = 0; k < symbols.length; k++)
+      stack.push({ t: cur.t + 1, path: cur.path + symbols[k], p: cur.p * probs[cur.t][k] });
+  }
+  let best = null, bestP = -1;
+  for (const k in tally) if (tally[k] > bestP){ bestP = tally[k]; best = k; }
+  return { label: best, prob: bestP, tally: tally };
+}
+
+function greedyDecode(probs, symbols){
+  let path = "";
+  for (let t = 0; t < probs.length; t++){
+    let mi = 0;
+    for (let k = 1; k < probs[t].length; k++) if (probs[t][k] > probs[t][mi]) mi = k;
+    path += symbols[mi];
+  }
+  return { path: path, label: collapse(path) };
+}
+
+function mulberry32(a){
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+function randomLogits(T, K, rng){
+  const out = [];
+  for (let t = 0; t < T; t++){
+    const row = [];
+    for (let k = 0; k < K; k++) row.push((rng() * 4) - 2);
+    out.push(row);
+  }
+  return out;
+}
+// ===== ENGINE:END =====
+
+/* ---------------- UI ---------------- */
+let SYMBOLS = [], LOGITS = null;
+
+function symbolsFor(alphabet){
+  const uniq = [];
+  for (const c of alphabet) if (uniq.indexOf(c) < 0 && c !== BLANK) uniq.push(c);
+  return [BLANK].concat(uniq);
+}
+
+function run(){
+  const label = document.getElementById("target").value.trim() || "cat";
+  const T = Math.max(2, Math.min(12, +document.getElementById("T").value || 6));
+  SYMBOLS = symbolsFor(document.getElementById("alpha").value.trim() || "abct");
+  for (const c of label) if (SYMBOLS.indexOf(c) < 0) SYMBOLS.push(c);
+
+  LOGITS = randomLogits(T, SYMBOLS.length, mulberry32(Date.now() & 0xffff));
+  const probs = LOGITS.map(softmaxRow);
+  const logProbs = probs.map(function(r){ return r.map(Math.log); });
+
+  const f = ctcForward(logProbs, label, SYMBOLS);
+  const pF = Math.exp(f.logProb);
+  document.getElementById("pFwd").textContent = pF.toExponential(6);
+
+  if (T <= 8){
+    const bf = bruteForce(probs, label, SYMBOLS);
+    document.getElementById("pBrute").textContent = bf.total.toExponential(6);
+    document.getElementById("nPaths").textContent = bf.paths.toLocaleString();
+    const rel = Math.abs(pF - bf.total) / Math.max(1e-300, bf.total);
+    document.getElementById("agree").textContent = rel.toExponential(2);
+  } else {
+    document.getElementById("pBrute").textContent = "T > 8, skipped";
+    document.getElementById("nPaths").textContent = SYMBOLS.length + "^" + T;
+    document.getElementById("agree").textContent = "—";
+  }
+
+  // trellis
+  const ext = f.ext;
+  let html = "<table class='grid'><tr><th></th>";
+  for (let t = 0; t < T; t++) html += "<th>t" + t + "</th>";
+  html += "</tr>";
+  for (let s = 0; s < ext.length; s++){
+    html += "<tr><th>" + (ext[s] === BLANK ? "&ndash;" : ext[s]) + "</th>";
+    for (let t = 0; t < T; t++){
+      const v = f.alpha[t][s];
+      const p = v === NEG_INF ? 0 : Math.exp(v);
+      const shade = p > 0 ? Math.min(1, Math.max(0, (Math.log10(p) + 6) / 6)) : 0;
+      html += "<td style='background:rgba(124,58,237," + (0.06 + shade * 0.5).toFixed(3) + ")'>" +
+              (p === 0 ? "·" : p.toExponential(1)) + "</td>";
+    }
+    html += "</tr>";
+  }
+  html += "</table>";
+  document.getElementById("trellis").innerHTML = html;
+}
+
+document.getElementById("runBtn").addEventListener("click", run);
+["target","T","alpha"].forEach(function(id){
+  document.getElementById(id).addEventListener("change", run);
+});
+
+document.getElementById("gradBtn").addEventListener("click", function(){
+  const out = document.getElementById("gradOut");
+  out.classList.remove("hidden");
+  const label = document.getElementById("target").value.trim() || "cat";
+  const T = Math.min(6, Math.max(2, +document.getElementById("T").value || 6));
+  const logits = randomLogits(T, SYMBOLS.length, mulberry32(9182));
+  const g = ctcGrad(logits, label, SYMBOLS);
+  const h = 1e-5;
+  let worst = 0, checked = 0;
+  const lines = ["  t  k    analytic        numeric         abs diff"];
+  for (let t = 0; t < T; t++){
+    for (let k = 0; k < SYMBOLS.length; k++){
+      const up = logits.map(function(r){ return r.slice(); }); up[t][k] += h;
+      const dn = logits.map(function(r){ return r.slice(); }); dn[t][k] -= h;
+      const lu = ctcLoss(up.map(softmaxRow).map(function(r){ return r.map(Math.log); }), label, SYMBOLS);
+      const ld = ctcLoss(dn.map(softmaxRow).map(function(r){ return r.map(Math.log); }), label, SYMBOLS);
+      const num = (lu - ld) / (2 * h);
+      const d = Math.abs(num - g.grad[t][k]);
+      if (d > worst) worst = d;
+      checked++;
+      if (t < 2) lines.push("  " + t + "  " + k + "  " +
+        g.grad[t][k].toFixed(9).padStart(13) + "  " + num.toFixed(9).padStart(13) +
+        "  " + d.toExponential(2));
+    }
+  }
+  lines.push("");
+  lines.push("  entries checked : " + checked);
+  lines.push("  worst abs diff  : " + worst.toExponential(3) +
+             (worst < 1e-5 ? "   <- analytic gradient confirmed" : "   <- MISMATCH"));
+  out.textContent = lines.join("\n");
+});
+
+document.getElementById("decBtn").addEventListener("click", function(){
+  const out = document.getElementById("decOut");
+  out.classList.remove("hidden");
+  const T = Math.min(7, Math.max(2, +document.getElementById("T").value || 6));
+  let found = null;
+  for (let trial = 0; trial < 400 && !found; trial++){
+    const probs = randomLogits(T, SYMBOLS.length, mulberry32(trial * 31 + 5)).map(softmaxRow);
+    const g = greedyDecode(probs, SYMBOLS);
+    const b = bestLabelling(probs, SYMBOLS, 8);
+    if (b && b.label !== g.label) found = { probs: probs, g: g, b: b, trial: trial };
+  }
+  if (!found){ out.textContent = "no disagreement found in 400 random emission matrices"; return; }
+  const gp = found.b.tally[found.g.label] || 0;
+  out.textContent =
+    "greedy path            : " + found.g.path + "\n" +
+    "greedy labelling       : \"" + found.g.label + "\"  total prob " + gp.toExponential(4) + "\n" +
+    "most likely labelling  : \"" + found.b.label + "\"  total prob " + found.b.prob.toExponential(4) + "\n\n" +
+    "Greedy picks the best PATH. The best LABELLING here is a different string,\n" +
+    "assembled from many lower-probability paths whose totals add up higher.";
+});
+
+run();
+</script>
+</body>
+</html>

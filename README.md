@@ -64,6 +64,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 60 — Grad-CAM](https://dev48v.infy.uk/dl/day60-grad-cam.html) — `day60-grad-cam.html`
 - [DeepLearningFromZero · Day 61 — Network Pruning](https://dev48v.infy.uk/dl/day61-network-pruning.html) — `day61-network-pruning.html`
 - [DeepLearningFromZero · Day 62 — Transposed Convolutions](https://dev48v.infy.uk/dl/day62-transposed-convolutions.html) — `day62-transposed-convolutions.html`
+- [DeepLearningFromZero · Day 63 — CTC loss](https://dev48v.infy.uk/dl/day63-ctc-loss.html) — `day63-ctc-loss.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk
