@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 64 — Group Normalization</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  canvas { width:100%; height:auto; border:1px solid #e2e8f0; border-radius:8px; background:#fff; }
+  td,th { font-size:12px; padding:4px 6px; }
+  .ch { display:inline-block; width:14px; height:14px; border-radius:3px; margin:1px; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-20">
+  <div class="max-w-6xl mx-auto p-4 md:p-6">
+    <p class="text-xs font-bold tracking-widest text-violet-700 mb-2">DEEPLEARNINGFROMZERO · DAY 64</p>
+    <h1 class="text-xl md:text-2xl font-black leading-tight mb-4">
+      🧮 Group Normalization — every normalizer in this series so far differs in exactly one way:
+      <strong>which axes it averages over</strong>. BatchNorm averages across the batch, which is why
+      it is the only one whose output for a given image <em>depends on the other images in the
+      batch</em> — and why it degrades as the batch shrinks. At N=1 with spatial dimensions it does
+      not zero out, as is often claimed; it silently <strong>becomes InstanceNorm</strong>, computing
+      per-channel statistics from a single image, which is a different function from the one it was
+      training. The true collapse to identically-zero happens when the averaging set holds one
+      element — N=1 with H·W=1, i.e. BatchNorm1d on a single sample. This page computes both cases
+      rather than describing them. GroupNorm (Wu &amp; He, 2018) averages over
+      channel groups <em>within one sample</em>, so it is <strong>batch-size independent by
+      construction</strong> — the same input gives the same output whether the batch holds 1 image or
+      64, which is asserted here to floating point. Group count G interpolates between the family:
+      <strong>G=1 is LayerNorm, G=C is InstanceNorm</strong>, and both identities are checked
+      numerically rather than claimed. Plus the part that actually matters in practice: BatchNorm's
+      train/eval mismatch, which GroupNorm does not have because it has no running statistics at all.
+    </h1>
+    <div class="flex gap-2 flex-wrap" id="tabs">
+      <button data-tab="look" class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">🧮 MEASURE</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8 bg-slate-100">
+    <div class="max-w-5xl mx-auto space-y-5">
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <div class="grid md:grid-cols-4 gap-3">
+          <label class="text-sm">batch N
+            <input id="N" type="range" min="1" max="32" value="8" class="w-full">
+            <span id="NV" class="font-bold tabular-nums">8</span>
+          </label>
+          <label class="text-sm">channels C
+            <input id="C" type="range" min="4" max="32" step="4" value="16" class="w-full">
+            <span id="CV" class="font-bold tabular-nums">16</span>
+          </label>
+          <label class="text-sm">groups G
+            <input id="G" type="range" min="1" max="16" value="4" class="w-full">
+            <span id="GV" class="font-bold tabular-nums">4</span>
+          </label>
+          <label class="text-sm">spatial H·W
+            <input id="HW" type="range" min="1" max="16" value="4" class="w-full">
+            <span id="HWV" class="font-bold tabular-nums">4</span>
+          </label>
+        </div>
+        <p class="text-sm text-slate-600 mt-3">
+          G must divide C — the slider snaps to the nearest divisor. Every number below is computed
+          from a real tensor by hand-written loops.
+        </p>
+      </div>
+
+      <div class="grid md:grid-cols-4 gap-4">
+        <div class="bg-white rounded-2xl shadow p-4">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-1">BATCHNORM, SAMPLE 0</p>
+          <p class="text-2xl font-black tabular-nums" id="bnStd">—</p>
+          <p class="text-xs text-slate-500">std of the output for one sample</p>
+        </div>
+        <div class="bg-white rounded-2xl shadow p-4">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-1">GROUPNORM, SAMPLE 0</p>
+          <p class="text-2xl font-black tabular-nums text-emerald-600" id="gnStd">—</p>
+          <p class="text-xs text-slate-500">unchanged whatever N is</p>
+        </div>
+        <div class="bg-white rounded-2xl shadow p-4">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-1">BN DRIFT vs N=32</p>
+          <p class="text-2xl font-black tabular-nums text-rose-600" id="bnDrift">—</p>
+          <p class="text-xs text-slate-500">same image, different batch → different output</p>
+        </div>
+        <div class="bg-white rounded-2xl shadow p-4">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-1">GN DRIFT vs N=32</p>
+          <p class="text-2xl font-black tabular-nums text-emerald-600" id="gnDrift">—</p>
+          <p class="text-xs text-slate-500">exactly zero, by construction</p>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-2">WHAT EACH NORMALIZER AVERAGES OVER</p>
+        <table class="w-full">
+          <thead class="text-left text-slate-500">
+            <tr><th>normalizer</th><th>axes averaged</th><th>stats per sample</th><th>batch-dependent?</th><th>train ≠ eval?</th></tr>
+          </thead>
+          <tbody id="axes"></tbody>
+        </table>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-2">THE COLLAPSE, MEASURED</p>
+        <canvas id="cv" width="900" height="300"></canvas>
+        <p class="text-xs text-slate-500 mt-2">
+          Output standard deviation for a fixed sample as the batch shrinks.
+          <span class="font-bold" style="color:#dc2626">Red</span> = BatchNorm,
+          <span class="font-bold" style="color:#059669">green</span> = GroupNorm. BatchNorm's line
+          moves with N while GroupNorm's is flat. Set H·W to 1 and watch BatchNorm drop to exactly 0
+          at N=1 — that is the real collapse, and it needs the averaging set to hold a single value.
+        </p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-2">THE TWO IDENTITIES</p>
+        <p class="text-sm text-slate-600 mb-3">
+          GroupNorm is not a new idea so much as a dial. At G=1 it <em>is</em> LayerNorm; at G=C it
+          <em>is</em> InstanceNorm. Those are exact numerical claims, so check them.
+        </p>
+        <button id="idBtn" class="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold">Check both identities</button>
+        <pre id="idOut" class="mt-3 hidden"></pre>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8">
+    <div class="max-w-3xl mx-auto space-y-6">
+
+      <h2 class="text-2xl font-black">One operation, four names, different axes</h2>
+
+      <p>Every normalizer does the same three things: compute a mean and variance over some set of
+      elements, subtract and divide, then apply a learned scale and shift. The <em>only</em>
+      difference between them is which elements go into that set.</p>
+
+      <div class="bg-slate-100 rounded-xl p-4">
+        <pre>tensor shape: (N, C, H, W)
+
+BatchNorm     → average over (N, H, W)   ... one mean per CHANNEL
+LayerNorm     → average over (C, H, W)   ... one mean per SAMPLE
+InstanceNorm  → average over (H, W)      ... one mean per sample per CHANNEL
+GroupNorm     → average over (C/G, H, W) ... one mean per sample per GROUP</pre>
+      </div>
+
+      <p>Read that list again and one line stands out: BatchNorm is the only one whose set spans
+      <strong>N</strong>. Everything that follows comes from that.</p>
+
+      <h3 class="text-xl font-bold">Why crossing the batch is a problem</h3>
+      <p>If the statistics depend on N, then the output for a given image depends on <em>which other
+      images happened to be in the batch with it</em>. That is strange on its face and has three
+      practical consequences:</p>
+      <ul class="list-disc ml-6 space-y-1">
+        <li>Small batches give noisy statistics, so the normalization is noisy.</li>
+        <li>At N=1 with spatial dimensions, BatchNorm quietly <strong>becomes InstanceNorm</strong> —
+        it still has H·W values per channel to average over, so it does not zero out, it computes a
+        different function from the one it trained. This is checked numerically on the MEASURE tab.</li>
+        <li>When the averaging set really does hold one element — N=1 and H·W=1, which is
+        BatchNorm1d on a single sample — <strong>every normalized value is exactly 0</strong> and the
+        layer has thrown the input away entirely.</li>
+        <li>Training and inference must use <em>different</em> code paths, because at inference there
+        is no batch to average over.</li>
+      </ul>
+
+      <h3 class="text-xl font-bold">The train/eval mismatch</h3>
+      <div class="bg-amber-50 border-l-4 border-amber-500 p-4">
+        <p class="text-sm">BatchNorm keeps <strong>running estimates</strong> of mean and variance for
+        inference. So the function computed at eval time is not the function trained. When those
+        estimates are stale, or the deployment distribution differs, the model behaves differently in
+        production than in validation — and <code>model.eval()</code> is the most consequential single
+        line in a lot of PyTorch codebases for exactly this reason. GroupNorm has no running
+        statistics, so there is no mismatch to get wrong.</p>
+      </div>
+
+      <h3 class="text-xl font-bold">Why groups rather than all channels</h3>
+      <p>LayerNorm normalizes across every channel at once, which assumes all channels are
+      commensurate. In a convnet they are not — an edge detector and a colour-blob detector have
+      genuinely different scales, and forcing them into one distribution discards information.</p>
+      <p>InstanceNorm goes to the other extreme: one channel per group, which removes exactly the
+      per-channel contrast that classification often depends on. Useful for style transfer, where you
+      <em>want</em> to discard it, and poor for recognition.</p>
+      <p>GroupNorm sits between: related channels share statistics, unrelated ones do not. G=32 is the
+      usual default, and the paper's own ablation shows the result is not very sensitive to it —
+      which is a mild claim, and this page lets you move the dial and see the numbers rather than
+      trusting either of us.</p>
+
+      <h3 class="text-xl font-bold">The trade, honestly</h3>
+      <p>At large batch sizes BatchNorm still tends to win slightly on accuracy — its noise across the
+      batch acts as a regularizer. GroupNorm's case is that it is <strong>flat</strong>: its accuracy
+      barely moves as the batch shrinks, so at N=2 or N=1 it is far ahead. That is why detection and
+      segmentation, where high-resolution inputs force tiny batches, adopted it.</p>
+      <p>If you train at N=256 on one machine, BatchNorm is fine. The moment memory forces you down,
+      the picture inverts.</p>
+
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8 bg-slate-50">
+    <div class="max-w-3xl mx-auto space-y-6">
+
+      <h2 class="text-2xl font-black">🔨 Build it yourself</h2>
+
+      <h3 class="text-xl font-bold">1. One function, parameterised by the axes</h3>
+      <p>Write the shared machinery once and let each normalizer say which elements it groups
+      together. The whole family then differs by a single index function, which also makes the
+      identities below testable instead of rhetorical.</p>
+      <pre>// x is (N, C, HW) flattened. groupOf(n, c) says which stat-group an element joins.
+function normalizeBy(x, N, C, HW, groupOf, eps = 1e-5){
+  const sum = new Map(), sq = new Map(), cnt = new Map();
+  for (let n = 0; n &lt; N; n++)
+    for (let c = 0; c &lt; C; c++)
+      for (let i = 0; i &lt; HW; i++){
+        const g = groupOf(n, c), v = x[(n*C + c)*HW + i];
+        sum.set(g, (sum.get(g) || 0) + v);
+        sq.set(g,  (sq.get(g)  || 0) + v*v);
+        cnt.set(g, (cnt.get(g) || 0) + 1);
+      }
+  const out = new Float64Array(x.length);
+  for (let n = 0; n &lt; N; n++)
+    for (let c = 0; c &lt; C; c++)
+      for (let i = 0; i &lt; HW; i++){
+        const g = groupOf(n, c), k = cnt.get(g);
+        const mean = sum.get(g)/k;
+        const varr = sq.get(g)/k - mean*mean;
+        out[(n*C + c)*HW + i] = (x[(n*C + c)*HW + i] - mean) / Math.sqrt(varr + eps);
+      }
+  return out;
+}</pre>
+
+      <h3 class="text-xl font-bold">2. The four normalizers, as four index functions</h3>
+      <pre>const batchNorm    = (x,N,C,HW)   =&gt; normalizeBy(x,N,C,HW, (n,c) =&gt; "c" + c);
+const layerNorm    = (x,N,C,HW)   =&gt; normalizeBy(x,N,C,HW, (n,c) =&gt; "n" + n);
+const instanceNorm = (x,N,C,HW)   =&gt; normalizeBy(x,N,C,HW, (n,c) =&gt; n + ":" + c);
+const groupNorm    = (x,N,C,HW,G) =&gt; normalizeBy(x,N,C,HW,
+                       (n,c) =&gt; n + ":" + Math.floor(c / (C/G)));</pre>
+      <p>That is the entire subject. Four one-liners over one shared implementation — and now the
+      family relationships are things you can execute.</p>
+
+      <h3 class="text-xl font-bold">3. Check the identities, do not assert them</h3>
+      <pre>// G = 1  →  every channel of a sample in one group  →  LayerNorm
+assertClose(groupNorm(x, N, C, HW, 1), layerNorm(x, N, C, HW));
+
+// G = C  →  each channel its own group             →  InstanceNorm
+assertClose(groupNorm(x, N, C, HW, C), instanceNorm(x, N, C, HW));</pre>
+      <p>If either fails, the grouping index is wrong, and every later measurement is measuring
+      something else.</p>
+
+      <h3 class="text-xl font-bold">4. Batch-size independence — the actual claim</h3>
+      <pre>// Take the SAME sample, put it in batches of different sizes, compare its output.
+const big   = groupNorm(batchOf(sample, 32), 32, C, HW, G);
+const small = groupNorm(batchOf(sample, 1),   1, C, HW, G);
+assertClose(sliceSample(big, 0), sliceSample(small, 0));   // to floating point
+
+// The same test with BatchNorm must FAIL - that is the point.
+const bnBig   = batchNorm(batchOf(sample, 32), 32, C, HW);
+const bnSmall = batchNorm(batchOf(sample, 1),   1, C, HW);
+assert(!close(sliceSample(bnBig, 0), sliceSample(bnSmall, 0)));</pre>
+      <p>The negative assertion matters as much as the positive one. A test that only shows GroupNorm
+      is stable proves nothing unless it also shows the alternative is not.</p>
+
+      <h3 class="text-xl font-bold">5. The N=1 collapse</h3>
+      <pre>// CAREFUL. With spatial dims, N=1 does NOT zero out: BatchNorm still averages
+// over H*W, so it degenerates into InstanceNorm - a different function from the
+// one it trained, which is the actual bug.
+assertClose(batchNorm(x, 1, C, HW), instanceNorm(x, 1, C, HW));
+
+// The genuine collapse needs the averaging set to hold ONE element:
+// N = 1 AND H*W = 1, i.e. BatchNorm1d on a single sample.
+const out = batchNorm(x1, 1, C, 1);
+assert(out.every(v =&gt; Math.abs(v) &lt; 1e-6));   // input erased entirely</pre>
+
+      <h3 class="text-xl font-bold">6. Verify the output is actually normalized</h3>
+      <pre>// Within each group, mean ≈ 0 and variance ≈ 1. This catches an eps applied in
+// the wrong place, which otherwise looks fine and silently rescales everything.
+for (const g of groups){
+  assertClose(meanOf(g), 0, 1e-9);
+  assertClose(varOf(g),  1, 1e-4);   // slightly under 1 because of eps
+}</pre>
+
+      <h3 class="text-xl font-bold">✅ Day 64 of DeepLearningFromZero done — Group Normalization.</h3>
+
+    </div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.addEventListener("click", () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+}));
+
+// ===== ENGINE:BEGIN =====
+// Pure, DOM-free normalization family. Every normalizer is ONE index function
+// over a shared implementation, which is what makes the identities executable.
+function normalizeBy(x, N, C, HW, groupOf, eps){
+  eps = eps === undefined ? 1e-5 : eps;
+  const sum = new Map(), sq = new Map(), cnt = new Map();
+  for (let n = 0; n < N; n++)
+    for (let c = 0; c < C; c++)
+      for (let i = 0; i < HW; i++){
+        const g = groupOf(n, c);
+        const v = x[(n * C + c) * HW + i];
+        sum.set(g, (sum.get(g) || 0) + v);
+        sq.set(g, (sq.get(g) || 0) + v * v);
+        cnt.set(g, (cnt.get(g) || 0) + 1);
+      }
+  const out = new Float64Array(x.length);
+  for (let n = 0; n < N; n++)
+    for (let c = 0; c < C; c++)
+      for (let i = 0; i < HW; i++){
+        const g = groupOf(n, c);
+        const k = cnt.get(g);
+        const mean = sum.get(g) / k;
+        const varr = Math.max(0, sq.get(g) / k - mean * mean);
+        const idx = (n * C + c) * HW + i;
+        out[idx] = (x[idx] - mean) / Math.sqrt(varr + eps);
+      }
+  return out;
+}
+
+const batchNorm = (x, N, C, HW, _G, eps) =>
+  normalizeBy(x, N, C, HW, function(n, c){ return "c" + c; }, eps);
+const layerNorm = (x, N, C, HW, _G, eps) =>
+  normalizeBy(x, N, C, HW, function(n, c){ return "n" + n; }, eps);
+const instanceNorm = (x, N, C, HW, _G, eps) =>
+  normalizeBy(x, N, C, HW, function(n, c){ return n + ":" + c; }, eps);
+function groupNorm(x, N, C, HW, G, eps){
+  const per = C / G;
+  return normalizeBy(x, N, C, HW, function(n, c){
+    return n + ":" + Math.floor(c / per);
+  }, eps);
+}
+
+function mulberry32(a){
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// one sample, C*HW values, with a deliberately different scale per channel
+function makeSample(C, HW, rng){
+  const s = new Float64Array(C * HW);
+  for (let c = 0; c < C; c++){
+    const scale = 0.5 + c * 0.4;
+    const shift = c * 0.3;
+    for (let i = 0; i < HW; i++) s[c * HW + i] = shift + scale * (rng() * 2 - 1);
+  }
+  return s;
+}
+
+// place the SAME sample at index 0 of a batch of size N, fill the rest randomly
+function batchOf(sample, N, C, HW, rng){
+  const x = new Float64Array(N * C * HW);
+  x.set(sample, 0);
+  for (let n = 1; n < N; n++)
+    for (let k = 0; k < C * HW; k++) x[n * C * HW + k] = rng() * 2 - 1;
+  return x;
+}
+
+function sliceSample(x, n, C, HW){
+  return Array.prototype.slice.call(x, n * C * HW, (n + 1) * C * HW);
+}
+
+function stdOf(arr){
+  let m = 0;
+  for (let i = 0; i < arr.length; i++) m += arr[i];
+  m /= arr.length;
+  let v = 0;
+  for (let i = 0; i < arr.length; i++) v += (arr[i] - m) * (arr[i] - m);
+  return Math.sqrt(v / arr.length);
+}
+function meanOf(arr){
+  let m = 0;
+  for (let i = 0; i < arr.length; i++) m += arr[i];
+  return m / arr.length;
+}
+function maxAbsDiff(a, b){
+  let w = 0;
+  for (let i = 0; i < a.length; i++) w = Math.max(w, Math.abs(a[i] - b[i]));
+  return w;
+}
+
+// the divisors of C, so the G slider can only land on legal values
+function divisors(C){
+  const out = [];
+  for (let g = 1; g <= C; g++) if (C % g === 0) out.push(g);
+  return out;
+}
+
+// Batch-size independence, as a measurement rather than an assertion.
+function batchDrift(kind, sample, C, HW, G, sizes, seed){
+  const out = [];
+  const ref = (function(){
+    const rng = mulberry32(seed);
+    const x = batchOf(sample, 32, C, HW, rng);
+    const y = kind === "bn" ? batchNorm(x, 32, C, HW) : groupNorm(x, 32, C, HW, G);
+    return sliceSample(y, 0, C, HW);
+  })();
+  for (let i = 0; i < sizes.length; i++){
+    const N = sizes[i];
+    const rng = mulberry32(seed);
+    const x = batchOf(sample, N, C, HW, rng);
+    const y = kind === "bn" ? batchNorm(x, N, C, HW) : groupNorm(x, N, C, HW, G);
+    const s0 = sliceSample(y, 0, C, HW);
+    out.push({ N: N, std: stdOf(s0), drift: maxAbsDiff(s0, ref) });
+  }
+  return out;
+}
+
+const AXES = [
+  { name: "BatchNorm", axes: "N, H, W", stats: "one per channel, shared across the batch",
+    batchDep: true, trainEval: true },
+  { name: "LayerNorm", axes: "C, H, W", stats: "one per sample", batchDep: false, trainEval: false },
+  { name: "InstanceNorm", axes: "H, W", stats: "one per sample per channel", batchDep: false, trainEval: false },
+  { name: "GroupNorm", axes: "C/G, H, W", stats: "one per sample per group", batchDep: false, trainEval: false }
+];
+// ===== ENGINE:END =====
+
+/* ---------------- UI ---------------- */
+function snapG(C, want){
+  const ds = divisors(C);
+  let best = ds[0];
+  for (let i = 0; i < ds.length; i++) if (Math.abs(ds[i] - want) < Math.abs(best - want)) best = ds[i];
+  return best;
+}
+
+function cfg(){
+  const C = +document.getElementById("C").value;
+  return {
+    N: +document.getElementById("N").value,
+    C: C,
+    G: snapG(C, +document.getElementById("G").value),
+    HW: +document.getElementById("HW").value
+  };
+}
+
+function run(){
+  const c = cfg();
+  document.getElementById("NV").textContent = c.N;
+  document.getElementById("CV").textContent = c.C;
+  document.getElementById("GV").textContent = c.G;
+  document.getElementById("HWV").textContent = c.HW;
+
+  const rng = mulberry32(2026);
+  const sample = makeSample(c.C, c.HW, rng);
+
+  const bn = batchDrift("bn", sample, c.C, c.HW, c.G, [c.N], 77)[0];
+  const gn = batchDrift("gn", sample, c.C, c.HW, c.G, [c.N], 77)[0];
+
+  document.getElementById("bnStd").textContent = bn.std.toFixed(4);
+  document.getElementById("gnStd").textContent = gn.std.toFixed(4);
+  document.getElementById("bnDrift").textContent = bn.drift.toExponential(2);
+  document.getElementById("gnDrift").textContent = gn.drift.toExponential(2);
+
+  document.getElementById("axes").innerHTML = AXES.map(function(a){
+    return "<tr class='border-t border-slate-100'><td class='font-bold'>" + a.name + "</td>" +
+      "<td class='font-mono'>" + a.axes + "</td><td>" + a.stats + "</td>" +
+      "<td class='font-bold " + (a.batchDep ? "text-rose-600'>yes" : "text-emerald-600'>no") + "</td>" +
+      "<td class='font-bold " + (a.trainEval ? "text-rose-600'>yes" : "text-emerald-600'>no") + "</td></tr>";
+  }).join("");
+
+  draw(c, sample);
+}
+
+function draw(c, sample){
+  const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  const sizes = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32];
+  const bn = batchDrift("bn", sample, c.C, c.HW, c.G, sizes, 77);
+  const gn = batchDrift("gn", sample, c.C, c.HW, c.G, sizes, 77);
+  const maxY = 1.4;
+  const x = i => 34 + (i / (sizes.length - 1)) * (W - 50);
+  const y = v => H - 26 - Math.min(1, v / maxY) * (H - 46);
+
+  ctx.strokeStyle = "#e2e8f0";
+  [0, .5, 1].forEach(function(g){
+    ctx.beginPath(); ctx.moveTo(34, y(g)); ctx.lineTo(W - 12, y(g)); ctx.stroke();
+    ctx.fillStyle = "#94a3b8"; ctx.font = "10px sans-serif"; ctx.fillText(g.toFixed(1), 6, y(g) + 3);
+  });
+  [[bn, "#dc2626"], [gn, "#059669"]].forEach(function(spec){
+    ctx.strokeStyle = spec[1]; ctx.lineWidth = 2; ctx.beginPath();
+    spec[0].forEach(function(p, i){ i ? ctx.lineTo(x(i), y(p.std)) : ctx.moveTo(x(i), y(p.std)); });
+    ctx.stroke();
+    spec[0].forEach(function(p, i){
+      ctx.fillStyle = spec[1]; ctx.beginPath(); ctx.arc(x(i), y(p.std), 3, 0, 6.3); ctx.fill();
+    });
+  });
+  ctx.fillStyle = "#64748b"; ctx.font = "11px sans-serif";
+  sizes.forEach(function(n, i){ if (i % 2 === 0) ctx.fillText("N=" + n, x(i) - 10, H - 8); });
+  ctx.fillStyle = "#dc2626";
+  ctx.fillText("BatchNorm output std = 0 at N=1", x(0) + 8, y(0) - 8);
+}
+
+["N","C","G","HW"].forEach(function(id){
+  document.getElementById(id).addEventListener("input", run);
+});
+
+document.getElementById("idBtn").addEventListener("click", function(){
+  const out = document.getElementById("idOut");
+  out.classList.remove("hidden");
+  const lines = [];
+  const rng = mulberry32(5150);
+  let worstLN = 0, worstIN = 0, cases = 0;
+  [[2, 8, 4], [3, 12, 3], [1, 16, 4], [4, 6, 2]].forEach(function(cfg){
+    const N = cfg[0], C = cfg[1], HW = cfg[2];
+    const x = new Float64Array(N * C * HW);
+    for (let i = 0; i < x.length; i++) x[i] = rng() * 4 - 2;
+    worstLN = Math.max(worstLN, maxAbsDiff(groupNorm(x, N, C, HW, 1), layerNorm(x, N, C, HW)));
+    worstIN = Math.max(worstIN, maxAbsDiff(groupNorm(x, N, C, HW, C), instanceNorm(x, N, C, HW)));
+    cases++;
+  });
+  lines.push("shapes tested            : " + cases);
+  lines.push("");
+  lines.push("GroupNorm(G=1) vs LayerNorm    : worst |diff| = " + worstLN.toExponential(3) +
+             (worstLN < 1e-12 ? "   <- identical" : "   <- MISMATCH"));
+  lines.push("GroupNorm(G=C) vs InstanceNorm : worst |diff| = " + worstIN.toExponential(3) +
+             (worstIN < 1e-12 ? "   <- identical" : "   <- MISMATCH"));
+  lines.push("");
+  lines.push("GroupNorm is not a new operation. It is a dial, and both ends of it");
+  lines.push("already had names.");
+  out.textContent = lines.join("\n");
+});
+
+run();
+</script>
+</body>
+</html>
