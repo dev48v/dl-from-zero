@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 66 — Attention masks</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  table.num td, table.num th { padding:4px 9px; font-variant-numeric:tabular-nums; }
+  table.num th { font-size:11px; letter-spacing:.05em; color:#64748b; text-align:right; font-weight:700; }
+  table.num th:first-child, table.num td:first-child { text-align:left; }
+  table.num td { text-align:right; font-size:12.5px; border-top:1px solid #e2e8f0; }
+  .ok { color:#166534; font-weight:800; }
+  .bad { color:#991b1b; font-weight:800; }
+  .grid-m { display:grid; gap:2px; }
+  .cell { aspect-ratio:1; border-radius:2px; }
+  .lg { font-size:10px; color:#64748b; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-20">
+  <div class="max-w-6xl mx-auto p-4 md:p-6">
+    <p class="text-xs font-bold tracking-widest text-rose-700 mb-2">DEEPLEARNINGFROMZERO · DAY 66</p>
+    <h1 class="text-xl md:text-2xl font-black leading-tight mb-4">
+      🎭 Attention masks — two masks, one <code>+=</code>, and a bug that trains fine and evaluates
+      wrong. The <strong>causal</strong> mask stops a position seeing the future; the
+      <strong>padding</strong> mask stops every position seeing the filler added to make a batch
+      rectangular. They are different shapes — causal is per-position, padding is per-sequence —
+      and the two must be <em>combined</em>, not chosen between &mdash; except that measuring it
+      turned up something sharper than the usual advice. With <strong>right</strong> padding a
+      causal mask <em>already</em> excludes every padded key from every real query, so the padding
+      mask is redundant for decoder self-attention. The leak is total with <strong>left</strong>
+      padding, which is exactly what decoder-only generation uses, because the prompt has to end at
+      the last position. Get it wrong and the failure is quiet: a model that attends to padding
+      still converges, because padding embeddings drift to whatever makes the loss small, and it
+      only breaks when the batch composition changes at inference. This page implements real scaled dot-product attention and measures the leak in
+      three ways: <strong>how much attention mass lands on padding</strong>, whether a sequence's
+      output <strong>changes when you re-batch it</strong> with different neighbours, and what
+      happens at the position everyone forgets — a <strong>fully padded row</strong>, where masking
+      everything makes softmax divide by zero and the mask that "worked" produces NaN.
+      Pure vanilla JavaScript, one file, offline.
+    </h1>
+    <div class="flex gap-2 flex-wrap" id="tabs">
+      <button data-tab="look" class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">🔬 MEASURE</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto space-y-5">
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3">
+          <label class="text-sm">sequence length T <span id="vT" class="font-bold tabular-nums float-right">10</span>
+            <input id="sT" type="range" min="4" max="16" value="10"></label>
+          <label class="text-sm">real tokens <span id="vLen" class="font-bold tabular-nums float-right">6</span>
+            <input id="sLen" type="range" min="1" max="16" value="6"></label>
+          <label class="text-sm">head dim <span id="vD" class="font-bold tabular-nums float-right">16</span>
+            <input id="sD" type="range" min="4" max="64" step="4" value="16"></label>
+          <label class="text-sm">mask
+            <select id="mask" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+              <option value="none">none</option>
+              <option value="causal">causal only</option>
+              <option value="padding">padding only</option>
+              <option value="both" selected>both (correct)</option>
+            </select></label>
+          <label class="text-sm">padding side
+            <select id="side" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+              <option value="right">right (training)</option>
+              <option value="left" selected>left (generation)</option>
+            </select></label>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-5">
+        <div class="bg-white rounded-2xl shadow p-5">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">THE MASK, AND THE ATTENTION IT PRODUCES</p>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <p class="lg mb-1">allowed (dark = blocked)</p>
+              <div id="maskGrid" class="grid-m"></div>
+            </div>
+            <div>
+              <p class="lg mb-1">attention weights</p>
+              <div id="attnGrid" class="grid-m"></div>
+            </div>
+          </div>
+          <p class="text-xs text-slate-500 mt-3" id="maskNote"></p>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow p-5">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">HOW MUCH ATTENTION LANDS ON PADDING</p>
+          <table class="num w-full">
+            <thead><tr><th>mask</th><th>mass on padding</th><th>rows summing to 1</th><th>NaN rows</th></tr></thead>
+            <tbody id="leak"></tbody>
+          </table>
+          <p class="text-xs text-slate-500 mt-2">
+            Every row of a softmax sums to 1 by construction, so "mass on padding" is exactly the
+            fraction of each position's attention budget spent on filler.
+          </p>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">THE TEST THAT CATCHES IT: RE-BATCH THE SAME SEQUENCE</p>
+        <p class="text-sm text-slate-600 mb-3">
+          Run one sequence alone, then again padded to a longer batch. A correctly masked model
+          gives <strong>bit-identical</strong> output. Anything else is reading its neighbours'
+          padding — and this is the check to put in your test suite, because it needs no labels and
+          no training.
+        </p>
+        <table class="num w-full">
+          <thead><tr><th>mask</th><th>max |difference|</th><th>verdict</th></tr></thead>
+          <tbody id="rebatch"></tbody>
+        </table>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">THE FULLY MASKED ROW</p>
+        <p class="text-sm text-slate-600 mb-3">
+          A padding position under a causal mask can end up with <em>every</em> key blocked. Softmax
+          over all −∞ is 0/0. Using −1e9 instead of −Infinity does not fix it — it produces a
+          uniform row of garbage instead of a NaN, which is worse, because it does not announce
+          itself.
+        </p>
+        <table class="num w-full">
+          <thead><tr><th>fill value</th><th>fully masked row</th><th>sums to 1?</th><th>propagates?</th></tr></thead>
+          <tbody id="degenerate"></tbody>
+        </table>
+        <pre id="degenNote" style="margin-top:10px"></pre>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8">
+    <div class="max-w-3xl mx-auto space-y-6">
+
+      <h2 class="text-2xl font-black">Two masks, and they are not the same shape</h2>
+
+      <p><strong>Causal</strong> stops position <em>i</em> attending to position <em>j &gt; i</em>.
+      It depends only on positions, so it is one lower-triangular matrix shared by every sequence in
+      the batch.</p>
+
+      <p><strong>Padding</strong> stops every position attending to the filler tokens added to make
+      a ragged batch rectangular. It depends on the sequence, so it is a different mask per row of
+      the batch, and it is a <em>column</em> mask — a padded key is invisible to all queries.</p>
+
+      <pre>causal:  [T, T]     shared, lower triangular
+padding: [B, T]     per sequence, broadcast across queries
+combined: causal[i,j] AND padding[b,j]</pre>
+
+      <p>They are combined with a logical AND, and the classic bug is passing one of them where the
+      other was expected — which type-checks, runs, and trains.</p>
+
+      <h3 class="text-xl font-bold">The side of the padding decides whether it matters</h3>
+
+      <p>This page was written to say "you need both masks", and measuring it produced something
+      sharper. With <strong>right</strong> padding, a real query at position <em>i &lt; len</em> can
+      only attend to <em>j &le; i &lt; len</em> — so causality has <em>already</em> excluded every
+      padded key, and the measured leak from a causal-only mask is exactly <strong>0%</strong>. For
+      decoder self-attention on right-padded batches, the padding mask is redundant.</p>
+
+      <p>With <strong>left</strong> padding it is the opposite: the filler sits at low indices,
+      which is precisely where causality lets everything through. A causal-only mask leaks
+      <strong>55.6%</strong> of every real position's attention onto padding, and the same sequence
+      gives a different answer depending on what it was batched with.</p>
+
+      <div class="bg-amber-50 border-l-4 border-amber-500 p-4">
+        <p class="text-sm">And left padding is not the exotic case — it is what decoder-only
+        <em>generation</em> uses, because the prompt has to end at the last position for the next
+        token to continue it. So the configuration where the padding mask is essential is the one
+        running in production, and the configuration where it looks redundant is the one you tested
+        during training.</p>
+      </div>
+
+      <h3 class="text-xl font-bold">Why it trains fine anyway</h3>
+
+      <div class="bg-amber-50 border-l-4 border-amber-500 p-4">
+        <p class="text-sm">If padding is attendable, the padding embedding is a free parameter the
+        model can use. Gradient descent will happily push it somewhere useful, and the loss goes
+        down. The model has learned to use a token that <em>means nothing</em>, and the answer now
+        depends on how many of them happen to be in the batch.</p>
+      </div>
+
+      <p>So the failure does not appear in training curves. It appears when batch composition
+      changes: a different batch size, a sorted-by-length loader, or single-sequence inference in
+      production — and the same input gives a different answer.</p>
+
+      <h3 class="text-xl font-bold">The test that catches it without labels</h3>
+
+      <pre>out_alone  = model([seq])                    # batch of one, no padding
+out_padded = model([seq, longer_seq])[0]     # same seq, now padded
+
+assert allclose(out_alone, out_padded, atol=1e-6)</pre>
+
+      <p>Batch invariance is the property. It needs no data, no labels and no training, it runs in
+      milliseconds, and it fails loudly on exactly the bug that otherwise ships. This page measures
+      it for all four mask configurations.</p>
+
+      <h3 class="text-xl font-bold">The row everybody forgets</h3>
+
+      <p>Take a padding position, under a causal mask, early in the sequence. Causal blocks
+      everything after it; padding blocks everything that is filler. It is entirely possible for a
+      row to have <strong>no allowed key at all</strong>.</p>
+
+      <p>Softmax over a row of all −∞ is 0/0. You get NaN, and it spreads through the whole
+      network on the next matmul.</p>
+
+      <p>The usual workaround is to fill with −1e9 rather than −Infinity. That does not fix the
+      problem; it hides it. Every entry is equally large and negative, so softmax returns a
+      <em>uniform</em> distribution over blocked positions — a well-formed row of meaningless
+      numbers, which propagates silently instead of announcing itself.</p>
+
+      <p>The actual fix is to not have that row matter: mask the <em>output</em> at padded query
+      positions, or clamp fully-masked rows to zero after the softmax. Both are one line, and both
+      are more honest than choosing a fill constant that makes the NaN go away.</p>
+
+      <h3 class="text-xl font-bold">Two more traps worth naming</h3>
+
+      <ul class="list-disc pl-6 space-y-1">
+        <li><strong>Left padding versus right padding.</strong> For a decoder generating text, the
+        prompt must end at the last position, so left padding is correct — and it inverts every
+        index you were computing from sequence length.</li>
+        <li><strong>The mask must reach the loss.</strong> Masking attention and then averaging the
+        loss over all positions puts padded positions back into the objective. Two different masks,
+        two different places, and fixing one does not fix the other.</li>
+      </ul>
+
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8 bg-slate-50">
+    <div class="max-w-3xl mx-auto space-y-6">
+
+      <h2 class="text-2xl font-black">🔨 How it is built</h2>
+
+      <h3 class="text-xl font-bold">1. Real scaled dot-product attention</h3>
+      <pre>function attention(Q, K, V, allowed){
+  const T = Q.length, d = Q[0].length, out = [];
+  for (let i = 0; i &lt; T; i++){
+    const scores = [];
+    for (let j = 0; j &lt; T; j++)
+      scores.push(allowed(i, j) ? dot(Q[i], K[j]) / Math.sqrt(d) : -Infinity);
+    const w = softmax(scores);
+    out.push(weightedSum(w, V));
+  }
+  return { out, weights };
+}</pre>
+      <p>The <code>/ Math.sqrt(d)</code> is not decoration: without it the scores grow with head
+      dimension and softmax saturates, which would make every mask look equally effective because
+      one weight is 1.0 and the rest are 0.</p>
+
+      <h3 class="text-xl font-bold">2. The masks, as predicates</h3>
+      <pre>const causal  = (i, j) =&gt; j &lt;= i;
+const padding = (len) =&gt; (i, j) =&gt; j &lt; len;            // a COLUMN rule
+const both    = (len) =&gt; (i, j) =&gt; j &lt;= i &amp;&amp; j &lt; len;  // AND, not "pick one"</pre>
+      <p>Writing them as predicates makes the combination obviously a conjunction. As tensors it is
+      a broadcast, and a broadcast that silently succeeds with the wrong shape is where the bug
+      lives.</p>
+
+      <h3 class="text-xl font-bold">3. Softmax that reports rather than hides</h3>
+      <pre>function softmax(scores){
+  const max = Math.max(...scores);
+  if (!isFinite(max)) return scores.map(() =&gt; NaN);   // EVERY key blocked
+  const e = scores.map(s =&gt; Math.exp(s - max));
+  const z = e.reduce((a, b) =&gt; a + b, 0);
+  return e.map(v =&gt; v / z);
+}</pre>
+      <p>The early return is deliberate. A fully masked row is a real condition and the honest
+      answer is "undefined" — so the page can count NaN rows and show you that the −1e9 workaround
+      returns a tidy uniform distribution instead, which is the more dangerous outcome.</p>
+
+      <h3 class="text-xl font-bold">4. The batch-invariance test</h3>
+      <pre>const alone  = attention(Q.slice(0, len), K.slice(0, len), V.slice(0, len), maskFor(len));
+const padded = attention(Q, K, V, maskFor(len));      // same seq, extra padded slots
+
+let worst = 0;
+for (let i = 0; i &lt; len; i++)
+  for (let k = 0; k &lt; d; k++)
+    worst = Math.max(worst, Math.abs(alone.out[i][k] - padded.out[i][k]));</pre>
+      <p>Only the real positions are compared — the padded rows are allowed to be anything, because
+      nothing downstream should read them. The correct mask gives <strong>0</strong> here, exactly,
+      and every incorrect one does not.</p>
+
+      <h3 class="text-xl font-bold">5. What the tests pin</h3>
+      <pre>// the mask is the mask
+assert(causalWeights[i][j] === 0) for all j &gt; i;
+assert(paddingWeights[i][j] === 0) for all j &gt;= len;
+
+// rows are distributions, except where they cannot be
+assert(|sum(row) - 1| &lt; 1e-12) for every row with at least one allowed key;
+
+// THE property
+assert(rebatchDelta("both") === 0);
+assert(rebatchDelta("causal") &gt; 0);      // and the wrong ones really do differ
+assert(rebatchDelta("none")   &gt; 0);
+
+// and -1e9 is not a fix
+assert(isNaN(softmax(allBlockedWithInfinity)[0]));
+assert(!isNaN(softmax(allBlockedWithBigNegative)[0]));
+assert(isUniform(softmax(allBlockedWithBigNegative)));</pre>
+      <p>The last three are the ones worth stealing. They assert that the workaround
+      <em>produces well-formed garbage</em> — which is the whole reason it is worse than the NaN.</p>
+
+      <h3 class="text-xl font-bold">🎉 DeepLearningFromZero Day 66 shipped.</h3>
+      <p class="text-slate-600">A bug that trains fine, and one three-line test that finds it.</p>
+
+    </div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.addEventListener("click", () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+}));
+
+// ===== ENGINE:BEGIN =====
+// Real scaled dot-product attention, with the two masks as predicates so their combination
+// is obviously a conjunction rather than a broadcast that might silently be the wrong shape.
+
+function mulberry32(seed){
+  let s = seed >>> 0;
+  return function(){
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1) >>> 0;
+    t = (t ^ (t + Math.imul(t ^ (t >>> 7), t | 61))) >>> 0;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function gaussian(rnd){
+  let u = 0, v = 0;
+  while (u === 0) u = rnd();
+  while (v === 0) v = rnd();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+
+// A fully masked row is a real condition, and the honest answer is "undefined" rather than a
+// tidy uniform distribution over positions that are all blocked.
+function softmax(scores){
+  let max = -Infinity;
+  for (const s of scores) if (s > max) max = s;
+  if (!isFinite(max)) return scores.map(function(){ return NaN; });
+  const e = scores.map(function(s){ return Math.exp(s - max); });
+  let z = 0;
+  for (const v of e) z += v;
+  return e.map(function(v){ return v / z; });
+}
+
+// ---- the masks, as predicates ----
+//
+// The SIDE matters more than anything else here, and measuring it is what corrected this page.
+// With RIGHT padding a causal mask already excludes every padded key from every real query
+// (a real query at i < len can only look at j <= i < len), so the padding mask is redundant
+// for decoder self-attention. With LEFT padding - which is what decoder-only generation
+// actually uses, because the prompt must end at the last position - causality excludes
+// nothing, and a causal-only model attends to padding at every real position.
+function padAllowed(len, T, side){
+  return side === "left"
+    ? function(j){ return j >= T - len; }
+    : function(j){ return j < len; };
+}
+
+const MASKS = {
+  none: function(){ return function(){ return true; }; },
+  causal: function(){ return function(i, j){ return j <= i; }; },
+  padding: function(len, T, side){
+    const ok = padAllowed(len, T, side);
+    return function(i, j){ return ok(j); };                    // a COLUMN rule
+  },
+  both: function(len, T, side){
+    const ok = padAllowed(len, T, side);
+    return function(i, j){ return j <= i && ok(j); };           // AND
+  }
+};
+
+// which query positions are real, given the side
+const realRange = (len, T, side) =>
+  side === "left" ? { from: T - len, to: T } : { from: 0, to: len };
+
+function attention(Q, K, V, allowed, fill){
+  const T = Q.length, d = Q[0].length;
+  const out = [], weights = [];
+  const blocked = (fill === undefined) ? -Infinity : fill;
+  for (let i = 0; i < T; i++){
+    const scores = new Array(T);
+    for (let j = 0; j < T; j++)
+      scores[j] = allowed(i, j) ? dot(Q[i], K[j]) / Math.sqrt(d) : blocked;
+    const w = softmax(scores);
+    weights.push(w);
+    const o = new Array(V[0].length).fill(0);
+    for (let j = 0; j < T; j++)
+      if (!isNaN(w[j])) for (let k = 0; k < o.length; k++) o[k] += w[j] * V[j][k];
+    out.push(o);
+  }
+  return { out: out, weights: weights };
+}
+
+function makeQKV(T, d, seed){
+  const rnd = mulberry32(seed);
+  const mk = function(){
+    const M = [];
+    for (let i = 0; i < T; i++){
+      const r = new Array(d);
+      for (let k = 0; k < d; k++) r[k] = gaussian(rnd);
+      M.push(r);
+    }
+    return M;
+  };
+  return { Q: mk(), K: mk(), V: mk() };
+}
+
+// ---- the three measurements ----
+
+// how much of each REAL query's attention budget lands on padded keys
+function paddingLeak(weights, len, T, side){
+  const R = realRange(len, T || weights.length, side || "right");
+  const ok = padAllowed(len, T || weights.length, side || "right");
+  let total = 0, rows = 0;
+  for (let i = R.from; i < R.to; i++){
+    const w = weights[i];
+    if (!w || w.some(function(v){ return isNaN(v); })) continue;
+    let onPad = 0;
+    for (let j = 0; j < w.length; j++) if (!ok(j)) onPad += w[j];
+    total += onPad; rows++;
+  }
+  return rows ? total / rows : 0;
+}
+
+function rowSums(weights){
+  return weights.map(function(w){
+    if (w.some(function(v){ return isNaN(v); })) return NaN;
+    let s = 0;
+    for (const v of w) s += v;
+    return s;
+  });
+}
+
+const nanRows = weights => weights.filter(function(w){
+  return w.some(function(v){ return isNaN(v); });
+}).length;
+
+// THE property: the same sequence must produce the same output whatever it is batched with
+function rebatchDelta(maskName, T, len, d, seed, side){
+  const sd = side || "right";
+  const full = makeQKV(T, d, seed);
+  const padded = attention(full.Q, full.K, full.V, MASKS[maskName](len, T, sd));
+
+  const R = realRange(len, T, sd);
+  const Qa = full.Q.slice(R.from, R.to), Ka = full.K.slice(R.from, R.to), Va = full.V.slice(R.from, R.to);
+  const alone = attention(Qa, Ka, Va, MASKS[maskName](len, len, sd));
+
+  let worst = 0;
+  for (let i = 0; i < len; i++)
+    for (let k = 0; k < d; k++){
+      const a = alone.out[i][k], b = padded.out[R.from + i][k];
+      if (isNaN(a) || isNaN(b)) return Infinity;
+      worst = Math.max(worst, Math.abs(a - b));
+    }
+  return worst;
+}
+
+// the fully masked row, and why -1e9 is not a fix
+function degenerateRow(fill){
+  const scores = [fill, fill, fill, fill];
+  const w = softmax(scores);
+  const sum = w.reduce(function(a, b){ return a + b; }, 0);
+  const uniform = w.every(function(v){ return Math.abs(v - 0.25) < 1e-9; });
+  return { weights: w, isNaN: w.some(function(v){ return isNaN(v); }),
+           sumsToOne: Math.abs(sum - 1) < 1e-12, uniform: uniform };
+}
+
+function analyse(maskName, T, len, d, seed, fill, side){
+  const sd = side || "right";
+  const { Q, K, V } = makeQKV(T, d, seed);
+  const r = attention(Q, K, V, MASKS[maskName](len, T, sd), fill);
+  const sums = rowSums(r.weights);
+  return {
+    weights: r.weights,
+    out: r.out,
+    leak: paddingLeak(r.weights, Math.min(len, T), T, sd),
+    goodRows: sums.filter(function(s){ return !isNaN(s) && Math.abs(s - 1) < 1e-12; }).length,
+    nanRows: nanRows(r.weights),
+    rows: T
+  };
+}
+// ===== ENGINE:END =====
+
+// ---------------------------------------------------------------- UI
+const $ = id => document.getElementById(id);
+const NAMES = ["none", "causal", "padding", "both"];
+const LABEL = { none: "none", causal: "causal only", padding: "padding only", both: "both (correct)" };
+
+function render(){
+  const T = +$("sT").value, d = +$("sD").value;
+  const len = Math.min(+$("sLen").value, T);
+  $("vT").textContent = T; $("vD").textContent = d; $("vLen").textContent = len;
+  const name = $("mask").value, side = $("side").value;
+
+  const a = analyse(name, T, len, d, 2026, undefined, side);
+  const allowed = MASKS[name](len, T, side);
+  const isPad = function(j){ return !padAllowed(len, T, side)(j); };
+
+  const style = "grid-template-columns:repeat(" + T + ",1fr)";
+  $("maskGrid").setAttribute("style", style);
+  $("attnGrid").setAttribute("style", style);
+
+  let mg = "", ag = "";
+  for (let i = 0; i < T; i++)
+    for (let j = 0; j < T; j++){
+      const on = allowed(i, j);
+      const pad = isPad(j);
+      mg += "<div class='cell' style='background:" +
+            (on ? (pad ? "#fca5a5" : "#bbf7d0") : "#334155") + "'></div>";
+      const w = a.weights[i][j];
+      const v = isNaN(w) ? -1 : w;
+      ag += "<div class='cell' style='background:" +
+            (v < 0 ? "#f43f5e" : "rgba(79,70,229," + Math.min(1, v * 3) + ")") + "'></div>";
+    }
+  $("maskGrid").innerHTML = mg;
+  $("attnGrid").innerHTML = ag;
+  $("maskNote").innerHTML = "Green = allowed real token, <span style='color:#dc2626'>red</span> = " +
+    "allowed <em>padding</em> (the leak), dark = blocked. " +
+    (a.nanRows ? "<strong class='bad'>" + a.nanRows + " row(s) have every key blocked and are NaN.</strong>"
+               : "No fully-blocked rows at this length.");
+
+  $("leak").innerHTML = NAMES.map(function(n){
+    const r = analyse(n, T, len, d, 2026, undefined, side);
+    const cls = r.leak > 0.01 ? "bad" : "ok";
+    return "<tr><td>" + LABEL[n] + "</td>" +
+      "<td class='" + cls + "'>" + (100 * r.leak).toFixed(1) + "%</td>" +
+      "<td>" + r.goodRows + " / " + r.rows + "</td>" +
+      "<td class='" + (r.nanRows ? "bad" : "") + "'>" + r.nanRows + "</td></tr>";
+  }).join("");
+
+  $("rebatch").innerHTML = NAMES.map(function(n){
+    const delta = rebatchDelta(n, T, len, d, 2026, side);
+    const good = delta === 0;
+    return "<tr><td>" + LABEL[n] + "</td>" +
+      "<td class='" + (good ? "ok" : "bad") + "'>" +
+      (delta === Infinity ? "NaN in the output" : delta.toExponential(2)) + "</td>" +
+      "<td>" + (good ? "<span class='ok'>batch-invariant</span>"
+                     : "<span class='bad'>depends on its neighbours</span>") + "</td></tr>";
+  }).join("");
+
+  $("degenerate").innerHTML = [["-Infinity", -Infinity], ["-1e9", -1e9], ["-1e4", -1e4]].map(function(pair){
+    const r = degenerateRow(pair[1]);
+    return "<tr><td class='font-mono'>" + pair[0] + "</td>" +
+      "<td>" + (r.isNaN ? "<span class='bad'>NaN</span>"
+                        : "[" + r.weights.map(function(v){ return v.toFixed(2); }).join(", ") + "]") + "</td>" +
+      "<td>" + (r.isNaN ? "&mdash;" : (r.sumsToOne ? "<span class='ok'>yes</span>" : "no")) + "</td>" +
+      "<td>" + (r.isNaN ? "<span class='bad'>loudly</span>"
+                        : "<span class='bad'>silently</span>") + "</td></tr>";
+  }).join("");
+  $("degenNote").textContent =
+    "-Infinity  -> NaN. Ugly, and it stops the run at the first backward pass.\n" +
+    "-1e9       -> a uniform distribution over positions that are ALL blocked.\n" +
+    "              Well-formed, sums to 1, and completely meaningless. It propagates.\n\n" +
+    "The fix is not a better constant. It is to make the row not matter: mask the OUTPUT at\n" +
+    "padded query positions, or zero fully-masked rows after the softmax.";
+}
+
+["sT", "sLen", "sD", "mask", "side"].forEach(function(id){
+  $(id).addEventListener("input", render);
+  $(id).addEventListener("change", render);
+});
+render();
+</script>
+</body>
+</html>

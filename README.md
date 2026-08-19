@@ -67,6 +67,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 63 — CTC loss](https://dev48v.infy.uk/dl/day63-ctc-loss.html) — `day63-ctc-loss.html`
 - [DeepLearningFromZero · Day 64 — Group Normalization](https://dev48v.infy.uk/dl/day64-group-normalization.html) — `day64-group-normalization.html`
 - [DeepLearningFromZero · Day 65 — AdamW: weight decay is not L2](https://dev48.infy.uk/dl/day65-adamw.html) — `day65-adamw.html`
+- [DeepLearningFromZero · Day 66 — Attention masks](https://dev48.infy.uk/dl/day66-attention-masks.html) — `day66-attention-masks.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk
