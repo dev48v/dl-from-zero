@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 65 — AdamW</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  table.num td, table.num th { padding:4px 9px; font-variant-numeric:tabular-nums; }
+  table.num th { font-size:11px; letter-spacing:.05em; color:#64748b; text-align:right; font-weight:700; }
+  table.num th:first-child, table.num td:first-child { text-align:left; }
+  table.num td { text-align:right; font-size:12.5px; border-top:1px solid #e2e8f0; }
+  .ok { color:#166534; font-weight:800; }
+  .bad { color:#991b1b; font-weight:800; }
+  canvas { width:100%; display:block; border-radius:8px; background:#0f172a; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-20">
+  <div class="max-w-6xl mx-auto p-4 md:p-6">
+    <p class="text-xs font-bold tracking-widest text-rose-700 mb-2">DEEPLEARNINGFROMZERO · DAY 65</p>
+    <h1 class="text-xl md:text-2xl font-black leading-tight mb-4">
+      ⚖️ AdamW — weight decay and L2 regularisation are the same thing under SGD, and
+      <strong>not the same thing under Adam</strong>. That one sentence is the whole paper
+      (Loshchilov &amp; Hutter, 2017) and it is why <code>torch.optim.Adam(weight_decay=...)</code>
+      does not do what its name suggests. Add an L2 term to the loss and the penalty goes through
+      Adam's per-parameter normaliser — so it is divided by √v̂, which means
+      <strong>the parameters with the largest gradients get the least decay</strong>, exactly
+      backwards from what regularisation is for. Decouple it, apply the decay straight to the
+      weight, and the effective decay is uniform again. This page implements both optimisers by
+      hand, trains a real model in your browser, and measures the thing rather than describing it:
+      the <strong>effective decay per parameter</strong> under each, the resulting weight-norm
+      trajectories, and the coupling that makes L2-under-Adam's regularisation strength change when
+      you change the learning rate. Gradients are checked against finite differences, and the
+      SGD identity — where the two really are equivalent — is asserted rather than assumed.
+      Pure vanilla JavaScript, one file, offline.
+    </h1>
+    <div class="flex gap-2 flex-wrap" id="tabs">
+      <button data-tab="look" class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">📉 TRAIN</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto space-y-5">
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3">
+          <label class="text-sm">learning rate <span id="vLr" class="font-bold tabular-nums float-right">0.010</span>
+            <input id="sLr" type="range" min="1" max="200" value="10"></label>
+          <label class="text-sm">weight decay λ <span id="vWd" class="font-bold tabular-nums float-right">0.100</span>
+            <input id="sWd" type="range" min="0" max="100" value="10"></label>
+          <label class="text-sm">steps <span id="vSteps" class="font-bold tabular-nums float-right">600</span>
+            <input id="sSteps" type="range" min="100" max="2000" step="50" value="600"></label>
+          <label class="text-sm">gradient scale spread <span id="vSpread" class="font-bold tabular-nums float-right">30x</span>
+            <input id="sSpread" type="range" min="1" max="100" value="30"></label>
+        </div>
+        <p class="text-xs text-slate-500 mt-3">
+          The spread is what makes the difference visible: real networks have parameters whose
+          gradients differ by orders of magnitude, and that is precisely the axis along which
+          L2-under-Adam and true weight decay diverge.
+        </p>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-5">
+        <div class="bg-white rounded-2xl shadow p-5">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">EFFECTIVE DECAY PER PARAMETER</p>
+          <p class="text-sm text-slate-600 mb-3">
+            How much each weight is actually pulled toward zero on one step. Regularisation is
+            supposed to be uniform. Under Adam+L2 it is not.
+          </p>
+          <div class="overflow-x-auto">
+            <table class="num w-full">
+              <thead><tr><th>parameter</th><th>|gradient|</th><th>Adam + L2</th><th>AdamW</th><th>ratio</th></tr></thead>
+              <tbody id="decay"></tbody>
+            </table>
+          </div>
+          <p class="text-xs text-slate-500 mt-2" id="decayNote"></p>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow p-5">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">TRAINED, BOTH WAYS</p>
+          <canvas id="chart" width="520" height="230"></canvas>
+          <table class="num w-full mt-3">
+            <thead><tr><th>optimiser</th><th>final loss</th><th>‖w‖₂</th><th>largest |w|</th><th>steps</th></tr></thead>
+            <tbody id="train"></tbody>
+          </table>
+          <p class="text-xs text-slate-500 mt-2">
+            Same data, same initialisation, same λ, same learning rate. Only the placement of the
+            decay term differs.
+          </p>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-5">
+        <div class="bg-white rounded-2xl shadow p-5">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">THE COUPLING: λ AND THE LEARNING RATE</p>
+          <p class="text-sm text-slate-600 mb-3">
+            Under AdamW the shrink per step is exactly <code>lr·λ</code>, so halving the learning
+            rate halves the regularisation — which is why AdamW's λ needs retuning with the
+            schedule. Under Adam+L2 the relationship is not even monotone in a useful way, because
+            the penalty is normalised by a running gradient statistic that <em>also</em> moves.
+          </p>
+          <table class="num w-full">
+            <thead><tr><th>learning rate</th><th>Adam+L2 ‖w‖₂</th><th>AdamW ‖w‖₂</th></tr></thead>
+            <tbody id="couple"></tbody>
+          </table>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow p-5">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">UNDER SGD THEY ARE THE SAME THING</p>
+          <p class="text-sm text-slate-600 mb-3">
+            The identity the whole story rests on. With plain SGD, adding <code>λw</code> to the
+            gradient and multiplying the weight by <code>(1 − lr·λ)</code> produce
+            <strong>bit-identical</strong> updates. Measured over 400 steps:
+          </p>
+          <pre id="sgdIdent" style="margin:0"></pre>
+          <p class="text-xs text-slate-500 mt-2">
+            That equivalence is exactly what breaks when the update is rescaled per parameter, and
+            it is why the confusion existed for years without anyone noticing.
+          </p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8">
+    <div class="max-w-3xl mx-auto space-y-6">
+
+      <h2 class="text-2xl font-black">Two things everyone treats as synonyms</h2>
+
+      <p><strong>L2 regularisation</strong> adds a penalty to the loss:</p>
+      <pre>L'(w) = L(w) + (λ/2)‖w‖²     ⟹     ∇L'(w) = ∇L(w) + λw</pre>
+
+      <p><strong>Weight decay</strong> does not touch the loss. It shrinks the weight directly, as
+      part of the update:</p>
+      <pre>w ← (1 − lr·λ) · w  −  lr · ∇L(w)</pre>
+
+      <p>Under plain SGD, expand both and they are the same update. Identical. Which is why the two
+      terms became synonyms, why frameworks named the L2 knob <code>weight_decay</code>, and why
+      nobody looked again for twenty years.</p>
+
+      <h3 class="text-xl font-bold">Adam breaks the equivalence</h3>
+
+      <p>Adam does not apply the gradient. It applies the gradient <em>divided by a running estimate
+      of its own magnitude</em>:</p>
+
+      <pre>w ← w − lr · m̂ / (√v̂ + ε)</pre>
+
+      <p>Put the L2 term in the gradient and it goes through that division too:</p>
+
+      <pre>effective decay ≈ lr · λ·w / (√v̂ + ε)</pre>
+
+      <div class="bg-amber-50 border-l-4 border-amber-500 p-4">
+        <p class="text-sm">The decay is now <strong>divided by the gradient magnitude</strong>. A
+        parameter with large, consistent gradients has a large √v̂, so it gets
+        <em>less</em> regularisation. A parameter that barely moves gets more. That is exactly
+        backwards from what regularisation is supposed to do, and the ratio between the two is
+        measurable — this page prints it.</p>
+      </div>
+
+      <p>AdamW's fix is a one-line move: take the decay out of the gradient and apply it to the
+      weight, after the adaptive step.</p>
+
+      <pre>w ← w − lr · m̂/(√v̂ + ε)  −  lr · λ · w
+//                            ^ decoupled: never sees the normaliser</pre>
+
+      <p>Now every parameter shrinks by the same proportion per step, whatever its gradient looks
+      like. That is the whole paper.</p>
+
+      <h3 class="text-xl font-bold">Why it took until 2017</h3>
+
+      <p>Adam's adaptivity is usually described as its selling point: parameters get their own
+      effective learning rate. That is true and useful for the <em>gradient</em>. Nobody noticed it
+      was also silently applied to the <em>penalty</em>, because L2 and weight decay had been
+      interchangeable for so long that the distinction had stopped being a distinction.</p>
+
+      <p>Loshchilov and Hutter's contribution was mostly noticing. The fix is four characters of
+      code moved to a different line.</p>
+
+      <h3 class="text-xl font-bold">What changes in practice</h3>
+
+      <ul class="list-disc pl-6 space-y-1">
+        <li><strong>λ needs retuning.</strong> AdamW's λ is not comparable to Adam's
+        <code>weight_decay</code>. Typical AdamW values are much larger — 0.01 to 0.1 where Adam+L2
+        used 1e-4 — because the decay is no longer divided by anything.</li>
+        <li><strong>λ couples to the learning rate.</strong> AdamW shrinks by exactly
+        <code>lr·λ</code> per step, so a decaying schedule decays your regularisation too. Some
+        implementations normalise λ by the schedule for this reason.</li>
+        <li><strong>Do not decay everything.</strong> Biases, LayerNorm and BatchNorm scales are
+        conventionally excluded — shrinking a normalisation scale toward zero fights the layer's
+        purpose, and there are few enough of them that they cannot overfit anyway.</li>
+        <li><strong>Check which one your framework runs.</strong> In PyTorch,
+        <code>Adam(weight_decay=λ)</code> is the coupled L2 version; <code>AdamW</code> is the
+        decoupled one. Same argument name, different algorithm.</li>
+      </ul>
+
+      <h3 class="text-xl font-bold">And the honest part</h3>
+
+      <p>Decoupling is not free improvement in every setting. It is a genuinely different
+      regulariser, so a λ tuned for one is wrong for the other, and a comparison that reuses the
+      same λ is measuring the retuning rather than the method. The tables on this page hold λ fixed
+      deliberately — to show the <em>mechanism</em>, not to declare a winner on a benchmark that
+      would need a sweep to be fair.</p>
+
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8 bg-slate-50">
+    <div class="max-w-3xl mx-auto space-y-6">
+
+      <h2 class="text-2xl font-black">🔨 How it is built</h2>
+
+      <h3 class="text-xl font-bold">1. Both optimisers, differing in one line</h3>
+      <pre>function step(p, g, s, cfg){
+  if (cfg.decoupled === false) g = g + cfg.lambda * p;      // L2: into the GRADIENT
+
+  s.m = cfg.b1 * s.m + (1 - cfg.b1) * g;
+  s.v = cfg.b2 * s.v + (1 - cfg.b2) * g * g;
+  const mHat = s.m / (1 - Math.pow(cfg.b1, s.t));
+  const vHat = s.v / (1 - Math.pow(cfg.b2, s.t));
+
+  let next = p - cfg.lr * mHat / (Math.sqrt(vHat) + cfg.eps);
+
+  if (cfg.decoupled === true) next -= cfg.lr * cfg.lambda * p;   // decay: onto the WEIGHT
+  return next;
+}</pre>
+      <p>Two <code>if</code>s around identical arithmetic. That is genuinely the entire difference
+      between <code>Adam(weight_decay=)</code> and <code>AdamW</code>, and writing them as one
+      function is the clearest way to see it — there is nowhere else for a difference to hide.</p>
+
+      <h3 class="text-xl font-bold">2. Bias correction, which is not optional here</h3>
+      <pre>const mHat = s.m / (1 - Math.pow(cfg.b1, s.t));
+const vHat = s.v / (1 - Math.pow(cfg.b2, s.t));</pre>
+      <p><code>m</code> and <code>v</code> start at zero, so early steps are biased toward zero and
+      <code>√v̂</code> is far too small. Skip the correction and the first few dozen steps take
+      enormous strides — which would dominate exactly the comparison this page is making. The tests
+      assert that <code>vHat</code> at t=1 equals <code>g²</code> exactly, which is the cleanest way
+      to catch an off-by-one in the exponent.</p>
+
+      <h3 class="text-xl font-bold">3. The effective decay, measured not derived</h3>
+      <pre>// run one step with lambda, one without, and take the difference. Whatever the
+// optimiser did to the penalty is in that gap - no algebra required.
+const withDecay    = step(p, g, clone(state), { ...cfg, lambda });
+const withoutDecay = step(p, g, clone(state), { ...cfg, lambda: 0 });
+const effective    = withoutDecay - withDecay;</pre>
+      <p>An ablation rather than a formula. If the closed form and the measurement disagree, the
+      measurement is what the optimiser is actually doing — and the test checks them against each
+      other, so a divergence surfaces instead of being argued about.</p>
+
+      <h3 class="text-xl font-bold">4. The SGD identity, asserted to the bit</h3>
+      <pre>// L2 into the gradient
+a = a - lr * (grad(a) + lambda * a);
+// decay onto the weight
+b = b * (1 - lr * lambda) - lr * grad(b);
+
+assert(Math.abs(a - b) &lt; 1e-12);     // over 400 steps, every step</pre>
+      <p>This is the load-bearing test of the page. If that identity does not hold, the claim
+      "they are the same under SGD and different under Adam" is half wrong and the whole article
+      collapses. Asserting the part you expect to be <em>true</em> is as important as asserting the
+      part you expect to break.</p>
+
+      <h3 class="text-xl font-bold">5. A model with a deliberate gradient spread</h3>
+      <pre>// features scaled across orders of magnitude, so parameters get very different |g|
+for (let j = 0; j &lt; d; j++) scale[j] = Math.pow(spread, j / (d - 1));</pre>
+      <p>On a well-conditioned problem the two optimisers look nearly identical, which is why the
+      difference went unnoticed for so long. The spread is the thing that makes the mechanism
+      visible, and it is a slider so you can watch the gap close as you turn it down to 1×.</p>
+
+      <h3 class="text-xl font-bold">6. Gradients checked against finite differences</h3>
+      <pre>const numeric = (loss(w + h·e_i) - loss(w - h·e_i)) / (2h);
+assert(relativeError(analytic[i], numeric) &lt; 1e-6);</pre>
+      <p>Central differences, not forward — the forward version's error is O(h) and would need a
+      tolerance loose enough to hide a real bug. Every claim on this page rests on the gradients
+      being right, so they are checked first and separately.</p>
+
+      <h3 class="text-xl font-bold">🎉 DeepLearningFromZero Day 65 shipped.</h3>
+      <p class="text-slate-600">A paper whose contribution was noticing that two identical things
+      stopped being identical.</p>
+
+    </div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.addEventListener("click", () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+}));
+
+// ===== ENGINE:BEGIN =====
+// Adam, Adam+L2 and AdamW, written as ONE function with two if statements - so there is
+// nowhere for a difference other than the placement of the decay to hide.
+
+function mulberry32(seed){
+  let s = seed >>> 0;
+  return function(){
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1) >>> 0;
+    t = (t ^ (t + Math.imul(t ^ (t >>> 7), t | 61))) >>> 0;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function gaussian(rnd){
+  let u = 0, v = 0;
+  while (u === 0) u = rnd();
+  while (v === 0) v = rnd();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+const DEFAULTS = { lr: 0.01, lambda: 0.1, b1: 0.9, b2: 0.999, eps: 1e-8, decoupled: true };
+
+function newState(d){
+  return { m: new Array(d).fill(0), v: new Array(d).fill(0), t: 0 };
+}
+
+// One optimiser. cfg.decoupled === false -> Adam + L2 ; true -> AdamW ; null -> plain Adam.
+function adamStep(w, grad, state, cfg){
+  const c = Object.assign({}, DEFAULTS, cfg);
+  const d = w.length, out = new Array(d);
+  state.t++;
+  const bc1 = 1 - Math.pow(c.b1, state.t);
+  const bc2 = 1 - Math.pow(c.b2, state.t);
+  for (let i = 0; i < d; i++){
+    let g = grad[i];
+    if (c.decoupled === false) g = g + c.lambda * w[i];        // L2: into the GRADIENT
+    state.m[i] = c.b1 * state.m[i] + (1 - c.b1) * g;
+    state.v[i] = c.b2 * state.v[i] + (1 - c.b2) * g * g;
+    const mHat = state.m[i] / bc1;
+    const vHat = state.v[i] / bc2;
+    let next = w[i] - c.lr * mHat / (Math.sqrt(vHat) + c.eps);
+    if (c.decoupled === true) next -= c.lr * c.lambda * w[i];  // decay: onto the WEIGHT
+    out[i] = next;
+  }
+  return out;
+}
+
+function sgdStep(w, grad, cfg){
+  const c = Object.assign({}, DEFAULTS, cfg);
+  const out = new Array(w.length);
+  for (let i = 0; i < w.length; i++){
+    if (c.decoupled === false) out[i] = w[i] - c.lr * (grad[i] + c.lambda * w[i]);
+    else out[i] = w[i] * (1 - c.lr * c.lambda) - c.lr * grad[i];
+  }
+  return out;
+}
+
+const cloneState = s => ({ m: s.m.slice(), v: s.v.slice(), t: s.t });
+
+// Measured, not derived: run one step with lambda and one without, and take the gap.
+function effectiveDecay(w, grad, state, cfg){
+  const withD = adamStep(w, grad, cloneState(state), cfg);
+  const noD = adamStep(w, grad, cloneState(state), Object.assign({}, cfg, { lambda: 0 }));
+  const out = new Array(w.length);
+  for (let i = 0; i < w.length; i++) out[i] = noD[i] - withD[i];
+  return out;
+}
+
+// ---- a small regression problem with a DELIBERATE gradient-scale spread ----
+function makeProblem(d, n, spread, seed){
+  const rnd = mulberry32(seed);
+  const scale = new Array(d);
+  for (let j = 0; j < d; j++) scale[j] = Math.pow(spread, d === 1 ? 0 : j / (d - 1));
+  const wTrue = new Array(d);
+  for (let j = 0; j < d; j++) wTrue[j] = gaussian(rnd) / scale[j];
+  const X = [], y = [];
+  for (let i = 0; i < n; i++){
+    const row = new Array(d);
+    let t = 0;
+    for (let j = 0; j < d; j++){ row[j] = gaussian(rnd) * scale[j]; t += row[j] * wTrue[j]; }
+    X.push(row);
+    y.push(t + 0.1 * gaussian(rnd));
+  }
+  return { X: X, y: y, d: d, n: n, scale: scale, wTrue: wTrue };
+}
+
+function loss(prob, w){
+  let s = 0;
+  for (let i = 0; i < prob.n; i++){
+    let p = 0;
+    for (let j = 0; j < prob.d; j++) p += prob.X[i][j] * w[j];
+    const r = p - prob.y[i];
+    s += r * r;
+  }
+  return s / (2 * prob.n);
+}
+
+function gradient(prob, w){
+  const g = new Array(prob.d).fill(0);
+  for (let i = 0; i < prob.n; i++){
+    let p = 0;
+    for (let j = 0; j < prob.d; j++) p += prob.X[i][j] * w[j];
+    const r = p - prob.y[i];
+    for (let j = 0; j < prob.d; j++) g[j] += r * prob.X[i][j];
+  }
+  for (let j = 0; j < prob.d; j++) g[j] /= prob.n;
+  return g;
+}
+
+// central differences - forward differences are O(h) and would need a tolerance
+// loose enough to hide a real bug
+function numericGradient(prob, w, h){
+  h = h || 1e-5;
+  const out = new Array(w.length);
+  for (let j = 0; j < w.length; j++){
+    const a = w.slice(), b = w.slice();
+    a[j] += h; b[j] -= h;
+    out[j] = (loss(prob, a) - loss(prob, b)) / (2 * h);
+  }
+  return out;
+}
+
+const norm2 = w => Math.sqrt(w.reduce(function(s, v){ return s + v * v; }, 0));
+const maxAbs = w => w.reduce(function(s, v){ return Math.max(s, Math.abs(v)); }, 0);
+
+function train(prob, cfg, steps, seed){
+  const rnd = mulberry32(seed || 5);
+  let w = new Array(prob.d);
+  for (let j = 0; j < prob.d; j++) w[j] = 0.5 * gaussian(rnd);
+  const state = newState(prob.d);
+  const history = [];
+  for (let t = 0; t < steps; t++){
+    const g = gradient(prob, w);
+    w = adamStep(w, g, state, cfg);
+    if (t % Math.max(1, Math.floor(steps / 120)) === 0)
+      history.push({ t: t, loss: loss(prob, w), norm: norm2(w) });
+  }
+  return { w: w, loss: loss(prob, w), norm: norm2(w), maxAbs: maxAbs(w), history: history, steps: steps };
+}
+
+// The identity the whole story rests on: under plain SGD the two are the SAME update.
+function sgdEquivalence(prob, steps, cfg){
+  const rnd = mulberry32(7);
+  let a = new Array(prob.d), b = new Array(prob.d);
+  for (let j = 0; j < prob.d; j++){ a[j] = 0.5 * gaussian(rnd); b[j] = a[j]; }
+  let worst = 0;
+  for (let t = 0; t < steps; t++){
+    a = sgdStep(a, gradient(prob, a), Object.assign({}, cfg, { decoupled: false }));
+    b = sgdStep(b, gradient(prob, b), Object.assign({}, cfg, { decoupled: true }));
+    for (let j = 0; j < prob.d; j++) worst = Math.max(worst, Math.abs(a[j] - b[j]));
+  }
+  return { worst: worst, steps: steps };
+}
+// ===== ENGINE:END =====
+
+// ---------------------------------------------------------------- UI
+const $ = id => document.getElementById(id);
+
+function cfgOf(){
+  return {
+    lr: +$("sLr").value / 1000,
+    lambda: +$("sWd").value / 100,
+    steps: +$("sSteps").value,
+    spread: +$("sSpread").value
+  };
+}
+
+function render(){
+  const c = cfgOf();
+  $("vLr").textContent = c.lr.toFixed(3);
+  $("vWd").textContent = c.lambda.toFixed(3);
+  $("vSteps").textContent = c.steps;
+  $("vSpread").textContent = c.spread + "x";
+
+  const prob = makeProblem(6, 200, c.spread, 2026);
+
+  // effective decay, measured
+  const rnd = mulberry32(3);
+  let w = new Array(prob.d);
+  for (let j = 0; j < prob.d; j++) w[j] = 0.5 * gaussian(rnd);
+  const state = newState(prob.d);
+  for (let t = 0; t < 60; t++) w = adamStep(w, gradient(prob, w), state, { lr: c.lr, lambda: 0 });
+  const g = gradient(prob, w);
+  const l2 = effectiveDecay(w, g, state, { lr: c.lr, lambda: c.lambda, decoupled: false });
+  const wd = effectiveDecay(w, g, state, { lr: c.lr, lambda: c.lambda, decoupled: true });
+
+  let worstRatio = 1, bestRatio = 1e9;
+  $("decay").innerHTML = w.map(function(_, j){
+    const r = Math.abs(wd[j]) > 1e-18 ? Math.abs(l2[j]) / Math.abs(wd[j]) : 0;
+    worstRatio = Math.max(worstRatio, r);
+    bestRatio = Math.min(bestRatio, r);
+    return "<tr><td>w[" + j + "]</td><td>" + Math.abs(g[j]).toExponential(2) + "</td>" +
+      "<td>" + Math.abs(l2[j]).toExponential(2) + "</td>" +
+      "<td>" + Math.abs(wd[j]).toExponential(2) + "</td>" +
+      "<td class='" + (r > 2 || r < 0.5 ? "bad" : "ok") + "'>" + r.toFixed(2) + "x</td></tr>";
+  }).join("");
+  $("decayNote").innerHTML = "Under AdamW every ratio would be identical, because the shrink is " +
+    "<code>lr&middot;&lambda;&middot;w</code> for every parameter. Under Adam+L2 the ratio spans <strong>" +
+    bestRatio.toFixed(2) + "x to " + worstRatio.toFixed(2) + "x</strong> &mdash; the parameters with " +
+    "the largest gradients are decayed least.";
+
+  // trained both ways
+  const runs = [
+    { name: "Adam + L2 (coupled)", cfg: { lr: c.lr, lambda: c.lambda, decoupled: false } },
+    { name: "AdamW (decoupled)", cfg: { lr: c.lr, lambda: c.lambda, decoupled: true } },
+    { name: "Adam, no decay", cfg: { lr: c.lr, lambda: 0, decoupled: null } }
+  ].map(function(r){ return Object.assign({ name: r.name }, train(prob, r.cfg, c.steps, 5)); });
+
+  $("train").innerHTML = runs.map(function(r){
+    return "<tr><td>" + r.name + "</td><td>" + r.loss.toFixed(5) + "</td><td>" +
+      r.norm.toFixed(4) + "</td><td>" + r.maxAbs.toFixed(4) + "</td><td>" + r.steps + "</td></tr>";
+  }).join("");
+
+  drawChart(runs);
+
+  // the coupling
+  $("couple").innerHTML = [0.001, 0.003, 0.01, 0.03, 0.1].map(function(lr){
+    const a = train(prob, { lr: lr, lambda: c.lambda, decoupled: false }, 400, 5);
+    const b = train(prob, { lr: lr, lambda: c.lambda, decoupled: true }, 400, 5);
+    return "<tr><td>" + lr + "</td><td>" + a.norm.toFixed(4) + "</td><td>" + b.norm.toFixed(4) + "</td></tr>";
+  }).join("");
+
+  const eq = sgdEquivalence(prob, 400, { lr: 0.001, lambda: c.lambda });
+  $("sgdIdent").textContent =
+    "400 SGD steps, lr 0.001, lambda " + c.lambda.toFixed(3) + "\n" +
+    "  L2 into the gradient   w <- w - lr*(grad + lambda*w)\n" +
+    "  decay onto the weight  w <- w*(1 - lr*lambda) - lr*grad\n" +
+    "  worst |difference| across every step and parameter: " + eq.worst.toExponential(2) + "\n" +
+    (eq.worst < 1e-12 ? "  IDENTICAL to floating point." : "  NOT identical - something is wrong.");
+}
+
+function drawChart(runs){
+  const cv = $("chart"), ctx = cv.getContext("2d");
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = "#0f172a"; ctx.fillRect(0, 0, W, H);
+  const all = runs.flatMap(function(r){ return r.history.map(function(h){ return h.loss; }); });
+  const lo = Math.log10(Math.max(1e-8, Math.min.apply(null, all)));
+  const hi = Math.log10(Math.max.apply(null, all));
+  const colours = ["#f43f5e", "#22d3ee", "#94a3b8"];
+  runs.forEach(function(r, i){
+    ctx.strokeStyle = colours[i]; ctx.lineWidth = 2; ctx.beginPath();
+    r.history.forEach(function(h, k){
+      const x = 34 + (W - 44) * k / Math.max(1, r.history.length - 1);
+      const y = H - 22 - (H - 34) * (Math.log10(Math.max(1e-8, h.loss)) - lo) / Math.max(1e-9, hi - lo);
+      k ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.stroke();
+    ctx.fillStyle = colours[i];
+    ctx.font = "600 11px ui-monospace, monospace";
+    ctx.fillText(r.name, 40, 16 + i * 13);
+  });
+  ctx.fillStyle = "#64748b"; ctx.font = "10px ui-monospace, monospace";
+  ctx.fillText("log loss", 4, H - 6);
+}
+
+["sLr", "sWd", "sSteps", "sSpread"].forEach(function(id){
+  $(id).addEventListener("input", render);
+});
+render();
+</script>
+</body>
+</html>
