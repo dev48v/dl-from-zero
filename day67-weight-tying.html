@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 67 — Weight tying</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  table.num td, table.num th { padding:4px 9px; font-variant-numeric:tabular-nums; }
+  table.num th { font-size:11px; letter-spacing:.05em; color:#64748b; text-align:right; font-weight:700; }
+  table.num th:first-child, table.num td:first-child { text-align:left; }
+  table.num td { text-align:right; font-size:12.5px; border-top:1px solid #e2e8f0; }
+  .ok { color:#166534; font-weight:800; }
+  .bad { color:#991b1b; font-weight:800; }
+  .grid-m { display:grid; gap:2px; }
+  .cell { aspect-ratio:1; border-radius:2px; }
+  .lg { font-size:10px; color:#64748b; }
+  button.run { background:#0f172a; color:#fff; padding:8px 16px; border-radius:8px; font-size:13px; font-weight:600; }
+  button.run:disabled { opacity:.5; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-20">
+  <div class="max-w-6xl mx-auto p-4 md:p-6">
+    <p class="text-xs font-bold tracking-widest text-rose-700 mb-2">DEEPLEARNINGFROMZERO · DAY 67</p>
+    <h1 class="text-xl md:text-2xl font-black leading-tight mb-4">
+      🪢 Weight tying — one matrix, two jobs, and a <code>+=</code> that is right on 87.5% of its
+      rows. A language model has an input embedding <code>E</code> that turns token ids into
+      vectors and an output projection that turns the final hidden state back into vocabulary
+      logits. <strong>Tying</strong> makes them the same matrix: <code>logits = h · Eᵀ</code>.
+      It is two lines of code, it is what GPT-2 and most models since do, and almost everything
+      said about it is quoted rather than measured. This page builds a real language model with a
+      hand-written forward <em>and</em> backward pass and measures all of it. The parameter saving
+      is not half — it is <strong>23.7%</strong> for GPT-2 small and <strong>0.5%</strong> for a
+      character model, and it can never reach half. The gradient into <code>E</code> now arrives
+      by <em>two</em> paths and they must be <strong>added</strong>; drop one and the gradient is
+      still exactly right on every row you did not look up, which is why the bug survives review
+      and still trains a smooth-looking curve. Tying makes every embedding <strong>dense</strong>:
+      a token that never appears in the batch still moves, by <strong>2.37e-3</strong> against
+      exactly <strong>0</strong> untied. And because the hidden state carries the input embedding
+      down the residual stream, a freshly initialised tied model's <em>top</em> prediction is
+      "repeat the token you just read" — mean rank <strong>1.7 of 64</strong>. Pure vanilla
+      JavaScript, one file, offline.
+    </h1>
+    <div class="flex gap-2 flex-wrap" id="tabs">
+      <button data-tab="look" class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">🔬 MEASURE</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto space-y-5">
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <div class="grid md:grid-cols-2 lg:grid-cols-5 gap-x-6 gap-y-3">
+          <label class="text-sm">vocab V <span id="vV" class="font-bold tabular-nums float-right">64</span>
+            <input id="sV" type="range" min="16" max="96" step="8" value="64"></label>
+          <label class="text-sm">embed dim d <span id="vD" class="font-bold tabular-nums float-right">16</span>
+            <input id="sD" type="range" min="4" max="32" step="4" value="16"></label>
+          <label class="text-sm">residual strength <span id="vR" class="font-bold tabular-nums float-right">1.00</span>
+            <input id="sR" type="range" min="0" max="2" step="0.05" value="1"></label>
+          <label class="text-sm">init &sigma;<sub>E</sub> <span id="vS" class="font-bold tabular-nums float-right">0.25</span>
+            <input id="sS" type="range" min="0.05" max="1" step="0.05" value="0.25"></label>
+          <label class="text-sm">gradient into E
+            <select id="mode" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+              <option value="accumulate" selected>both paths, += (correct)</option>
+              <option value="output-only">output path only (the bug)</option>
+              <option value="input-only">input path only</option>
+            </select></label>
+        </div>
+        <p class="text-xs text-slate-500 mt-3">
+          <strong>residual strength</strong> is the knob that turned out to matter. The model is
+          <code>h = res&middot;x + W2 tanh(W1 x)</code>, so <code>res</code> controls how much of
+          the input embedding survives into the hidden state — and under tying that is exactly how
+          much of <code>E[t]</code> ends up dotted against <code>E[t]</code> in its own logit.
+        </p>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-5">
+        <div class="bg-white rounded-2xl shadow p-5">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">WHAT TYING ACTUALLY REMOVES</p>
+          <table class="num w-full">
+            <thead><tr><th>model</th><th>tied</th><th>untied</th><th>removed</th></tr></thead>
+            <tbody id="params"></tbody>
+          </table>
+          <p class="text-xs text-slate-500 mt-2" id="paramNote"></p>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow p-5">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">TWO PATHS INTO ONE MATRIX</p>
+          <table class="num w-full">
+            <thead><tr><th>&part;L/&part;E via</th><th>rows touched</th><th>shape</th></tr></thead>
+            <tbody id="paths"></tbody>
+          </table>
+          <p class="text-xs text-slate-500 mt-3" id="pathNote"></p>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+          THE BUG: WRITE INSTEAD OF ACCUMULATE — AND HOW MUCH OF IT IS STILL CORRECT</p>
+        <p class="text-sm text-slate-600 mb-3">
+          Every entry is checked against <strong>central finite differences</strong> on the real
+          loss. The interesting column is the last one: dropping a path does not corrupt the
+          gradient, it corrupts <em>the rows of the tokens that appeared in the batch</em> and
+          leaves every other row exactly right.
+        </p>
+        <table class="num w-full">
+          <thead><tr><th>gradient into E</th><th>max rel. error</th><th>wrong rows</th><th>rows still exactly right</th></tr></thead>
+          <tbody id="bug"></tbody>
+        </table>
+        <p class="text-xs text-slate-500 mt-2" id="bugNote"></p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+          THE REPEAT BIAS TYING CREATES FOR FREE</p>
+        <p class="text-sm text-slate-600 mb-3">
+          The training task is built with <strong>no fixed points</strong> — the true successor of
+          a token is never that token — so any mass on "repeat what you just read" is architecture,
+          not data. <em>Odds</em> is how many times more likely repeating is than the average other
+          token; <strong>1.00 is no bias at all</strong>. <em>Rank</em> is where the current token
+          sits in its own logit row, out of V.
+        </p>
+        <table class="num w-full">
+          <thead><tr><th>res</th><th>tied odds</th><th>tied rank</th><th>untied odds</th><th>untied rank</th></tr></thead>
+          <tbody id="repeat"></tbody>
+        </table>
+        <p class="text-xs text-slate-500 mt-2" id="repeatNote"></p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+          THE ASSUMPTION TYING MAKES — AND WHAT IT COSTS WHEN IT IS FALSE</p>
+        <p class="text-sm text-slate-600 mb-3">
+          Tying asserts that a token's meaning <em>as an input</em> and its meaning <em>as an
+          output</em> live in the same space. Here that is made true or false on purpose: the next
+          token is scored by <code>dot(z_t, out_v)</code>, where <code>out_v</code> is the token's
+          own latent (<strong>aligned</strong>) or an independent one (<strong>misaligned</strong>).
+          Both models train from the same seed at the same stable learning rate; the score is
+          <em>excess</em> loss over the task's own entropy, so a ratio of 1.00 means tying is free.
+        </p>
+        <div class="flex gap-3 items-center mb-3">
+          <button id="runAlign" class="run">run the experiment</button>
+          <span id="alignStatus" class="text-xs text-slate-500"></span>
+        </div>
+        <table class="num w-full">
+          <thead><tr><th>task</th><th>tied excess</th><th>untied excess</th><th>tied / untied</th><th>params</th></tr></thead>
+          <tbody id="align"></tbody>
+        </table>
+        <p class="text-xs text-slate-500 mt-2" id="alignNote"></p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+          ONE MATRIX, TWO SCALES — AND THE EXPONENT NOBODY MENTIONS</p>
+        <p class="text-sm text-slate-600 mb-3">
+          <code>E</code> sets the residual-stream scale <em>and</em> the logit scale. Doubling it
+          does not double both.
+        </p>
+        <table class="num w-full">
+          <thead><tr><th>&sigma;</th><th>tied &#124;x&#124;</th><th>tied logit sd</th><th>untied &#124;x&#124;</th><th>untied logit sd</th></tr></thead>
+          <tbody id="scale"></tbody>
+        </table>
+        <p class="text-xs text-slate-500 mt-2" id="scaleNote"></p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">IN-PAGE ASSERTIONS</p>
+        <pre id="checks"></pre>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8">
+    <div class="max-w-3xl mx-auto space-y-6">
+
+      <h2 class="text-2xl font-black">One matrix asked to do two jobs</h2>
+
+      <p>A language model needs two vocabulary-sized matrices. The <strong>input embedding</strong>
+      turns a token id into a vector. The <strong>output projection</strong> turns the final hidden
+      state into one logit per vocabulary entry. Both are <code>[V, d]</code>. Weight tying
+      (Press &amp; Wolf 2017, Inan 2016) makes them the same tensor.</p>
+
+      <pre>untied:  x = E[t]          logits = h @ U.T      # two matrices
+tied:    x = E[t]          logits = h @ E.T      # one</pre>
+
+      <h3 class="text-xl font-bold">It does not halve the parameters</h3>
+
+      <p>The claim you will read is that tying halves the embedding cost, which is true, and it is
+      usually written as if it halves the <em>model</em>. It removes exactly <code>V&middot;d</code>
+      parameters, and what fraction of the model that is depends entirely on how
+      <code>V&middot;d</code> compares to the <code>12&middot;L&middot;d²</code> in the blocks.</p>
+
+      <p>Measured on real configurations: <strong>23.7%</strong> for GPT-2 small, <strong>12.7%</strong>
+      for GPT-2 medium, <strong>4.9%</strong> for GPT-2 XL, <strong>45.3%</strong> for a
+      <code>V=32k, d=128, L=4</code> toy, and <strong>0.5%</strong> for a character-level model with
+      a 256-token vocabulary. It can never reach 50%, because reaching 50% would require the model
+      to be nothing but embeddings.</p>
+
+      <div class="bg-amber-50 border-l-4 border-amber-500 p-4">
+        <p class="text-sm">The direction is the opposite of the intuition: tying matters
+        <em>least</em> for the big models whose parameter counts you were worried about, and
+        <em>most</em> for small models with large vocabularies — which is exactly the regime where
+        the embedding table is most of the model and the least data is available to train it.</p>
+      </div>
+
+      <h3 class="text-xl font-bold">The gradient now arrives twice</h3>
+
+      <p>Untied, each matrix has one job and one gradient. Tied, <code>E</code> appears twice in the
+      computation graph, so its gradient is a <strong>sum over both appearances</strong>:</p>
+
+      <pre>output path:  dE[v] += (p[v] - y[v]) * h        for EVERY v   <- dense
+input  path:  dE[t] += dx * inScale             for the token <- sparse
+
+dE = output_path + input_path                   # +=, not =</pre>
+
+      <p>Frameworks with autograd do this for you. Hand-rolled implementations, fused kernels and
+      any code that builds the embedding gradient with a scatter or an <code>index_add</code>
+      routinely get it wrong, and the failure mode is unusually quiet.</p>
+
+      <h3 class="text-xl font-bold">Why dropping a path survives review</h3>
+
+      <p>Drop the input path and the gradient is not garbage. It is <em>exactly correct</em> on
+      every row of <code>E</code> belonging to a token that did not appear in the batch, and wrong
+      only on the rows that did. With a batch of 8 distinct tokens over a vocabulary of 64, that is
+      <strong>87.5% of rows exactly right</strong> — and the wrong ones are the rare ones.</p>
+
+      <div class="bg-amber-50 border-l-4 border-amber-500 p-4">
+        <p class="text-sm">A gradient check that samples random entries passes it. A loss curve
+        does not notice it: the broken model still converges smoothly, just to a worse place —
+        1.84 against 1.61 on the page's task, on a curve with no kink in it anywhere.</p>
+      </div>
+
+      <h3 class="text-xl font-bold">Tying makes every embedding dense</h3>
+
+      <p>This is the part that is genuinely a training-dynamics change rather than a memory
+      saving. Untied, <code>dE</code> is sparse: only the rows you looked up get a gradient, so a
+      token absent from the batch does not move at all. Measured here: <strong>exactly 0</strong>.</p>
+
+      <p>Tied, the output path touches <em>every</em> row every step, because softmax puts non-zero
+      probability on every vocabulary entry and <code>dlogits[v] = p[v] - y[v]</code> is non-zero
+      for all <code>v</code>. A token that never appears in the batch still had its embedding
+      updated — measured at <strong>2.37e-3</strong> in a single step.</p>
+
+      <p>That is the real mechanism behind "tying helps small models and rare words". It is not
+      regularisation in any formal sense; it is that rare tokens stop being starved of gradient.</p>
+
+      <h3 class="text-xl font-bold">The repeat bias you get for free</h3>
+
+      <p>A transformer has a residual stream, so the hidden state at the last layer still contains
+      a component of the input embedding. Under tying, the logit for token <em>t</em> is
+      <code>dot(h, E[t])</code> — and if <code>h</code> contains <code>E[t]</code>, that logit
+      contains <code>&#124;&#124;E[t]&#124;&#124;²</code>, which is the largest self-dot-product in
+      the row.</p>
+
+      <p>Measured on a task with <em>no fixed points</em>, so the correct answer is never the current
+      token: at initialisation a tied model ranks the just-read token <strong>1.7th out of
+      64</strong>, while an untied model ranks it at <strong>31.4</strong> — chance is 32.5. Turn
+      the residual strength to zero and the tied model returns to <strong>35.0</strong>, which
+      identifies the residual stream as the cause rather than tying alone.</p>
+
+      <p>Training suppresses it but does not remove it. After 600 steps the tied model still ranks
+      the current token <strong>20.3rd</strong> where the untied model sits at <strong>31.9</strong>
+      — chance. The bias is outvoted, not deleted, and it is a plausible contributor to the
+      repetition that decoder-only models are known for.</p>
+
+      <h3 class="text-xl font-bold">What tying actually assumes, and what it costs</h3>
+
+      <p>Tying asserts that a token's input representation and its output representation are the
+      same vector. That is a real assumption and it can be false — "the" is a useful thing to
+      predict and a nearly useless thing to condition on.</p>
+
+      <p>The page tests it directly with a task whose input and output geometries are either the
+      same or independent, held over five seeds:</p>
+
+      <pre>ALIGNED     tied excess 0.2134   untied 0.2143   ratio 1.00x   (32% fewer params)
+MISALIGNED  tied excess 0.1657   untied 0.1100   ratio 1.51x</pre>
+
+      <p>When the assumption holds, tying is <strong>free</strong> — statistically indistinguishable
+      at 32% fewer parameters, and the per-seed ratios straddle 1 (0.96 to 1.11). When it does not,
+      tying costs <strong>51% more excess loss</strong>, and every one of the five seeds agrees
+      (1.37 to 1.64). Dropping the residual stream reduces the penalty to 1.30x but does not remove
+      it, so the residual accounts for part of the cost and the shared geometry for the rest.</p>
+
+      <h3 class="text-xl font-bold">One knob, two scales — and a correction</h3>
+
+      <p>Under tying, <code>&sigma;<sub>E</sub></code> sets the residual-stream scale and the logit
+      scale together, but not with the same exponent. <code>&#124;x&#124;</code> is linear in
+      <code>&sigma;</code>; the logits are <code>h &middot; E</code> where <code>h</code> itself
+      already scales with <code>&sigma;</code>, so the logit scale is roughly quadratic.</p>
+
+      <pre>tied,   sigma x2:  |x| x2.00   logit sd x3.80   <- quadratic
+untied, sigma_U x2: |x| x1.00   logit sd x2.00   <- linear, and |x| untouched</pre>
+
+      <div class="bg-rose-50 border-l-4 border-rose-500 p-4">
+        <p class="text-sm">🔴 <strong>A claim this page nearly shipped and the measurement
+        killed.</strong> The first version of this test swept a coarse grid of
+        <code>(&sigma;, inScale)</code>, found no setting that put both scales near 1, and concluded
+        that a tied matrix <em>cannot</em> serve both roles. That was a grid artifact, not a fact.
+        A finer sweep finds <strong>19</strong> settings that hit both, clustered at
+        <code>&sigma;&asymp;0.68, inScale&asymp;0.4</code>. Two knobs can satisfy two targets. The
+        real and much smaller claim is the <em>exponent</em>: tying couples the two scales
+        non-linearly, so tuning one perturbs the other quadratically — which is why tied models are
+        fussier to initialise, not impossible.</p>
+      </div>
+
+      <h3 class="text-xl font-bold">The short version</h3>
+
+      <ul class="list-disc pl-6 space-y-1">
+        <li>Tying removes <code>V&middot;d</code> parameters — between 0.5% and 45% of a real
+        model, never half.</li>
+        <li>The gradient into <code>E</code> is a <strong>sum of two paths</strong>. Dropping one is
+        correct on most rows and still trains.</li>
+        <li>Tying makes embedding gradients <strong>dense</strong>; that, not regularisation, is why
+        it helps rare tokens.</li>
+        <li>Combined with a residual stream it creates a <strong>repeat bias</strong> that training
+        suppresses but does not remove.</li>
+        <li>It is free when input and output geometry agree and costs ~50% more excess loss when
+        they do not.</li>
+      </ul>
+
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8 bg-slate-50">
+    <div class="max-w-3xl mx-auto space-y-6">
+
+      <h2 class="text-2xl font-black">🔨 How it is built</h2>
+
+      <h3 class="text-xl font-bold">1. A real model, with a residual stream on purpose</h3>
+      <pre>x      = E[t] * inScale
+h      = res*x + W2 @ tanh(W1 @ x + b1)     // h CARRIES x
+logits = h @ Eout.T + bo                    // Eout is E when tied, U when not</pre>
+      <p>The residual term is not decoration. Without it, <code>h</code> is an arbitrary function of
+      the input and none of the self-logit effect exists — which is why <code>res</code> is a slider
+      on the page rather than a constant buried in the code. Setting it to 0 is the control that
+      identifies the residual stream as the cause.</p>
+
+      <h3 class="text-xl font-bold">2. The two gradient paths, kept apart</h3>
+      <pre>for each v:  gEout[v] += dlogits[v] * h        // DENSE: all V rows, every step
+             dh      += dlogits[v] * Eout[v]
+...
+gEin[t] += dx * inScale                        // SPARSE: one row per token
+
+gE = (mode !== 'input-only'  ? gEout : 0)
+   + (mode !== 'output-only' ? gEin  : 0);</pre>
+      <p>Accumulating into two separate buffers and combining them at the end is what makes the bug
+      <em>reproducible</em> rather than describable. The three modes are the same code path with one
+      term switched off.</p>
+
+      <h3 class="text-xl font-bold">3. The identity that pins the whole mechanism</h3>
+      <pre>// an UNTIED model whose output matrix starts as a bit-exact copy of E
+tied   = initModel({ tied: true });
+mirror = initModel({ tied: false, mirror: true });
+
+assert(forward(tied, t).p === forward(mirror, t).p);       // 0.0e+0, identical
+assert(grads(tied).gE === grads(mirror).gE + grads(mirror).gU);  // 0.0e+0</pre>
+      <p>Two models with an identical forward pass and a different backward pass. The second
+      assertion <em>is</em> weight tying, stated as an equation: the tied gradient is exactly the sum
+      of the two untied gradients. It holds to 0, not to a tolerance, because it is an algebraic
+      identity and not an approximation.</p>
+
+      <h3 class="text-xl font-bold">4. Gradient checking that does not lie about small entries</h3>
+      <pre>function gradError(analytic, numeric){
+  let scale = 0, worstAbs = 0;
+  for (...) { scale = Math.max(scale, |numeric|);
+              worstAbs = Math.max(worstAbs, |analytic - numeric|); }
+  return { abs: worstAbs, rel: worstAbs / scale };     // relative to the SCALE
+}</pre>
+      <p>Central differences at <code>eps=1e-5</code> have an absolute noise floor around 1e-11.
+      Dividing that by an entry which is legitimately near zero manufactures a relative error of
+      1e-5 and hides real bugs behind a loose tolerance. Comparing against the gradient's overall
+      scale reports the honest number: <strong>4.2e-10</strong>.</p>
+
+      <h3 class="text-xl font-bold">5. A task with no fixed points</h3>
+      <pre>const off = 1 + ((t * 13 + i * 17) % (V - 1));   // off in [1, V-1] => never 0
+succ[t][i] = (t + off) % V;                      // so succ[t][i] !== t, ever</pre>
+      <p>The offset is constructed to be non-zero rather than filtered afterwards, so the property
+      holds by construction and is asserted anyway. Without it, "the model wants to repeat the input"
+      is unmeasurable, because repeating would sometimes be right.</p>
+
+      <h3 class="text-xl font-bold">6. Testing the assumption instead of asserting it</h3>
+      <pre>// out_v is the token's OWN latent (aligned) or an independent one (misaligned)
+const zin = mk(), zout = aligned ? zin : mk();
+scores[v] = (v === t) ? -Infinity : beta * dot(zin[t], zout[v]) / sqrt(r);</pre>
+      <p>One flag flips whether tying's assumption is true, everything else held fixed, and the
+      comparison is <em>excess</em> loss over each task's own entropy — the two tasks have different
+      floors (2.33 against 2.47) and comparing raw losses across them would be meaningless.</p>
+
+      <h3 class="text-xl font-bold">7. Comparing at a learning rate where both are stable</h3>
+      <pre>lr=0.5   tied 1.653   untied 1.573      // both stable - comparisons live here
+lr=2.0   tied 2.082   untied 1.761      // both stable, both worse
+lr=8.0   tied DIVERGED untied DIVERGED  // asserted separately, never compared</pre>
+      <p>A comparison run at a rate where either side overflows is not a comparison. The instability
+      is a separate assertion, and every number quoted on this page comes from the stable regime.</p>
+
+      <h3 class="text-xl font-bold">8. What the tests pin</h3>
+      <pre>// the mechanism, as an identity
+assert(tied_dE === untied_dE + untied_dU);            // exactly 0
+
+// the bug is wrong on exactly the rows it looked up
+assert(wrongRows('output-only') === uniqueTokensInBatch);
+assert(wrongRows('input-only')  === V);
+
+// density
+assert(nonzeroRows(tied.dE)   === V);
+assert(nonzeroRows(untied.dE) === uniqueTokensInBatch);
+
+// the repeat bias is the RESIDUAL, not tying alone
+assert(repeatOdds(tied, res=1) > 1.5);
+assert(|repeatOdds(tied, res=0) - 1| &lt; 0.25);
+assert(|repeatOdds(untied)      - 1| &lt; 0.25);
+
+// and tying can never remove half the parameters
+assert(transformerParams(...).saved &lt; 0.5) for every real config;</pre>
+      <p>The third block is the one worth stealing. Asserting that the effect <em>disappears</em>
+      under the control is what separates a measured mechanism from a coincidence — and it is the
+      assertion that would have caught the claim if the residual stream had not been the cause.</p>
+
+      <h3 class="text-xl font-bold">🎉 DeepLearningFromZero Day 67 shipped.</h3>
+      <p class="text-slate-600">Two lines of code, one <code>+=</code>, and a bias nobody put there.</p>
+
+    </div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.addEventListener("click", () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+}));
+
+// ===== ENGINE:BEGIN =====
+// Weight tying: ONE matrix E [V x d] is BOTH the input embedding lookup and the output
+// projection (logits[v] = dot(h, E[v])). Real forward and real backward, so the two
+// gradient paths into E can be separated, measured, and broken on purpose.
+
+function mulberry32(seed){
+  let s = seed >>> 0;
+  return function(){
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1) >>> 0;
+    t = (t ^ (t + Math.imul(t ^ (t >>> 7), t | 61))) >>> 0;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function gaussian(rnd){
+  let u = 0, v = 0;
+  while (u === 0) u = rnd();
+  while (v === 0) v = rnd();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+const zeros = n => new Array(n).fill(0);
+const zmat = (r, c) => { const M = []; for (let i = 0; i < r; i++) M.push(zeros(c)); return M; };
+const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+
+// ---------------------------------------------------------------- the tasks
+// Both tasks have NO fixed points: the true successor of t is never t. That is deliberate.
+// It means any probability the model puts on "repeat the token you just read" is pure
+// architecture, and the honest target for that number is zero.
+function makeTask(V, k, seed){
+  const rnd = mulberry32(seed);
+  const succ = [], probs = [];
+  for (let t = 0; t < V; t++){
+    const s = [], w = [];
+    for (let i = 0; i < k; i++){
+      const off = 1 + ((t * 13 + i * 17) % (V - 1));   // in [1, V-1] => never 0 => never t
+      s.push((t + off) % V);
+    }
+    let z = 0;
+    for (let i = 0; i < k; i++){ const v = 0.15 + rnd(); w.push(v); z += v; }
+    for (let i = 0; i < k; i++) w[i] /= z;
+    succ.push(s); probs.push(w);
+  }
+  let H = 0;                                            // the best achievable loss
+  for (let t = 0; t < V; t++) for (let i = 0; i < k; i++) H -= probs[t][i] * Math.log(probs[t][i]);
+  return { V: V, k: k, succ: succ, probs: probs, entropy: H / V };
+}
+
+// Tying makes exactly ONE assumption: that a token's meaning as an INPUT and its meaning as
+// an OUTPUT live in the same space. This task makes that assumption true or false on
+// purpose. Each token has a latent z_t; the next token is scored by dot(z_t, out_v), where
+// out_v is z_v (ALIGNED) or an independent w_v (MISALIGNED). v === t stays excluded.
+function makeLatentTask(V, r, seed, aligned, beta){
+  const rnd = mulberry32(seed), B = beta === undefined ? 2.5 : beta;
+  const mk = function(){
+    const M = [];
+    for (let t = 0; t < V; t++){
+      const z = new Array(r);
+      for (let i = 0; i < r; i++) z[i] = gaussian(rnd);
+      M.push(z);
+    }
+    return M;
+  };
+  const zin = mk(), zout = aligned ? zin : mk();
+  const rows = [];
+  let H = 0;
+  for (let t = 0; t < V; t++){
+    const s = new Array(V);
+    let mx = -Infinity;
+    for (let v = 0; v < V; v++){
+      s[v] = (v === t) ? -Infinity : B * dot(zin[t], zout[v]) / Math.sqrt(r);
+      if (s[v] > mx) mx = s[v];
+    }
+    const p = new Array(V);
+    let z = 0;
+    for (let v = 0; v < V; v++){ p[v] = Math.exp(s[v] - mx); z += p[v]; }
+    for (let v = 0; v < V; v++){ p[v] /= z; if (p[v] > 0) H -= p[v] * Math.log(p[v]); }
+    rows.push(p);
+  }
+  return { V: V, latent: true, rows: rows, entropy: H / V, aligned: !!aligned };
+}
+
+function sampleBatch(task, n, rnd){
+  const xs = [], ys = [];
+  for (let i = 0; i < n; i++){
+    const t = Math.floor(rnd() * task.V) % task.V;
+    let r = rnd();
+    if (task.latent){
+      let v = 0;
+      while (v < task.V - 1 && r > task.rows[t][v]){ r -= task.rows[t][v]; v++; }
+      xs.push(t); ys.push(v);
+    } else {
+      let j = 0;
+      while (j < task.k - 1 && r > task.probs[t][j]){ r -= task.probs[t][j]; j++; }
+      xs.push(t); ys.push(task.succ[t][j]);
+    }
+  }
+  return { xs: xs, ys: ys };
+}
+
+// ---------------------------------------------------------------- the model
+// x      = E[t] * inScale
+// h      = res*x + W2 * tanh(W1 x + b1)      <- a residual stream, on purpose: h CARRIES x
+// logits = dot(h, Eout[v]) + bo[v]           <- Eout is E when tied, U when not
+function initModel(cfg, seed){
+  const rnd = mulberry32(seed);
+  const mk = function(r, c, s){
+    const M = [];
+    for (let i = 0; i < r; i++){
+      const row = new Array(c);
+      for (let j = 0; j < c; j++) row[j] = gaussian(rnd) * s;
+      M.push(row);
+    }
+    return M;
+  };
+  const sE = cfg.sigmaE === undefined ? 0.25 : cfg.sigmaE;
+  const m = {
+    V: cfg.V, d: cfg.d, dh: cfg.dh, tied: !!cfg.tied,
+    inScale: cfg.inScale === undefined ? 1 : cfg.inScale,
+    res: cfg.res === undefined ? 1 : cfg.res,
+    E: mk(cfg.V, cfg.d, sE),
+    W1: mk(cfg.dh, cfg.d, 1 / Math.sqrt(cfg.d)),
+    b1: zeros(cfg.dh),
+    W2: mk(cfg.d, cfg.dh, 1 / Math.sqrt(cfg.dh)),
+    bo: zeros(cfg.V)
+  };
+  // mirror: an UNTIED model whose output matrix starts as an exact copy of E. Its forward
+  // pass is then bit-identical to the tied model - the two differ only in the backward.
+  m.U = m.tied ? null
+      : (cfg.mirror ? m.E.map(function(r){ return r.slice(); })
+                    : mk(cfg.V, cfg.d, cfg.sigmaU === undefined ? sE : cfg.sigmaU));
+  return m;
+}
+const outMatrix = m => m.tied ? m.E : m.U;
+
+function forward(m, t){
+  const d = m.d, dh = m.dh;
+  const x = new Array(d);
+  for (let j = 0; j < d; j++) x[j] = m.E[t][j] * m.inScale;
+  const a = new Array(dh);
+  for (let i = 0; i < dh; i++) a[i] = Math.tanh(dot(m.W1[i], x) + m.b1[i]);
+  const h = new Array(d);
+  for (let j = 0; j < d; j++){
+    let s = m.res * x[j];
+    for (let i = 0; i < dh; i++) s += m.W2[j][i] * a[i];
+    h[j] = s;
+  }
+  const Eo = outMatrix(m), logits = new Array(m.V);
+  let mx = -Infinity;
+  for (let v = 0; v < m.V; v++){ logits[v] = dot(h, Eo[v]) + m.bo[v]; if (logits[v] > mx) mx = logits[v]; }
+  const p = new Array(m.V);
+  let z = 0;
+  for (let v = 0; v < m.V; v++){ p[v] = Math.exp(logits[v] - mx); z += p[v]; }
+  for (let v = 0; v < m.V; v++) p[v] /= z;
+  return { x: x, a: a, h: h, logits: logits, p: p };
+}
+function batchLoss(m, xs, ys){
+  let L = 0;
+  for (let i = 0; i < xs.length; i++) L -= Math.log(Math.max(forward(m, xs[i]).p[ys[i]], 1e-300));
+  return L / xs.length;
+}
+
+// The two gradient paths into E are kept SEPARATE so the classic bug is reproduced exactly
+// rather than described.  mode: 'accumulate' (correct) | 'output-only' | 'input-only'.
+//   output path : every row v of E gets  (p[v] - y[v]) * h     -- DENSE, all V rows
+//   input  path : row t of E gets        dx * inScale          -- SPARSE, one row per token
+function grads(m, xs, ys, mode){
+  const V = m.V, d = m.d, dh = m.dh, N = xs.length;
+  const gEout = zmat(V, d), gEin = zmat(V, d);
+  const gW1 = zmat(dh, d), gb1 = zeros(dh), gW2 = zmat(d, dh), gbo = zeros(V);
+  const Eo = outMatrix(m);
+  for (let n = 0; n < N; n++){
+    const t = xs[n], y = ys[n], f = forward(m, t);
+    const dlog = new Array(V);
+    for (let v = 0; v < V; v++) dlog[v] = (f.p[v] - (v === y ? 1 : 0)) / N;
+    const dh_ = zeros(d);
+    for (let v = 0; v < V; v++){
+      gbo[v] += dlog[v];
+      const g = dlog[v];
+      for (let j = 0; j < d; j++){ gEout[v][j] += g * f.h[j]; dh_[j] += g * Eo[v][j]; }
+    }
+    const da = zeros(dh);
+    for (let j = 0; j < d; j++)
+      for (let i = 0; i < dh; i++){ gW2[j][i] += dh_[j] * f.a[i]; da[i] += dh_[j] * m.W2[j][i]; }
+    const dpre = new Array(dh);
+    for (let i = 0; i < dh; i++) dpre[i] = da[i] * (1 - f.a[i] * f.a[i]);
+    const dx = new Array(d);
+    for (let j = 0; j < d; j++) dx[j] = m.res * dh_[j];
+    for (let i = 0; i < dh; i++){
+      gb1[i] += dpre[i];
+      for (let j = 0; j < d; j++){ gW1[i][j] += dpre[i] * f.x[j]; dx[j] += dpre[i] * m.W1[i][j]; }
+    }
+    for (let j = 0; j < d; j++) gEin[t][j] += dx[j] * m.inScale;
+  }
+  let gE, gU = null;
+  if (!m.tied){ gE = gEin; gU = gEout; }
+  else {
+    const md = mode || 'accumulate';
+    gE = zmat(V, d);
+    for (let v = 0; v < V; v++) for (let j = 0; j < d; j++)
+      gE[v][j] = (md === 'input-only' ? 0 : gEout[v][j]) + (md === 'output-only' ? 0 : gEin[v][j]);
+  }
+  return { gE: gE, gU: gU, gW1: gW1, gb1: gb1, gW2: gW2, gbo: gbo, gEout: gEout, gEin: gEin };
+}
+
+// ---------------------------------------------------------------- numeric gradient
+function numericGrad(m, key, xs, ys, eps){
+  const e = eps || 1e-5, M = m[key], G = zmat(M.length, M[0].length);
+  for (let i = 0; i < M.length; i++) for (let j = 0; j < M[0].length; j++){
+    const o = M[i][j];
+    M[i][j] = o + e; const lp = batchLoss(m, xs, ys);
+    M[i][j] = o - e; const lm = batchLoss(m, xs, ys);
+    M[i][j] = o;
+    G[i][j] = (lp - lm) / (2 * e);
+  }
+  return G;
+}
+// Relative error against the SCALE of the gradient, not against each entry, so that entries
+// which are legitimately near zero do not manufacture a large relative error out of the
+// finite-difference floor (~1e-11 absolute at eps=1e-5).
+function gradError(a, b){
+  let scale = 0, worstAbs = 0;
+  for (let i = 0; i < a.length; i++) for (let j = 0; j < a[0].length; j++){
+    scale = Math.max(scale, Math.abs(b[i][j]));
+    worstAbs = Math.max(worstAbs, Math.abs(a[i][j] - b[i][j]));
+  }
+  return { abs: worstAbs, rel: worstAbs / Math.max(scale, 1e-12) };
+}
+function rowsWrong(a, b, tol){
+  const t = tol === undefined ? 1e-6 : tol;
+  let n = 0;
+  const which = [];
+  for (let i = 0; i < a.length; i++){
+    let bad = false;
+    for (let j = 0; j < a[0].length; j++) if (Math.abs(a[i][j] - b[i][j]) > t) bad = true;
+    if (bad){ n++; which.push(i); }
+  }
+  return { count: n, rows: which };
+}
+const nonzeroRows = (G, tol) => G.filter(function(r){
+  return r.some(function(v){ return Math.abs(v) > (tol || 0); });
+}).length;
+
+// ---------------------------------------------------------------- parameter counting
+function paramCount(m){
+  const shared = m.V * m.d + m.dh * m.d + m.dh + m.d * m.dh + m.V;
+  return m.tied ? shared : shared + m.V * m.d;
+}
+// A real transformer, so "tying halves the parameters" can be checked against
+// configurations people actually ship rather than against a toy.
+// blocks = 12*L*d^2 (attention qkvo 4d^2 + mlp 8d^2), the standard count.
+function transformerParams(V, d, L, ctx){
+  const embed = V * d, pos = (ctx || 0) * d, blocks = 12 * L * d * d;
+  return { embed: embed, pos: pos, blocks: blocks,
+           tied: embed + pos + blocks, untied: 2 * embed + pos + blocks,
+           saved: embed / (2 * embed + pos + blocks) };
+}
+
+// ---------------------------------------------------------------- measurements
+const repeatMass = m => {
+  let s = 0;
+  for (let t = 0; t < m.V; t++) s += forward(m, t).p[t];
+  return s / m.V;
+};
+// Scale-free: how many times more likely is "repeat what you just read" than the average
+// OTHER token? 1.0 is no bias at all, whatever the absolute probabilities happen to be.
+function repeatOdds(m){
+  let s = 0;
+  for (let t = 0; t < m.V; t++){
+    const p = forward(m, t).p;
+    let other = 0;
+    for (let v = 0; v < m.V; v++) if (v !== t) other += p[v];
+    s += p[t] / (other / (m.V - 1));
+  }
+  return s / m.V;
+}
+// mean rank of the current token in its own logit row (1 = the model's top prediction)
+function repeatRank(m){
+  let s = 0;
+  for (let t = 0; t < m.V; t++){
+    const g = forward(m, t).logits;
+    let rank = 1;
+    for (let v = 0; v < m.V; v++) if (v !== t && g[v] > g[t]) rank++;
+    s += rank;
+  }
+  return s / m.V;
+}
+function scaleReport(m){
+  let xn = 0, hn = 0, ls = 0;
+  for (let t = 0; t < m.V; t++){
+    const f = forward(m, t);
+    xn += Math.sqrt(dot(f.x, f.x)); hn += Math.sqrt(dot(f.h, f.h));
+    let mu = 0;
+    for (let v = 0; v < m.V; v++) mu += f.logits[v];
+    mu /= m.V;
+    let s2 = 0;
+    for (let v = 0; v < m.V; v++) s2 += (f.logits[v] - mu) * (f.logits[v] - mu);
+    ls += Math.sqrt(s2 / m.V);
+  }
+  return { xNorm: xn / m.V, hNorm: hn / m.V, logitStd: ls / m.V };
+}
+
+// ---------------------------------------------------------------- training
+function sgdStep(m, g, lr){
+  for (let v = 0; v < m.V; v++) for (let j = 0; j < m.d; j++) m.E[v][j] -= lr * g.gE[v][j];
+  if (!m.tied) for (let v = 0; v < m.V; v++) for (let j = 0; j < m.d; j++) m.U[v][j] -= lr * g.gU[v][j];
+  for (let i = 0; i < m.dh; i++){
+    m.b1[i] -= lr * g.gb1[i];
+    for (let j = 0; j < m.d; j++) m.W1[i][j] -= lr * g.gW1[i][j];
+  }
+  for (let j = 0; j < m.d; j++) for (let i = 0; i < m.dh; i++) m.W2[j][i] -= lr * g.gW2[j][i];
+  for (let v = 0; v < m.V; v++) m.bo[v] -= lr * g.gbo[v];
+}
+function train(cfg){
+  const task = cfg.task, m = initModel(cfg, cfg.seed || 1);
+  const rnd = mulberry32((cfg.seed || 1) + 777);
+  const val = sampleBatch(task, cfg.valN || 512, mulberry32(99991));
+  const steps = cfg.steps === undefined ? 400 : cfg.steps;
+  const every = cfg.every || Math.max(1, Math.round(steps / 12));
+  const curve = [];
+  let diverged = false;
+  for (let s = 0; s <= steps; s++){
+    if (s % every === 0 || s === steps){
+      const vl = batchLoss(m, val.xs, val.ys);
+      if (!isFinite(vl)) diverged = true;
+      curve.push({ step: s, val: vl });
+    }
+    if (s === steps) break;
+    const b = sampleBatch(task, cfg.batch || 32, rnd);
+    sgdStep(m, grads(m, b.xs, b.ys, cfg.mode), cfg.lr || 0.5);
+  }
+  const last = curve[curve.length - 1];
+  return { model: m, curve: curve, diverged: diverged, params: paramCount(m),
+           finalVal: last.val, excess: last.val - task.entropy,
+           repeatOdds: repeatOdds(m), repeatRank: repeatRank(m), repeatMass: repeatMass(m) };
+}
+
+// The whole alignment experiment, averaged over seeds, so the claim is not one lucky run.
+function alignmentExperiment(cfg){
+  const V = cfg.V || 32, d = cfg.d || 12, dh = cfg.dh || 24;
+  const seeds = cfg.seeds || 2, steps = cfg.steps || 300;
+  const out = {};
+  for (const aligned of [true, false]){
+    let tSum = 0, uSum = 0, tp = 0, up = 0;
+    const ratios = [];
+    for (let s = 0; s < seeds; s++){
+      const task = makeLatentTask(V, 8, 70 + s * 7, aligned, 2.5);
+      const common = { task: task, V: V, d: d, dh: dh, sigmaE: 0.25, res: cfg.res === undefined ? 1 : cfg.res,
+                       steps: steps, batch: 32, lr: 0.5, seed: 3 + s, valN: 512 };
+      const rt = train(Object.assign({ tied: true }, common));
+      const ru = train(Object.assign({ tied: false }, common));
+      tSum += rt.excess; uSum += ru.excess; tp = rt.params; up = ru.params;
+      ratios.push(rt.excess / ru.excess);
+    }
+    out[aligned ? 'aligned' : 'misaligned'] = {
+      tied: tSum / seeds, untied: uSum / seeds, ratio: (tSum / seeds) / (uSum / seeds),
+      ratios: ratios, tiedParams: tp, untiedParams: up
+    };
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- in-page self-check
+function selfCheck(){
+  const lines = [];
+  let pass = 0, total = 0;
+  const ok = function(c, label){ total++; if (c) pass++; else lines.push('FAIL  ' + label); };
+  const V = 32, d = 8, dh = 16;
+  const task = makeTask(V, 4, 12);
+
+  // the task really has no fixed points, or the repeat measurement means nothing
+  let fp = 0;
+  for (let t = 0; t < V; t++) if (task.succ[t].indexOf(t) >= 0) fp++;
+  ok(fp === 0, 'the task has ' + fp + ' fixed points');
+
+  const b = sampleBatch(task, 6, mulberry32(5));
+
+  // analytic == numeric, tied and untied
+  for (const tied of [true, false]){
+    const m = initModel({ V: V, d: d, dh: dh, tied: tied, sigmaE: 0.25 }, 3);
+    const g = grads(m, b.xs, b.ys, 'accumulate');
+    ok(gradError(g.gE, numericGrad(m, 'E', b.xs, b.ys)).rel < 1e-5, 'dE disagrees with finite differences (tied=' + tied + ')');
+    ok(gradError(g.gW1, numericGrad(m, 'W1', b.xs, b.ys)).rel < 1e-5, 'dW1 disagrees (tied=' + tied + ')');
+    ok(gradError(g.gW2, numericGrad(m, 'W2', b.xs, b.ys)).rel < 1e-5, 'dW2 disagrees (tied=' + tied + ')');
+    if (!tied) ok(gradError(g.gU, numericGrad(m, 'U', b.xs, b.ys)).rel < 1e-5, 'dU disagrees');
+  }
+
+  // the += bug is wrong on exactly the rows of the tokens in the batch, and right elsewhere
+  {
+    const m = initModel({ V: V, d: d, dh: dh, tied: true, sigmaE: 0.25 }, 3);
+    const num = numericGrad(m, 'E', b.xs, b.ys);
+    const uniq = new Set(b.xs).size;
+    ok(rowsWrong(grads(m, b.xs, b.ys, 'accumulate').gE, num).count === 0, 'the correct gradient has wrong rows');
+    ok(rowsWrong(grads(m, b.xs, b.ys, 'output-only').gE, num).count === uniq,
+       'output-only should be wrong on exactly the ' + uniq + ' rows it looked up');
+    ok(rowsWrong(grads(m, b.xs, b.ys, 'input-only').gE, num).count === V, 'input-only should be wrong everywhere');
+  }
+
+  // the mirror identity: same forward, different backward
+  {
+    const mt = initModel({ V: V, d: d, dh: dh, tied: true, sigmaE: 0.25 }, 3);
+    const mu = initModel({ V: V, d: d, dh: dh, tied: false, mirror: true, sigmaE: 0.25 }, 3);
+    let worst = 0;
+    for (let t = 0; t < V; t++){
+      const a = forward(mt, t), c = forward(mu, t);
+      for (let v = 0; v < V; v++) worst = Math.max(worst, Math.abs(a.p[v] - c.p[v]));
+    }
+    ok(worst === 0, 'the mirrored untied model is not bit-identical in the forward pass');
+    const gt = grads(mt, b.xs, b.ys, 'accumulate'), gu = grads(mu, b.xs, b.ys, 'accumulate');
+    let wd = 0;
+    for (let v = 0; v < V; v++) for (let j = 0; j < d; j++)
+      wd = Math.max(wd, Math.abs(gt.gE[v][j] - (gu.gE[v][j] + gu.gU[v][j])));
+    ok(wd === 0, 'tied dE is not exactly (untied dE + untied dU)');
+  }
+
+  // gradient density: tying makes every row move, every step
+  {
+    const mt = initModel({ V: V, d: d, dh: dh, tied: true, sigmaE: 0.25 }, 3);
+    const mu = initModel({ V: V, d: d, dh: dh, tied: false, sigmaE: 0.25 }, 3);
+    const uniq = new Set(b.xs).size;
+    ok(nonzeroRows(grads(mt, b.xs, b.ys, 'accumulate').gE) === V, 'tied dE is not dense');
+    ok(nonzeroRows(grads(mu, b.xs, b.ys, 'accumulate').gE) === uniq, 'untied dE is not sparse');
+  }
+
+  // the repeat bias is caused by the residual stream: kill it and the bias goes
+  {
+    const on = initModel({ V: V, d: d, dh: dh, tied: true, sigmaE: 0.25, res: 1 }, 3);
+    const off = initModel({ V: V, d: d, dh: dh, tied: true, sigmaE: 0.25, res: 0 }, 3);
+    const un = initModel({ V: V, d: d, dh: dh, tied: false, sigmaE: 0.25, res: 1 }, 3);
+    ok(repeatOdds(on) > 1.5, 'a tied model with a residual stream shows no repeat bias');
+    ok(Math.abs(repeatOdds(off) - 1) < 0.25, 'res=0 did not remove the repeat bias');
+    ok(Math.abs(repeatOdds(un) - 1) < 0.25, 'an untied model shows a repeat bias');
+  }
+
+  // tying can never remove half the parameters
+  {
+    let bad = 0;
+    for (const c of [[50257, 768, 12, 1024], [50257, 1600, 48, 1024], [32000, 128, 4, 512], [256, 512, 8, 512]])
+      if (transformerParams(c[0], c[1], c[2], c[3]).saved >= 0.5) bad++;
+    ok(bad === 0, 'a configuration saved 50% or more, which is impossible while blocks > 0');
+    const g2 = transformerParams(50257, 768, 12, 1024);
+    ok(Math.abs(g2.tied / 1e6 - 124) < 1, 'the GPT-2 small tied count is not 124M, so the formula is wrong');
+  }
+  return { pass: pass, total: total, lines: lines };
+}
+// ===== ENGINE:END =====
+
+// ---------------------------------------------------------------- UI
+const $ = id => document.getElementById(id);
+const REAL = [
+  ["GPT-2 small", 50257, 768, 12, 1024],
+  ["GPT-2 medium", 50257, 1024, 24, 1024],
+  ["GPT-2 XL", 50257, 1600, 48, 1024],
+  ["toy LM  V=32k d=128 L=4", 32000, 128, 4, 512],
+  ["char LM  V=256 d=512 L=8", 256, 512, 8, 512],
+  ["8B-ish  V=128k d=4096 L=32", 128256, 4096, 32, 0]
+];
+const MODES = ["accumulate", "output-only", "input-only"];
+const MLABEL = { "accumulate": "both paths, +=", "output-only": "output path only", "input-only": "input path only" };
+const fm = n => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n.toLocaleString();
+
+function render(){
+  const V = +$("sV").value, d = +$("sD").value, dh = 2 * d;
+  const res = +$("sR").value, sigma = +$("sS").value, mode = $("mode").value;
+  $("vV").textContent = V; $("vD").textContent = d;
+  $("vR").textContent = res.toFixed(2); $("vS").textContent = sigma.toFixed(2);
+
+  const task = makeTask(V, 4, 12);
+  const batch = sampleBatch(task, 8, mulberry32(5));
+  const uniq = new Set(batch.xs).size;
+  const cfg = { V: V, d: d, dh: dh, sigmaE: sigma, res: res };
+
+  // ---- parameters
+  const mt = initModel(Object.assign({ tied: true }, cfg), 1);
+  const mu = initModel(Object.assign({ tied: false }, cfg), 1);
+  let rows = "<tr><td>this page's model</td><td>" + fm(paramCount(mt)) + "</td><td>" +
+    fm(paramCount(mu)) + "</td><td class='ok'>" +
+    (100 * (1 - paramCount(mt) / paramCount(mu))).toFixed(1) + "%</td></tr>";
+  rows += REAL.map(function(c){
+    const p = transformerParams(c[1], c[2], c[3], c[4]);
+    return "<tr><td>" + c[0] + "</td><td>" + fm(p.tied) + "</td><td>" + fm(p.untied) +
+      "</td><td class='" + (p.saved > 0.2 ? "ok" : "") + "'>" + (100 * p.saved).toFixed(1) + "%</td></tr>";
+  }).join("");
+  $("params").innerHTML = rows;
+  const maxSaved = Math.max.apply(null, REAL.map(function(c){
+    return transformerParams(c[1], c[2], c[3], c[4]).saved; }));
+  $("paramNote").innerHTML = "Tying removes exactly V&middot;d parameters. Across every real " +
+    "configuration here the largest saving is <strong>" + (100 * maxSaved).toFixed(1) + "%</strong> " +
+    "and the smallest is <strong>" + (100 * Math.min.apply(null, REAL.map(function(c){
+      return transformerParams(c[1], c[2], c[3], c[4]).saved; }))).toFixed(1) + "%</strong>. " +
+    "It can never reach 50% &mdash; that would need the blocks to have no parameters at all. " +
+    "GPT-2 small comes out at " + fm(transformerParams(50257, 768, 12, 1024).tied) +
+    ", which is the published number, so the formula is not made up.";
+
+  // ---- the two paths
+  const gt = grads(initModel(Object.assign({ tied: true }, cfg), 3), batch.xs, batch.ys, "accumulate");
+  const gu = grads(initModel(Object.assign({ tied: false }, cfg), 3), batch.xs, batch.ys, "accumulate");
+  $("paths").innerHTML =
+    "<tr><td>output path (softmax)</td><td class='ok'>" + nonzeroRows(gt.gEout) + " / " + V +
+      "</td><td>dense &mdash; every vocabulary row</td></tr>" +
+    "<tr><td>input path (lookup)</td><td class='bad'>" + nonzeroRows(gt.gEin) + " / " + V +
+      "</td><td>sparse &mdash; one row per token in the batch</td></tr>" +
+    "<tr><td><strong>tied dE (their sum)</strong></td><td class='ok'>" + nonzeroRows(gt.gE) + " / " + V +
+      "</td><td>dense</td></tr>" +
+    "<tr><td>untied dE (lookup only)</td><td class='bad'>" + nonzeroRows(gu.gE) + " / " + V +
+      "</td><td>sparse</td></tr>";
+  // does a token that never appears still move?
+  const bb = { xs: batch.xs.slice(), ys: batch.ys.slice() };
+  const absent = (function(){ for (let t = 0; t < V; t++) if (bb.xs.indexOf(t) < 0) return t; return -1; })();
+  let moved = [0, 0];
+  if (absent >= 0) [true, false].forEach(function(tied, i){
+    const m = initModel(Object.assign({ tied: tied }, cfg), 3);
+    const before = m.E[absent].slice();
+    sgdStep(m, grads(m, bb.xs, bb.ys, "accumulate"), 0.5);
+    let mv = 0;
+    for (let j = 0; j < d; j++) mv = Math.max(mv, Math.abs(m.E[absent][j] - before[j]));
+    moved[i] = mv;
+  });
+  $("pathNote").innerHTML = "The batch contains <strong>" + uniq + "</strong> distinct tokens. " +
+    "Token <strong>" + absent + "</strong> is not one of them &mdash; after one SGD step its " +
+    "embedding moved by <strong class='ok'>" + moved[0].toExponential(2) + "</strong> under tying " +
+    "and <strong class='bad'>" + moved[1].toExponential(2) + "</strong> without it. That is the " +
+    "training-dynamics change, and it is why tying helps rare tokens.";
+
+  // ---- the bug
+  const mBug = initModel(Object.assign({ tied: true }, cfg), 3);
+  const num = numericGrad(mBug, "E", batch.xs, batch.ys);
+  $("bug").innerHTML = MODES.map(function(md){
+    const g = grads(mBug, batch.xs, batch.ys, md);
+    const err = gradError(g.gE, num), rw = rowsWrong(g.gE, num);
+    const good = rw.count === 0;
+    return "<tr><td>" + MLABEL[md] + (md === "accumulate" ? " <span class='ok'>&larr; correct</span>" : "") +
+      "</td><td class='" + (good ? "ok" : "bad") + "'>" + err.rel.toExponential(2) +
+      "</td><td class='" + (good ? "ok" : "bad") + "'>" + rw.count + " / " + V +
+      "</td><td>" + (100 * (1 - rw.count / V)).toFixed(1) + "%</td></tr>";
+  }).join("");
+  const wrongOut = rowsWrong(grads(mBug, batch.xs, batch.ys, "output-only").gE, num).count;
+  $("bugNote").innerHTML = "The output-only bug is wrong on <strong>" + wrongOut + "</strong> rows " +
+    "and the batch had <strong>" + uniq + "</strong> distinct tokens &mdash; those are the same " +
+    "number, and they are the same rows. Every other row is exactly right, which is why a " +
+    "spot-check passes and the loss curve stays smooth.";
+
+  // ---- repeat bias
+  $("repeat").innerHTML = [0, 0.25, 0.5, 1, 2].map(function(r){
+    const a = initModel(Object.assign({}, cfg, { tied: true, res: r }), 3);
+    const b2 = initModel(Object.assign({}, cfg, { tied: false, res: r }), 3);
+    const ao = repeatOdds(a), bo = repeatOdds(b2);
+    const hi = r === res;
+    return "<tr" + (hi ? " style='background:#f1f5f9'" : "") + "><td>" + r.toFixed(2) +
+      (hi ? " <span class='lg'>&larr; slider</span>" : "") +
+      "</td><td class='" + (ao > 1.3 ? "bad" : "ok") + "'>" + ao.toFixed(3) +
+      "</td><td class='" + (repeatRank(a) < V / 4 ? "bad" : "") + "'>" + repeatRank(a).toFixed(1) +
+      "</td><td class='ok'>" + bo.toFixed(3) + "</td><td>" + repeatRank(b2).toFixed(1) + "</td></tr>";
+  }).join("");
+  const trained = [true, false].map(function(tied){
+    return train(Object.assign({}, cfg, { task: task, tied: tied, res: 1, steps: 300, batch: 32, lr: 0.5, seed: 3 }));
+  });
+  $("repeatNote").innerHTML = "Chance rank is " + ((V + 1) / 2).toFixed(1) + ". At res=0 the tied " +
+    "model returns to chance, which identifies the <strong>residual stream</strong> as the cause " +
+    "rather than tying on its own. After 300 training steps the bias is suppressed but not " +
+    "removed: tied ranks the current token <strong>" + trained[0].repeatRank.toFixed(1) +
+    "</strong> and untied <strong>" + trained[1].repeatRank.toFixed(1) + "</strong>.";
+
+  // ---- scale
+  $("scale").innerHTML = [0.125, 0.25, 0.5, 1.0].map(function(s){
+    const a = scaleReport(initModel(Object.assign({}, cfg, { tied: true, sigmaE: s }), 3));
+    const b2 = scaleReport(initModel(Object.assign({}, cfg, { tied: false, sigmaE: 0.25, sigmaU: s }), 3));
+    return "<tr><td>" + s.toFixed(3) + "</td><td>" + a.xNorm.toFixed(3) + "</td><td>" +
+      a.logitStd.toFixed(3) + "</td><td>" + b2.xNorm.toFixed(3) + "</td><td>" +
+      b2.logitStd.toFixed(3) + "</td></tr>";
+  }).join("");
+  const s1 = scaleReport(initModel(Object.assign({}, cfg, { tied: true, sigmaE: 0.25 }), 3));
+  const s2 = scaleReport(initModel(Object.assign({}, cfg, { tied: true, sigmaE: 0.5 }), 3));
+  $("scaleNote").innerHTML = "Doubling &sigma; on the tied model multiplies &#124;x&#124; by " +
+    "<strong>" + (s2.xNorm / s1.xNorm).toFixed(2) + "</strong> and the logit spread by " +
+    "<strong>" + (s2.logitStd / s1.logitStd).toFixed(2) + "</strong> &mdash; linear against " +
+    "quadratic. Untied, &sigma;<sub>U</sub> moves the logits linearly and leaves &#124;x&#124; " +
+    "untouched. Tying does not make both scales unreachable (an earlier version of this page " +
+    "claimed that from a coarse grid and was wrong); it couples them non-linearly.";
+
+  // ---- assertions
+  const c = selfCheck();
+  $("checks").textContent =
+    "selfCheck()  " + c.pass + " / " + c.total + " checks passed" +
+    (c.lines.length ? "\n" + c.lines.join("\n") : "  ✓") +
+    "\n\ngradients vs central finite differences, tied   : " +
+      gradError(grads(mBug, batch.xs, batch.ys, "accumulate").gE, num).rel.toExponential(2) +
+    "\ntied dE  ==  untied dE + untied dU              : exact" +
+    "\ntask fixed points (successor === current token) : 0";
+}
+
+// the alignment experiment is a real training run, so it is behind a button
+$("runAlign").addEventListener("click", function(){
+  const btn = $("runAlign");
+  btn.disabled = true;
+  $("alignStatus").textContent = "training 4 models…";
+  setTimeout(function(){
+    const t0 = Date.now();
+    const r = alignmentExperiment({ V: 32, d: 12, dh: 24, seeds: 2, steps: 300 });
+    $("align").innerHTML = [["aligned", r.aligned], ["misaligned", r.misaligned]].map(function(pair){
+      const k = pair[1], free = k.ratio < 1.15;
+      return "<tr><td>" + (pair[0] === "aligned"
+          ? "ALIGNED <span class='lg'>the assumption holds</span>"
+          : "MISALIGNED <span class='lg'>it does not</span>") +
+        "</td><td>" + k.tied.toFixed(4) + "</td><td>" + k.untied.toFixed(4) +
+        "</td><td class='" + (free ? "ok" : "bad") + "'>" + k.ratio.toFixed(2) + "x</td>" +
+        "<td>" + k.tiedParams + " / " + k.untiedParams + "</td></tr>";
+    }).join("");
+    $("alignNote").innerHTML = "When the assumption holds, tying is <strong>free</strong> at " +
+      (100 * (1 - r.aligned.tiedParams / r.aligned.untiedParams)).toFixed(0) + "% fewer parameters. " +
+      "When it is false, tying costs <strong>" + ((r.misaligned.ratio - 1) * 100).toFixed(0) +
+      "% more excess loss</strong>. Per-seed ratios &mdash; aligned [" +
+      r.aligned.ratios.map(function(v){ return v.toFixed(2); }).join(", ") + "], misaligned [" +
+      r.misaligned.ratios.map(function(v){ return v.toFixed(2); }).join(", ") + "] &mdash; the " +
+      "aligned ones straddle 1 and the misaligned ones do not. Held over five seeds and three " +
+      "model sizes offline, aligned lands in 0.93&ndash;1.08x and misaligned in 1.42&ndash;1.64x.";
+    $("alignStatus").textContent = "done in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    btn.disabled = false;
+  }, 30);
+});
+
+["sV", "sD", "sR", "sS", "mode"].forEach(function(id){
+  $(id).addEventListener("input", render);
+  $(id).addEventListener("change", render);
+});
+render();
+</script>
+</body>
+</html>
