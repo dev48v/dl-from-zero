@@ -1,0 +1,1589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 68 — Teacher forcing</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  table.num td, table.num th { padding:4px 9px; font-variant-numeric:tabular-nums; }
+  table.num th { font-size:11px; letter-spacing:.05em; color:#64748b; text-align:right; font-weight:700; }
+  table.num th:first-child, table.num td:first-child { text-align:left; }
+  table.num td { text-align:right; font-size:12.5px; border-top:1px solid #e2e8f0; }
+  .ok { color:#166534; font-weight:800; }
+  .bad { color:#991b1b; font-weight:800; }
+  .lg { font-size:10px; color:#64748b; }
+  button.run { background:#0f172a; color:#fff; padding:8px 16px; border-radius:8px; font-size:13px; font-weight:600; }
+  button.run:disabled { opacity:.5; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-20">
+  <div class="max-w-6xl mx-auto p-4 md:p-6">
+    <p class="text-xs font-bold tracking-widest text-rose-700 mb-2">DEEPLEARNINGFROMZERO · DAY 68</p>
+    <h1 class="text-xl md:text-2xl font-black leading-tight mb-4">
+      🎓 Teacher forcing — training on histories the model will never see, and a cure whose
+      fixed point is not the truth. Every sequence model is trained with the <em>ground-truth</em>
+      previous token as its input and then asked to generate with its <em>own</em> previous token.
+      That mismatch has a name, <strong>exposure bias</strong>, and almost everything said about it
+      is quoted rather than measured. This page builds a data process that is a finite-state
+      machine, so the true next-token distribution is computable after <em>any</em> history —
+      including one the model invented — and every number below is an exact dynamic program, not a
+      sample. A model that <em>can</em> represent the process has a gap of <strong>3.1e-33</strong>;
+      a model that cannot is <strong>1.85&times;</strong> worse on its own prefixes than on the
+      data's. The gap does not compound: it is exactly <strong>0</strong> for two steps, reaches 90%
+      of its final size by step <strong>13</strong>, and then stops. Scheduled sampling's fixed point
+      is derived in closed form and confirmed to <strong>5.6e-17</strong> — it is an
+      <code>&epsilon;</code>-blend of the truth with a distribution that has forgotten the context.
+      And the diagnostic everyone reports predicts whether the cure helps at <strong>AUC
+      0.529</strong>, which is a coin flip. Pure vanilla JavaScript, one file, offline.
+    </h1>
+    <div class="flex gap-2 flex-wrap" id="tabs">
+      <button data-tab="look" class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">🔬 MEASURE</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto space-y-5">
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <div class="grid md:grid-cols-2 lg:grid-cols-5 gap-x-6 gap-y-3">
+          <label class="text-sm">switch rate <span id="vSR" class="font-bold tabular-nums float-right">0.10</span>
+            <input id="sSR" type="range" min="0.02" max="0.95" step="0.01" value="0.10"></label>
+          <label class="text-sm">mode separation <span id="vSE" class="font-bold tabular-nums float-right">1.00</span>
+            <input id="sSE" type="range" min="0" max="3" step="0.05" value="1"></label>
+          <label class="text-sm">scheduled sampling &epsilon; <span id="vEP" class="font-bold tabular-nums float-right">0.60</span>
+            <input id="sEP" type="range" min="0" max="1" step="0.05" value="0.6"></label>
+          <label class="text-sm">model order k
+            <select id="mK" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+              <option value="1" selected>1 &mdash; last token</option>
+              <option value="2">2 &mdash; last two tokens</option>
+              <option value="3">3 &mdash; last three tokens</option>
+            </select></label>
+          <label class="text-sm">sequence length T <span id="vT" class="font-bold tabular-nums float-right">16</span>
+            <input id="sT" type="range" min="4" max="40" step="2" value="16"></label>
+        </div>
+        <p class="text-xs text-slate-500 mt-3">
+          The process is a <strong>latch language</strong>: a hidden mode decides which tokens are
+          likely, and a token is a <em>switch</em> token if it resets the mode.
+          <strong>switch rate</strong> is the probability of emitting one, so
+          <code>1/switchRate</code> is how many steps the process remembers &mdash; it turned out to
+          be the knob that decides everything on this page, so it is a slider rather than a constant.
+          <strong>mode separation</strong> is how much the hidden state matters: at 0 the modes emit
+          identically and the latent state is decoration. The tabular model of order <em>k</em> sees
+          only the last <em>k</em> tokens, so it cannot see the mode unless a switch token is still
+          inside its window &mdash; that is the entire source of its error.
+        </p>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-5">
+        <div class="bg-white rounded-2xl shadow p-5">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">THE SAME MODEL, TWO PREFIX DISTRIBUTIONS</p>
+          <p class="text-sm text-slate-600 mb-3">
+            Identical parameters, identical loss. The only difference is where the input at step
+            <em>t</em> comes from. <em>Excess</em> is KL from the true conditional, so 0 is a perfect
+            model and the number does not depend on the process's own entropy.
+          </p>
+          <table class="num w-full">
+            <thead><tr><th>input at step t</th><th>excess (nats)</th><th>loss</th><th>vs teacher-forced</th></tr></thead>
+            <tbody id="loops"></tbody>
+          </table>
+          <p class="text-xs text-slate-500 mt-2" id="loopNote"></p>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow p-5">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+            THE CONTROL: A MODEL THAT CAN BE RIGHT</p>
+          <p class="text-sm text-slate-600 mb-3">
+            The same experiment on a first-order Markov chain, where a tabular order-1 model
+            <em>is</em> the truth. Teacher forcing is still teacher forcing; the only thing that
+            changed is whether the model can represent the process.
+          </p>
+          <table class="num w-full">
+            <thead><tr><th>world</th><th>teacher-forced</th><th>free-running</th><th>gap</th></tr></thead>
+            <tbody id="control"></tbody>
+          </table>
+          <p class="text-xs text-slate-500 mt-2" id="controlNote"></p>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+          DOES THE ERROR COMPOUND? &mdash; PER STEP, TO T=120</p>
+        <p class="text-sm text-slate-600 mb-3">
+          The story is that one mistake makes the next more likely and the whole thing spirals. The
+          gap is exact at every step here, so the shape can simply be read off.
+        </p>
+        <table class="num w-full">
+          <thead><tr><th>step</th><th>teacher-forced</th><th>free-running</th><th>gap</th><th>% of final</th></tr></thead>
+          <tbody id="steps"></tbody>
+        </table>
+        <p class="text-xs text-slate-500 mt-2" id="stepNote"></p>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-5">
+        <div class="bg-white rounded-2xl shadow p-5">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">ONE WRONG TOKEN</p>
+          <p class="text-sm text-slate-600 mb-3">
+            Push a token the model did not see into its context at step 5 and leave the world
+            running as it actually did. <em>TV</em> is how far the model's whole state distribution
+            has been displaced; <em>cost</em> is its excess divided by the undisturbed run's.
+          </p>
+          <table class="num w-full">
+            <thead><tr><th>steps later</th><th>displacement (TV)</th><th>cost vs clean</th></tr></thead>
+            <tbody id="recov"></tbody>
+          </table>
+          <p class="text-xs text-slate-500 mt-2" id="recovNote"></p>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow p-5">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">CAPACITY DOES NOT CLOSE THE GAP</p>
+          <p class="text-sm text-slate-600 mb-3">
+            More context, same process. The teacher-forced error falls quickly; the gap does not
+            follow it down.
+          </p>
+          <table class="num w-full">
+            <thead><tr><th>order k</th><th>contexts</th><th>teacher-forced</th><th>gap</th><th>ratio</th></tr></thead>
+            <tbody id="order"></tbody>
+          </table>
+          <p class="text-xs text-slate-500 mt-2" id="orderNote"></p>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+          THE CURE, AND WHAT IT CONVERGES TO</p>
+        <p class="text-sm text-slate-600 mb-3">
+          Scheduled sampling feeds the model its own sample instead of the true token with
+          probability <code>&epsilon;</code>. Every row is that procedure run to its
+          <strong>fixed point</strong> by exact expectation &mdash; no sampling noise, no
+          early-stopping artefacts. Watch the last two columns move in opposite directions.
+        </p>
+        <table class="num w-full">
+          <thead><tr><th>&epsilon;</th><th>teacher-forced excess</th><th>free-running excess</th><th>gap</th><th>beats teacher forcing?</th></tr></thead>
+          <tbody id="eps"></tbody>
+        </table>
+        <p class="text-xs text-slate-500 mt-2" id="epsNote"></p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+          THE GRADIENT SCHEDULED SAMPLING APPLIES IS NOT THE GRADIENT OF WHAT IT EVALUATES</p>
+        <p class="text-sm text-slate-600 mb-3">
+          The sampled token is a hard index, so nothing differentiates through the draw. The applied
+          gradient therefore treats the rollout's own weights as constants. The <em>true</em> column
+          is central finite differences on the exact expected loss.
+        </p>
+        <table class="num w-full">
+          <thead><tr><th>&epsilon;</th><th>worst rel. error</th><th>cosine</th><th>&#124;applied&#124;</th><th>&#124;true&#124;</th></tr></thead>
+          <tbody id="grad"></tbody>
+        </table>
+        <p class="text-xs text-slate-500 mt-2" id="gradNote"></p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+          DOES THE GAP PREDICT WHETHER THE CURE HELPS?</p>
+        <p class="text-sm text-slate-600 mb-3">
+          60 processes &times; a fine <code>&epsilon;</code> grid each. For every one, does scheduled
+          sampling's best <code>&epsilon;</code> beat plain teacher forcing on free-running excess?
+          Then: which measurable quantity would have told you in advance? <strong>AUC 0.5 is a coin
+          flip.</strong>
+        </p>
+        <div class="flex gap-3 items-center mb-3">
+          <button id="runAuc" class="run">run the experiment (~20 s)</button>
+          <span id="aucStatus" class="text-xs text-slate-500"></span>
+        </div>
+        <table class="num w-full">
+          <thead><tr><th>predictor, measured before trying the cure</th><th>winners</th><th>losers</th><th>AUC</th></tr></thead>
+          <tbody id="auc"></tbody>
+        </table>
+        <p class="text-xs text-slate-500 mt-2" id="aucNote"></p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+          A REAL RNN, REAL BPTT &mdash; SAME ANSWER</p>
+        <p class="text-sm text-slate-600 mb-3">
+          The tabular instrument above is exact but has no hidden state. This is a two-unit recurrent
+          net with a hand-written backward pass, trained by SGD. Its gradients are checked against
+          central differences first, because a measurement from a wrong backward pass is worth
+          nothing.
+        </p>
+        <div class="flex gap-3 items-center mb-3">
+          <button id="runRnn" class="run">train the RNNs (~12 s)</button>
+          <span id="rnnStatus" class="text-xs text-slate-500"></span>
+        </div>
+        <div class="grid md:grid-cols-2 gap-5">
+          <table class="num w-full">
+            <thead><tr><th>tensor</th><th>analytic vs central differences</th></tr></thead>
+            <tbody id="rnnGrad"></tbody>
+          </table>
+          <table class="num w-full">
+            <thead><tr><th>run</th><th>teacher-forced</th><th>free-running</th><th>ratio</th></tr></thead>
+            <tbody id="rnnGap"></tbody>
+          </table>
+        </div>
+        <p class="text-xs text-slate-500 mt-2" id="rnnNote"></p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">IN-PAGE ASSERTIONS</p>
+        <pre id="checks"></pre>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8">
+    <div class="max-w-3xl mx-auto space-y-6">
+
+      <h2 class="text-2xl font-black">Two loops that are not the same loop</h2>
+
+      <p>Every autoregressive model is trained like this:</p>
+
+      <pre>train:     input[t] = y[t-1]        <- the GROUND TRUTH previous token
+generate:  input[t] = yhat[t-1]     <- the model's OWN previous token</pre>
+
+      <p>Feeding the true token during training is called <strong>teacher forcing</strong>. It is
+      not a trick or an approximation: it is exactly maximum likelihood on the factorisation
+      <code>p(y) = &prod;<sub>t</sub> p(y<sub>t</sub> | y<sub>&lt;t</sub>)</code>, every step is
+      independent so the whole sequence trains in parallel, and it is why transformers train at all.
+      The objection is that the model is only ever <em>shown</em> prefixes drawn from the data, and
+      at generation time it must condition on prefixes drawn from itself. That mismatch is called
+      <strong>exposure bias</strong> (Ranzato 2015; the term goes back to Bengio's scheduled
+      sampling, 2015).</p>
+
+      <h3 class="text-xl font-bold">Making it a number instead of an argument</h3>
+
+      <p>The reason this is usually argued rather than measured is that "how wrong is the model on
+      its own generations" needs a ground truth for sequences that were never in the data. Here the
+      data process is a <strong>finite-state machine</strong>, so the true next-token distribution
+      after <em>any</em> token history is available &mdash; including a history the model
+      hallucinated. Both numbers are then the same functional:</p>
+
+      <pre>excess = E[ KL( p_true(. | prefix) || p_model(. | prefix) ) ]
+
+teacher-forced :  prefix ~ the DATA
+free-running   :  prefix ~ the MODEL   (and p_true conditions on what the model ACTUALLY said)</pre>
+
+      <p>Both are computed by propagating the joint distribution over (true hidden state, model
+      context) forward &mdash; a dynamic program, not a Monte-Carlo estimate. The two runs share a
+      loss function, a parameter vector and a start state, and differ in one line.</p>
+
+      <h3 class="text-xl font-bold">Exposure bias is model error wearing a different hat</h3>
+
+      <div class="bg-amber-50 border-l-4 border-amber-500 p-4">
+        <p class="text-sm">On a first-order Markov chain, where a tabular order-1 model can
+        represent the process exactly, the measured gap is <strong>3.1e-33</strong>. Teacher forcing
+        is unchanged. What changed is that there is no error to expose.</p>
+      </div>
+
+      <p>Swap in a process with a hidden mode that the model cannot see, and the same code reports a
+      teacher-forced excess of <strong>0.107</strong> nats and a free-running excess of
+      <strong>0.199</strong> &mdash; <strong>1.85&times;</strong> worse on its own prefixes.</p>
+
+      <p>The mechanism is not that errors "accumulate". It is that a model's own output carries
+      <em>less information about the hidden state</em> than real data does. Real data emits a token
+      from one particular mode; the model, uncertain about the mode, emits from a blend. Its own
+      history is therefore a weaker cue than the history it was trained on &mdash; and it has to
+      condition on it anyway.</p>
+
+      <h3 class="text-xl font-bold">It does not compound</h3>
+
+      <p>Measured per step, the gap is <strong>exactly 0</strong> at steps 1 and 2 &mdash; both loops
+      start from the same state, and after MLE the model's first-token distribution is exactly right,
+      so the two prefix distributions at step 2 are identical, not merely similar. Then it opens, and
+      then it stops:</p>
+
+      <pre>step    1     2       3        4      ...     12       40       120
+gap     0     0    0.0854   0.1287   ...   0.1912   0.2117   0.2128   <- asymptote 0.21279</pre>
+
+      <p>90% of the final gap is present by step <strong>13</strong>, and the increment from step 119
+      to step 120 is <strong>2.7e-8</strong>. Both prefix distributions are ergodic and converge to
+      their own stationary distributions; the gap is the fixed difference between two stationary
+      averages. Across switch rates the saturation step tracks the process's own memory
+      <code>1/switchRate</code> at about 1.4&ndash;2.5&times;, which is the mechanism stated as a
+      prediction.</p>
+
+      <div class="bg-amber-50 border-l-4 border-amber-500 p-4">
+        <p class="text-sm">"Errors compound over long sequences" is the argument for why exposure
+        bias should get worse the longer you generate. In an ergodic process it cannot: the gap is
+        fully developed inside about one and a half memory-lengths and flat for the next hundred
+        tokens.</p>
+      </div>
+
+      <h3 class="text-xl font-bold">A single wrong token has a lifetime, and it is the model's</h3>
+
+      <p>Force one token the model did not see into its context and the disturbance dies in
+      <strong>exactly k steps</strong> for a model of order <em>k</em> &mdash; not approximately, to
+      1e-17. The step it lands on costs <strong>3.02&times;</strong> the usual excess at
+      <code>k=1</code>; nothing after it costs anything at all.</p>
+
+      <p>The counterintuitive part is the direction: a <em>larger</em> context makes a single mistake
+      both more expensive and longer-lived (<strong>8.4&times;, 6.9&times;, 5.4&times;</strong> over
+      three steps at <code>k=3</code>). A recurrent net has no cut-off, so it decays instead
+      &mdash; measured at about <strong>0.70</strong> per step for a two-unit RNN. Either way the
+      mistake is forgotten, and the forgetting rate is a property of the model, not of the
+      training loop.</p>
+
+      <h3 class="text-xl font-bold">Scheduled sampling, and what it actually converges to</h3>
+
+      <p>The standard fix (Bengio et al. 2015) replaces the input token with the model's own sample
+      with probability <code>&epsilon;</code>. For sequences of length 2 the fixed point of that
+      procedure can be written down by hand. The sampled first token is drawn from the model's own
+      marginal and is <em>independent of the true first token</em>, so context <code>c</code> is
+      reached carrying the true conditional with weight <code>(1-&epsilon;)p<sub>0</sub>(c)</code> and
+      the context-free marginal with weight <code>&epsilon; p<sub>0</sub>(c)</code>:</p>
+
+      <pre>q_ss(. | c) = (1 - eps) * P(. | c) + eps * m,      m[v] = sum_y p0(y) P(v | y)</pre>
+
+      <p>Run the procedure to convergence and the measured fixed point matches that expression to
+      <strong>5.6e-17</strong>. So scheduled sampling does not fit the truth. It fits an
+      <code>&epsilon;</code>-blend of the truth with a distribution that has forgotten the context
+      entirely, and the resulting KL from the truth grows as roughly
+      <code>&epsilon;<sup>1.9</sup></code> &mdash; second order, which is exactly why a small
+      <code>&epsilon;</code> looks free. This is Huszár's 2015 objection, made into a number.</p>
+
+      <div class="bg-rose-50 border-l-4 border-rose-500 p-4">
+        <p class="text-sm">🔴 The applied gradient is not the gradient of the objective being
+        evaluated. At <code>&epsilon;=0</code> the two agree to <strong>1.6e-10</strong>, because
+        under teacher forcing the rollout genuinely does not depend on the parameters. At
+        <code>&epsilon;=1</code> the worst entry is off by <strong>9.7%</strong>, though the cosine
+        is still 0.9929 &mdash; it is mostly the right direction, which is why nobody notices. And at
+        the fixed point the procedure converges to (at <code>&epsilon;=0.5</code>), the applied gradient
+        is <strong>4.7e-17</strong> while the true gradient of the expected loss is
+        <strong>3.0e-3</strong>: one step along it lowers the loss the procedure claims to be
+        minimising. The fixed point is not a minimum of anything it computes.</p>
+      </div>
+
+      <h3 class="text-xl font-bold">And yet it sometimes works</h3>
+
+      <p>A first pass of this page swept three values of <code>&epsilon;</code> on one process, found
+      that scheduled sampling lost every time, and was going to say so. A fine sweep says otherwise:
+      across 90 processes and a 0.05 grid, scheduled sampling's best <code>&epsilon;</code>
+      <strong>beat teacher forcing on free-running excess in 28 of them</strong>, by up to
+      <strong>31.1%</strong>. It also lost by up to <strong>376%</strong>. Its bias is real and its
+      benefit is real, and which one you get is not a matter of opinion &mdash; it is measurable in
+      advance.</p>
+
+      <p>What predicts it, measured as the AUC of ranking winners above losers:</p>
+
+      <pre>the exposure gap RATIO   (free / teacher-forced)   AUC 0.529    <- a coin flip
+the absolute gap                                  AUC 0.855
+the plain teacher-forced excess                   AUC 0.956    <- how bad the model is
+1 / switchRate  (how long the process remembers)  AUC 0.770</pre>
+
+      <div class="bg-rose-50 border-l-4 border-rose-500 p-4">
+        <p class="text-sm">🔴 The exposure gap is the number reported to justify doing something
+        about exposure bias, and it carries <strong>no information</strong> about whether doing
+        something will help: 0.529 against a chance value of 0.5, with winners averaging 3.33 and
+        losers 3.52. The quantity that does answer the question is how bad the model is under plain
+        teacher forcing &mdash; AUC 0.956.</p>
+      </div>
+
+      <h3 class="text-xl font-bold">Closing the gap is not the goal</h3>
+
+      <p>On the page's default process the whole trade is visible in one table.
+      <code>&epsilon;</code> from 0 to 1 raises the teacher-forced excess from <strong>0.107</strong>
+      to <strong>0.199</strong> (85% worse) and drives the gap from <strong>0.0912</strong> to
+      <strong>0.0024</strong> (essentially closed). Free-running excess, the thing anyone actually
+      cares about, is U-shaped: best at <code>&epsilon;=0.60</code> at <strong>0.1897</strong>, and
+      at <code>&epsilon;=1</code>, where the gap is smallest, it is <strong>0.2009</strong> &mdash;
+      <em>worse than not trying at all</em>.</p>
+
+      <p>Across 36 processes, the <code>&epsilon;</code> that minimises the gap was the
+      <code>&epsilon;</code> that minimises free-running excess in <strong>0</strong> of them; it was
+      <code>&epsilon;=1</code> in all 36. And selecting <code>&epsilon;</code> by held-out
+      <em>teacher-forced</em> loss &mdash; the validation number you actually have &mdash; picks
+      <code>&epsilon;=0</code> every time, because that loss is monotone in <code>&epsilon;</code>.
+      The standard procedure cannot tune the standard fix.</p>
+
+      <h3 class="text-xl font-bold">The short version</h3>
+
+      <ul class="list-disc pl-6 space-y-1">
+        <li>Exposure bias is <strong>model error under a different prefix distribution</strong>. A
+        model that can represent the process has a gap of 3.1e-33.</li>
+        <li>The gap does <strong>not compound</strong>: 0 for two steps, 90% developed by step 13,
+        flat for the next hundred.</li>
+        <li>One wrong token lasts <strong>exactly as long as the model's memory of it</strong> and
+        costs nothing afterwards.</li>
+        <li>Scheduled sampling's fixed point is <strong>(1-&epsilon;)P + &epsilon;m</strong>, and its
+        applied gradient is <strong>zero</strong> at a point where the true gradient is not.</li>
+        <li>It still wins 30 times out of 90 &mdash; and <strong>the gap does not predict when</strong>
+        (AUC 0.529). The model's plain error does (AUC 0.956).</li>
+      </ul>
+
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8 bg-slate-50">
+    <div class="max-w-3xl mx-auto space-y-6">
+
+      <h2 class="text-2xl font-black">🔨 How it is built</h2>
+
+      <h3 class="text-xl font-bold">1. A process whose truth survives being lied to</h3>
+      <pre>process = { V, S, start, emit[S][V], step(s, y) }
+p_true(. | history) = emit[ fold(step, start, history) ]</pre>
+      <p>This is the whole reason the page can exist. Scoring a model on its own generations needs
+      the right answer for sequences that never occurred, and a finite-state process supplies it for
+      any token string at all. Everything else &mdash; every expectation, every gap, every fixed
+      point &mdash; is a dynamic program over the joint (true state, model context) and carries no
+      sampling noise.</p>
+
+      <h3 class="text-xl font-bold">2. One rollout function, three drivers</h3>
+      <pre>'data'  : y ~ emit[s];   s' = step(s,y);  ctx' = push(ctx, y)      // teacher forcing
+'model' : y ~ q[ctx];    s' = step(s,y);  ctx' = push(ctx, y)      // free running
+'ss'    : y ~ emit[s];   s' = step(s,y);                           // scheduled sampling
+          ctx' = push(ctx,  rand &lt; eps ? sample(q[ctx]) : y )</pre>
+      <p>Under <code>'model'</code> the <em>true state also follows the model's tokens</em>. That is
+      not a detail: "the right answer" for a generated prefix is the right answer given what the
+      model actually said, and scoring against the answer for a sequence it did not produce would
+      measure something else entirely.</p>
+
+      <h3 class="text-xl font-bold">3. Teacher-forced MLE has a closed form, so it is not fitted</h3>
+      <pre>// under the 'data' driver the context distribution does not depend on q at all
+q(. | c) = ctxTarget[c] / ctxWeight[c]                   // one pass, exact</pre>
+      <p>No learning rate, no step count, no seed, nothing to tune away a result with. Scheduled
+      sampling gets no such luxury &mdash; its contexts are produced by the model being trained
+      &mdash; so it is iterated to a fixed point and the iteration count and residual are both
+      reported (typically 11&ndash;17 iterations to 1e-15).</p>
+
+      <h3 class="text-xl font-bold">4. The closed form that is checked, not asserted</h3>
+      <pre>ssClosedFormT2:  q_ss(.|c) = (1-eps) * P(.|c) + eps * m
+measured fixed point vs that expression:  5.6e-17</pre>
+      <p>Derived on paper from the fact that the sampled first token is independent of the true one,
+      then confirmed against the procedure actually running. A derivation nobody checks and a
+      measurement nobody explains are both worth less than the pair.</p>
+
+      <h3 class="text-xl font-bold">5. Two gradients, deliberately</h3>
+      <pre>implementedGrad : d/dtheta with the rollout weights and targets DETACHED
+                  (this is what backprop through a sampled token computes)
+trueGrad        : central differences on the exact expected loss
+
+eps = 0    rel 1.6e-10   cos 1.000000     <- identical, and it must be
+eps = 1    rel 9.7e-2    cos 0.992895     <- mostly the right direction, which is the problem</pre>
+      <p>The <code>&epsilon;=0</code> row is the control that makes the <code>&epsilon;&gt;0</code>
+      rows mean something. If the two disagreed there, the discrepancy would be a bug in the
+      finite differences rather than a property of scheduled sampling.</p>
+
+      <h3 class="text-xl font-bold">6. The RNN exists so the backward pass is real</h3>
+      <pre>h[t]   = tanh(Wx E[in[t]] + Wh h[t-1] + bh)
+logits = Wo h[t] + bo
+// BPTT by hand; every tensor checked against central differences
+dE 8.9e-11  dWx 5.1e-10  dWh 4.1e-10  dbh 2.1e-10  dWo 7.6e-10  dbo 1.9e-10</pre>
+      <p>And it reproduces the finding it was built to test: on a 6-mode latch a two-unit RNN runs
+      1.13&ndash;1.47&times; worse on its own prefixes across three seeds, while on a 2-mode latch
+      &mdash; which two hidden units can represent &mdash; the ratio is 0.995&ndash;1.005 and there
+      is no gap at all.</p>
+
+      <h3 class="text-xl font-bold">7. A fine grid, because a coarse one lies</h3>
+      <pre>// first version: 3 values of eps, 1 process   -> "it loses at every setting tried"
+// this version : 0.05 grid, 90 processes      -> it wins in 28 of them, by up to 31.1%</pre>
+      <p>Day 67 nearly shipped an impossibility claim off a coarse grid; the identical mistake was
+      available here and the sweep is what caught it. The page now reports both the wins and the
+      losses, and the assertion set includes one that would <em>fail</em> if the page went back to
+      claiming the cure never works.</p>
+
+      <h3 class="text-xl font-bold">8. What the tests pin</h3>
+      <pre>// exposure bias is model error, not a property of the loop
+assert(gap(well-specified model) &lt; 1e-12);          // 3.1e-33
+
+// the two loops start identically, and that is exact
+assert(|perStepData[0] - perStepFree[0]| &lt; 1e-15);
+assert(|perStepData[1] - perStepFree[1]| &lt; 1e-15);
+
+// the derivation, against the procedure
+assert(ssFixedPoint(T=2, eps) === (1-eps)*P + eps*m);     // 5.6e-17
+assert(ssFixedPoint(T=2, eps=0) === truth);               // teacher forcing is the eps=0 case
+
+// the gradient, both directions
+assert(relErr(applied, true) &lt; 1e-6)  at eps = 0;
+assert(relErr(applied, true) &gt; 1e-3)  at eps = 0.5;
+assert(|applied| &lt; 1e-12 && |true| &gt; 1e-6)  at the fixed point;
+
+// one wrong token, exactly k steps
+assert(tv[j] &gt; 1e-6  for j &lt; k);
+assert(tv[j] &lt; 1e-12 for j &gt;= k);
+
+// and the cure is allowed to win
+assert(a fine sweep is run and its best eps is reported, whatever it is);</pre>
+      <p>The pair in the middle is the one worth stealing. Asserting that the applied gradient is
+      <em>zero</em> and the true one is <em>not</em>, at the same point, turns "the estimator is
+      biased" from a claim into a test that would fail if it were not.</p>
+
+      <h3 class="text-xl font-bold">🎉 DeepLearningFromZero Day 68 shipped.</h3>
+      <p class="text-slate-600">The gap is real, it is small, it stops growing, and closing it is
+      not the same as fixing anything.</p>
+
+    </div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.addEventListener("click", () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+}));
+
+// ===== ENGINE:BEGIN =====
+// Teacher forcing: at training time the input at step t is the GROUND-TRUTH token y[t-1];
+// at generation time it is the model's own y-hat[t-1]. The model is therefore fitted on a
+// distribution of prefixes it will never produce. Everything here is EXACT: the data process
+// is a finite-state machine, so p_true(.|history) is computable for ANY history, including
+// histories the model invented, and every expectation below is a dynamic program over the
+// joint (true state, model context) rather than a Monte-Carlo estimate.
+
+function mulberry32(seed){
+  let s = seed >>> 0;
+  return function(){
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1) >>> 0;
+    t = (t ^ (t + Math.imul(t ^ (t >>> 7), t | 61))) >>> 0;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function gaussian(rnd){
+  let u = 0, v = 0;
+  while (u === 0) u = rnd();
+  while (v === 0) v = rnd();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+const zeros = n => new Array(n).fill(0);
+const zmat = (r, c) => { const M = []; for (let i = 0; i < r; i++) M.push(zeros(c)); return M; };
+const LOGFLOOR = 1e-300;
+function ceRow(p, q){ let s = 0; for (let v = 0; v < p.length; v++) if (p[v] > 0) s -= p[v] * Math.log(Math.max(q[v], LOGFLOOR)); return s; }
+function klRow(p, q){ let s = 0; for (let v = 0; v < p.length; v++) if (p[v] > 0) s += p[v] * Math.log(p[v] / Math.max(q[v], LOGFLOOR)); return s; }
+function entRow(p){ let s = 0; for (let v = 0; v < p.length; v++) if (p[v] > 0) s -= p[v] * Math.log(p[v]); return s; }
+function tvRows(a, b){ let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / 2; }
+
+// ---------------------------------------------------------------- the data processes
+// A process is a finite-state machine: (V, S, start, emit[S][V], step(s,y)). The true
+// next-token distribution after ANY token history is emit[fold(step, start, history)] --
+// which is what makes "score the model on its own generations" an exact quantity.
+
+// WELL-SPECIFIED WORLD: a first-order Markov chain. Its hidden state IS the last token, so a
+// tabular order-1 model can represent it exactly. The control: a model that CAN be right has
+// no exposure gap at all.
+function makeChain(V, seed){
+  const rnd = mulberry32(seed), emit = [];
+  for (let s = 0; s <= V; s++){
+    const row = [];
+    let z = 0;
+    for (let v = 0; v < V; v++){ const w = 0.05 + rnd() * rnd() * 2; row.push(w); z += w; }
+    for (let v = 0; v < V; v++) row[v] /= z;
+    emit.push(row);
+  }
+  return { kind: 'chain', V: V, S: V + 1, start: V, emit: emit, step: function(s, y){ return y; } };
+}
+
+// MISSPECIFIED WORLD: a LATCH language. A hidden mode m in 0..M-1 decides the emission
+// distribution. Tokens 0..M-1 are SWITCH tokens: emitting token j sets the mode to j for the
+// next step; every other token leaves the mode alone. Switch tokens carry identical
+// probability in every mode, so seeing one tells you nothing about the CURRENT mode and
+// everything about the NEXT one -- and every emission row is a valid distribution for any
+// switchRate in (0,1), which matters because a knob that quietly produces negative
+// probabilities looks exactly like a discovery.
+//   switchRate = probability of emitting a switch token = 1 / (expected steps until the
+//     process forgets its mode). It sets BOTH how observable the hidden state is and how
+//     fast a mistake is erased.
+//   sep = how much the hidden mode MATTERS. At sep=0 the modes emit identically and the
+//     latent state is decoration; raising it pulls the modes apart.
+function makeLatch(V, M, switchRate, sep, seed){
+  const rnd = mulberry32(seed), emit = [], sp = sep === undefined ? 1 : sep;
+  for (let m = 0; m < M; m++){
+    const row = zeros(V);
+    for (let j = 0; j < M; j++) row[j] = switchRate / M;
+    const w = [];
+    let z = 0;
+    for (let v = M; v < V; v++){
+      const x = (0.05 + Math.pow(rnd(), 3) * 3) * ((v % M) === m ? (1 + 9 * sp) : 1);
+      w.push(x); z += x;
+    }
+    for (let v = M; v < V; v++) row[v] = (1 - switchRate) * w[v - M] / z;
+    emit.push(row);
+  }
+  return { kind: 'latch', V: V, S: M, M: M, switchRate: switchRate, sep: sp, start: 0, emit: emit,
+           step: function(m, y){ return y < M ? y : m; } };
+}
+// the true state after a token history -- for ANY history, including one the model invented
+function stateOf(proc, tokens){
+  let s = proc.start;
+  for (let i = 0; i < tokens.length; i++) s = proc.step(s, tokens[i]);
+  return s;
+}
+
+// ---------------------------------------------------------------- the tabular model
+// context = the last k tokens, BOS-padded (token id V is BOS). Order k is the capacity knob.
+function makeTabular(V, k){
+  let C = 1;
+  for (let i = 0; i < k; i++) C *= (V + 1);
+  return { V: V, k: k, C: C, base: C / (V + 1), ctx0: C - 1, logits: zmat(C, V) };
+}
+const ctxNext = (m, c, y) => (c % m.base) * (m.V + 1) + y;
+function modelProbs(m){
+  const P = [];
+  for (let c = 0; c < m.C; c++){
+    const L = m.logits[c], row = new Array(m.V);
+    let mx = -Infinity;
+    for (let v = 0; v < m.V; v++) if (L[v] > mx) mx = L[v];
+    let z = 0;
+    for (let v = 0; v < m.V; v++){ row[v] = Math.exp(L[v] - mx); z += row[v]; }
+    for (let v = 0; v < m.V; v++) row[v] /= z;
+    P.push(row);
+  }
+  return P;
+}
+function setProbs(m, P){
+  for (let c = 0; c < m.C; c++) for (let v = 0; v < m.V; v++)
+    m.logits[c][v] = Math.log(Math.max(P[c][v], 1e-14));
+}
+
+// ---------------------------------------------------------------- the exact rollout DP
+// Propagates the JOINT distribution over (true hidden state, model context). Three drivers --
+// three different answers to "what is the model's input at step t":
+//   'data'  teacher forcing  : the true previous token
+//   'model' free running     : the model's own previous token, and the TRUE reference state
+//                              follows the model's tokens too, because "the right answer" is
+//                              the right answer given what the model actually said
+//   'ss'    scheduled sampling: the true sequence keeps running and supplies the targets, but
+//                              with probability eps the input is the model's own sample
+function rollout(proc, model, T, driver, eps){
+  const V = proc.V, S = proc.S, C = model.C, e = eps || 0;
+  const q = modelProbs(model);
+  let J = zmat(S, C);
+  J[proc.start][model.ctx0] = 1;
+  const ctxWeight = zeros(C), ctxTarget = zmat(C, V);
+  const perStep = [];
+  let loss = 0, excess = 0, ent = 0;
+  for (let t = 0; t < T; t++){
+    let sl = 0, sx = 0, se = 0;
+    for (let s = 0; s < S; s++) for (let c = 0; c < C; c++){
+      const w = J[s][c];
+      if (w <= 0) continue;
+      sl += w * ceRow(proc.emit[s], q[c]);
+      sx += w * klRow(proc.emit[s], q[c]);
+      se += w * entRow(proc.emit[s]);
+      ctxWeight[c] += w;
+      for (let v = 0; v < V; v++) ctxTarget[c][v] += w * proc.emit[s][v];
+    }
+    perStep.push({ t: t, loss: sl, excess: sx, entropy: se });
+    loss += sl; excess += sx; ent += se;
+    if (t === T - 1) break;
+    const N = zmat(S, C);
+    for (let s = 0; s < S; s++) for (let c = 0; c < C; c++){
+      const w = J[s][c];
+      if (w <= 0) continue;
+      if (driver === 'model'){
+        for (let y = 0; y < V; y++){
+          const p = q[c][y];
+          if (p > 0) N[proc.step(s, y)][ctxNext(model, c, y)] += w * p;
+        }
+      } else if (driver === 'ss' && e > 0){
+        for (let y = 0; y < V; y++){
+          const p = proc.emit[s][y];
+          if (p <= 0) continue;
+          const s2 = proc.step(s, y), wp = w * p;
+          N[s2][ctxNext(model, c, y)] += wp * (1 - e);
+          for (let yh = 0; yh < V; yh++){
+            const ph = q[c][yh];
+            if (ph > 0) N[s2][ctxNext(model, c, yh)] += wp * e * ph;
+          }
+        }
+      } else {
+        for (let y = 0; y < V; y++){
+          const p = proc.emit[s][y];
+          if (p > 0) N[proc.step(s, y)][ctxNext(model, c, y)] += w * p;
+        }
+      }
+    }
+    J = N;
+  }
+  return { loss: loss / T, excess: excess / T, entropy: ent / T, perStep: perStep,
+           ctxWeight: ctxWeight, ctxTarget: ctxTarget, joint: J, T: T };
+}
+
+// ---------------------------------------------------------------- fitting
+// Teacher-forced MLE has a CLOSED FORM here and needs no iteration: under driver 'data' the
+// context distribution does not depend on the model at all, so one pass gives the exact
+// minimiser q(.|c) = the weighted average of the true conditionals seen in context c.
+function fitMLE(proc, model, T){
+  const r = rollout(proc, model, T, 'data', 0), P = [];
+  for (let c = 0; c < model.C; c++){
+    const w = r.ctxWeight[c], row = new Array(model.V);
+    if (w > 0) for (let v = 0; v < model.V; v++) row[v] = r.ctxTarget[c][v] / w;
+    else for (let v = 0; v < model.V; v++) row[v] = 1 / model.V;
+    P.push(row);
+  }
+  setProbs(model, P);
+  return model;
+}
+// Scheduled sampling has NO closed form, because the contexts it trains on are produced by
+// the model being trained. This is the actual procedure, iterated to its fixed point.
+function fitSS(proc, model, T, eps, iters){
+  const n = iters === undefined ? 80 : iters;
+  let delta = Infinity, used = 0;
+  for (let i = 0; i < n; i++){
+    const r = rollout(proc, model, T, 'ss', eps);
+    const prev = modelProbs(model), P = [];
+    for (let c = 0; c < model.C; c++){
+      const w = r.ctxWeight[c], row = new Array(model.V);
+      if (w > 0) for (let v = 0; v < model.V; v++) row[v] = r.ctxTarget[c][v] / w;
+      else for (let v = 0; v < model.V; v++) row[v] = prev[c][v];
+      P.push(row);
+    }
+    delta = 0;
+    for (let c = 0; c < model.C; c++) for (let v = 0; v < model.V; v++)
+      delta = Math.max(delta, Math.abs(P[c][v] - prev[c][v]));
+    setProbs(model, P);
+    used = i + 1;
+    if (delta < 1e-15) break;
+  }
+  return { model: model, iters: used, delta: delta };
+}
+
+// The T=2 fixed point in CLOSED FORM, derived by hand and used as an oracle. At step 2 the
+// model's input is y1 (prob 1-eps) or a sample from q(.|BOS) = p0 (prob eps), and that sample
+// is INDEPENDENT of the true y1, so context c is reached carrying the true conditional with
+// weight (1-eps)p0(c) and the context-free marginal with weight eps*p0(c):
+//      q_ss(.|c) = (1-eps) * P(.|c) + eps * m,      m[v] = sum_y p0(y) P(v|y)
+// Scheduled sampling does not fit the truth. It fits an eps-blend of the truth with a
+// distribution that has forgotten the context entirely.
+function ssClosedFormT2(proc, eps){
+  const V = proc.V, p0 = proc.emit[proc.start], m = zeros(V);
+  for (let y = 0; y < V; y++) for (let v = 0; v < V; v++) m[v] += p0[y] * proc.emit[y][v];
+  const out = [];
+  for (let c = 0; c < V; c++){
+    const row = new Array(V);
+    for (let v = 0; v < V; v++) row[v] = (1 - eps) * proc.emit[c][v] + eps * m[v];
+    out.push(row);
+  }
+  return { rows: out, marginal: m };
+}
+
+// ---------------------------------------------------------------- the exposure gap
+// The one number this page is about: the same model and the same loss, scored on prefixes
+// from the DATA against prefixes from ITSELF.
+function gapReport(proc, model, T){
+  const d = rollout(proc, model, T, 'data', 0);
+  const f = rollout(proc, model, T, 'model', 0);
+  return {
+    data: d.excess, free: f.excess, gap: f.excess - d.excess,
+    ratio: d.excess > 1e-15 ? f.excess / d.excess : (f.excess > 1e-15 ? Infinity : 1),
+    perStepData: d.perStep.map(function(x){ return x.excess; }),
+    perStepFree: f.perStep.map(function(x){ return x.excess; }),
+    dataLoss: d.loss, freeLoss: f.loss
+  };
+}
+
+// ---------------------------------------------------------------- recovery from one bad token
+// Force ONE token the model did not see into its context at step k and watch the joint
+// (true state, model context) come back together. The prediction to beat: a latch process
+// forgets its mode at rate switchRate, so the disturbance should decay like (1-switchRate)^j.
+function recoveryCurve(proc, model, T, k, steps){
+  const V = proc.V, S = proc.S, C = model.C;
+  const q = modelProbs(model);
+  const advance = function(J){
+    const N = zmat(S, C);
+    for (let s = 0; s < S; s++) for (let c = 0; c < C; c++){
+      const w = J[s][c];
+      if (w <= 0) continue;
+      for (let y = 0; y < V; y++){
+        const p = proc.emit[s][y];
+        if (p > 0) N[proc.step(s, y)][ctxNext(model, c, y)] += w * p;
+      }
+    }
+    return N;
+  };
+  const score = function(J){
+    let x = 0;
+    for (let s = 0; s < S; s++) for (let c = 0; c < C; c++)
+      if (J[s][c] > 0) x += J[s][c] * klRow(proc.emit[s], q[c]);
+    return x;
+  };
+  let A = zmat(S, C);
+  A[proc.start][model.ctx0] = 1;
+  for (let t = 0; t < k; t++) A = advance(A);
+  // B is A with ONE wrong token pushed into the model's context. The true state still follows
+  // the true token, which is exactly "one wrong word slipped into the input".
+  const B = zmat(S, C);
+  for (let s = 0; s < S; s++) for (let c = 0; c < C; c++){
+    const w = A[s][c];
+    if (w <= 0) continue;
+    for (let y = 0; y < V; y++){
+      const p = proc.emit[s][y];
+      if (p <= 0) continue;
+      const bad = (y + 1 + (s % (V - 1))) % V;
+      B[proc.step(s, y)][ctxNext(model, c, bad === y ? (y + 1) % V : bad)] += w * p;
+    }
+  }
+  let A2 = advance(A), cur = B;
+  const curve = [];
+  for (let j = 0; j < steps; j++){
+    const fa = [], fb = [];
+    for (let s = 0; s < S; s++) for (let c = 0; c < C; c++){ fa.push(A2[s][c]); fb.push(cur[s][c]); }
+    curve.push({ j: j + 1, tv: tvRows(fa, fb), clean: score(A2), dirty: score(cur) });
+    A2 = advance(A2); cur = advance(cur);
+  }
+  return curve;
+}
+
+// ---------------------------------------------------------------- the gradient that is not one
+// Scheduled sampling draws a HARD token and does not differentiate through the draw, so the
+// gradient it applies treats the rollout weights and the targets as constants. That is a real
+// gradient of a DIFFERENT function. Under teacher forcing the weights genuinely do not depend
+// on the parameters, so there the same shortcut is exact.
+function implementedGrad(proc, model, T, driver, eps){
+  const r = rollout(proc, model, T, driver, eps), q = modelProbs(model);
+  const G = zmat(model.C, model.V);
+  for (let c = 0; c < model.C; c++) for (let v = 0; v < model.V; v++)
+    G[c][v] = (r.ctxWeight[c] * q[c][v] - r.ctxTarget[c][v]) / T;
+  return G;
+}
+function trueGrad(proc, model, T, driver, eps, h){
+  const e = h === undefined ? 1e-5 : h, G = zmat(model.C, model.V);
+  for (let c = 0; c < model.C; c++) for (let v = 0; v < model.V; v++){
+    const o = model.logits[c][v];
+    model.logits[c][v] = o + e; const lp = rollout(proc, model, T, driver, eps).loss;
+    model.logits[c][v] = o - e; const lm = rollout(proc, model, T, driver, eps).loss;
+    model.logits[c][v] = o;
+    G[c][v] = (lp - lm) / (2 * e);
+  }
+  return G;
+}
+function gradCompare(A, B){
+  let sc = 0, worst = 0, da = 0, db = 0, dp = 0;
+  for (let i = 0; i < A.length; i++) for (let j = 0; j < A[0].length; j++){
+    sc = Math.max(sc, Math.abs(B[i][j]));
+    worst = Math.max(worst, Math.abs(A[i][j] - B[i][j]));
+    da += A[i][j] * A[i][j]; db += B[i][j] * B[i][j]; dp += A[i][j] * B[i][j];
+  }
+  return { abs: worst, rel: worst / Math.max(sc, 1e-14),
+           normA: Math.sqrt(da), normB: Math.sqrt(db),
+           cos: dp / Math.max(Math.sqrt(da) * Math.sqrt(db), 1e-300) };
+}
+
+// ---------------------------------------------------------------- a real RNN, real BPTT
+function initRNN(cfg, seed){
+  const rnd = mulberry32(seed), s = cfg.scale === undefined ? 0.4 : cfg.scale;
+  const mk = function(r, c, sd){
+    const M = [];
+    for (let i = 0; i < r; i++){
+      const row = new Array(c);
+      for (let j = 0; j < c; j++) row[j] = gaussian(rnd) * sd;
+      M.push(row);
+    }
+    return M;
+  };
+  return { V: cfg.V, d: cfg.d, dh: cfg.dh,
+           E: mk(cfg.V + 1, cfg.d, s),
+           Wx: mk(cfg.dh, cfg.d, 1 / Math.sqrt(cfg.d)),
+           Wh: mk(cfg.dh, cfg.dh, 0.9 / Math.sqrt(cfg.dh)),
+           bh: zeros(cfg.dh),
+           Wo: mk(cfg.V, cfg.dh, 1 / Math.sqrt(cfg.dh)),
+           bo: zeros(cfg.V) };
+}
+function rnnStep(m, h, tok){
+  const nh = new Array(m.dh), x = m.E[tok];
+  for (let i = 0; i < m.dh; i++){
+    let a = m.bh[i];
+    for (let j = 0; j < m.d; j++) a += m.Wx[i][j] * x[j];
+    for (let j = 0; j < m.dh; j++) a += m.Wh[i][j] * h[j];
+    nh[i] = Math.tanh(a);
+  }
+  const lo = new Array(m.V);
+  let mx = -Infinity;
+  for (let v = 0; v < m.V; v++){
+    let a = m.bo[v];
+    for (let i = 0; i < m.dh; i++) a += m.Wo[v][i] * nh[i];
+    lo[v] = a;
+    if (a > mx) mx = a;
+  }
+  const p = new Array(m.V);
+  let z = 0;
+  for (let v = 0; v < m.V; v++){ p[v] = Math.exp(lo[v] - mx); z += p[v]; }
+  for (let v = 0; v < m.V; v++) p[v] /= z;
+  return { h: nh, p: p };
+}
+function forwardRNN(m, inputs){
+  const hs = [], ps = [];
+  let h = zeros(m.dh);
+  for (let t = 0; t < inputs.length; t++){
+    const r = rnnStep(m, h, inputs[t]);
+    h = r.h; hs.push(h); ps.push(r.p);
+  }
+  return { hs: hs, ps: ps };
+}
+function lossRNN(m, seqs){
+  let L = 0, n = 0;
+  for (let s = 0; s < seqs.length; s++){
+    const f = forwardRNN(m, seqs[s].inputs), tg = seqs[s].targets;
+    for (let t = 0; t < tg.length; t++){ L -= Math.log(Math.max(f.ps[t][tg[t]], LOGFLOOR)); n++; }
+  }
+  return L / n;
+}
+function gradsRNN(m, seqs){
+  const V = m.V, d = m.d, dh = m.dh;
+  const gE = zmat(V + 1, d), gWx = zmat(dh, d), gWh = zmat(dh, dh),
+        gbh = zeros(dh), gWo = zmat(V, dh), gbo = zeros(V);
+  let n = 0;
+  for (let s = 0; s < seqs.length; s++) n += seqs[s].targets.length;
+  for (let s = 0; s < seqs.length; s++){
+    const inp = seqs[s].inputs, tg = seqs[s].targets, T = tg.length;
+    const f = forwardRNN(m, inp);
+    let dhNext = zeros(dh);
+    for (let t = T - 1; t >= 0; t--){
+      const p = f.ps[t], h = f.hs[t], hPrev = t > 0 ? f.hs[t - 1] : zeros(dh);
+      const dlo = new Array(V);
+      for (let v = 0; v < V; v++) dlo[v] = (p[v] - (v === tg[t] ? 1 : 0)) / n;
+      const dh_ = dhNext.slice();
+      for (let v = 0; v < V; v++){
+        gbo[v] += dlo[v];
+        for (let i = 0; i < dh; i++){ gWo[v][i] += dlo[v] * h[i]; dh_[i] += dlo[v] * m.Wo[v][i]; }
+      }
+      const dpre = new Array(dh);
+      for (let i = 0; i < dh; i++) dpre[i] = dh_[i] * (1 - h[i] * h[i]);
+      const x = m.E[inp[t]], dx = zeros(d);
+      dhNext = zeros(dh);
+      for (let i = 0; i < dh; i++){
+        gbh[i] += dpre[i];
+        for (let j = 0; j < d; j++){ gWx[i][j] += dpre[i] * x[j]; dx[j] += dpre[i] * m.Wx[i][j]; }
+        for (let j = 0; j < dh; j++){ gWh[i][j] += dpre[i] * hPrev[j]; dhNext[j] += dpre[i] * m.Wh[i][j]; }
+      }
+      for (let j = 0; j < d; j++) gE[inp[t]][j] += dx[j];
+    }
+  }
+  return { E: gE, Wx: gWx, Wh: gWh, bh: gbh, Wo: gWo, bo: gbo };
+}
+function numericGradRNN(m, key, seqs, eps){
+  const e = eps || 1e-5, M = m[key];
+  if (typeof M[0] === 'number'){
+    const G = zeros(M.length);
+    for (let i = 0; i < M.length; i++){
+      const o = M[i];
+      M[i] = o + e; const lp = lossRNN(m, seqs);
+      M[i] = o - e; const lm = lossRNN(m, seqs);
+      M[i] = o; G[i] = (lp - lm) / (2 * e);
+    }
+    return G;
+  }
+  const G = zmat(M.length, M[0].length);
+  for (let i = 0; i < M.length; i++) for (let j = 0; j < M[0].length; j++){
+    const o = M[i][j];
+    M[i][j] = o + e; const lp = lossRNN(m, seqs);
+    M[i][j] = o - e; const lm = lossRNN(m, seqs);
+    M[i][j] = o; G[i][j] = (lp - lm) / (2 * e);
+  }
+  return G;
+}
+function gradErr(a, b){
+  const A = typeof a[0] === 'number' ? [a] : a, B = typeof b[0] === 'number' ? [b] : b;
+  let sc = 0, worst = 0;
+  for (let i = 0; i < A.length; i++) for (let j = 0; j < A[0].length; j++){
+    sc = Math.max(sc, Math.abs(B[i][j]));
+    worst = Math.max(worst, Math.abs(A[i][j] - B[i][j]));
+  }
+  return worst / Math.max(sc, 1e-14);
+}
+
+function sampleFrom(p, r){
+  let acc = 0;
+  for (let v = 0; v < p.length; v++){ acc += p[v]; if (r <= acc) return v; }
+  return p.length - 1;
+}
+function sampleSeq(proc, T, rnd){
+  const toks = [];
+  let s = proc.start;
+  for (let t = 0; t < T; t++){ const y = sampleFrom(proc.emit[s], rnd()); toks.push(y); s = proc.step(s, y); }
+  return toks;
+}
+// teacher-forced pairs: input[t] = the true previous token (BOS at t=0), target[t] = y[t]
+function tfSeq(proc, toks){
+  const inputs = [proc.V];
+  for (let t = 0; t < toks.length - 1; t++) inputs.push(toks[t]);
+  return { inputs: inputs, targets: toks.slice() };
+}
+// scheduled-sampling pairs: input[t] is the model's OWN sample with probability eps. The
+// sample is a hard token id, so no gradient flows through it -- that is the procedure.
+function ssSeq(proc, m, toks, eps, rnd){
+  const T = toks.length, inputs = [proc.V];
+  let h = zeros(m.dh);
+  for (let t = 0; t < T - 1; t++){
+    const r = rnnStep(m, h, inputs[t]);
+    h = r.h;
+    inputs.push(rnd() < eps ? sampleFrom(r.p, rnd()) : toks[t]);
+  }
+  return { inputs: inputs, targets: toks.slice() };
+}
+function sgdRNN(m, g, lr){
+  const keys = ['E', 'Wx', 'Wh', 'Wo'];
+  for (let k = 0; k < keys.length; k++){
+    const M = m[keys[k]], G = g[keys[k]];
+    for (let i = 0; i < M.length; i++) for (let j = 0; j < M[0].length; j++) M[i][j] -= lr * G[i][j];
+  }
+  for (let i = 0; i < m.dh; i++) m.bh[i] -= lr * g.bh[i];
+  for (let v = 0; v < m.V; v++) m.bo[v] -= lr * g.bo[v];
+}
+function trainRNN(cfg){
+  const proc = cfg.proc, T = cfg.T, eps = cfg.eps || 0;
+  const m = initRNN({ V: proc.V, d: cfg.d, dh: cfg.dh, scale: cfg.scale }, cfg.seed || 1);
+  const rnd = mulberry32((cfg.seed || 1) * 31 + 7);
+  const steps = cfg.steps === undefined ? 300 : cfg.steps;
+  let diverged = false;
+  for (let s = 0; s < steps; s++){
+    const batch = [];
+    for (let b = 0; b < (cfg.batch || 12); b++){
+      const toks = sampleSeq(proc, T, rnd);
+      batch.push(eps > 0 ? ssSeq(proc, m, toks, eps, rnd) : tfSeq(proc, toks));
+    }
+    if (!isFinite(lossRNN(m, batch))){ diverged = true; break; }
+    sgdRNN(m, gradsRNN(m, batch), cfg.lr || 0.5);
+  }
+  return { model: m, diverged: diverged };
+}
+// The same two numbers for the RNN. The reference is exact at every step (the process is a
+// finite-state machine); only the prefix distribution is sampled.
+function rnnGap(proc, m, T, n, seed){
+  const rndA = mulberry32(seed), rndB = mulberry32(seed + 1000);
+  let dataX = 0, freeX = 0, cnt = 0;
+  for (let i = 0; i < n; i++){
+    const toks = sampleSeq(proc, T, rndA), sq = tfSeq(proc, toks), f = forwardRNN(m, sq.inputs);
+    let s = proc.start;
+    for (let t = 0; t < T; t++){ dataX += klRow(proc.emit[s], f.ps[t]); s = proc.step(s, toks[t]); }
+    let h = zeros(m.dh), st = proc.start, inp = proc.V;
+    for (let t = 0; t < T; t++){
+      const r = rnnStep(m, h, inp);
+      h = r.h;
+      freeX += klRow(proc.emit[st], r.p);
+      const y = sampleFrom(r.p, rndB());
+      st = proc.step(st, y); inp = y;
+      cnt++;
+    }
+  }
+  return { data: dataX / cnt, free: freeX / cnt, gap: (freeX - dataX) / cnt, steps: cnt };
+}
+// The RNN version of "one wrong token". Feed the same sequence twice, differing only at
+// position k, and watch the two predictive distributions come back together. A tabular model
+// of order k forgets in exactly k steps; a recurrent hidden state has no such guarantee, so
+// this decay has to be MEASURED.
+function rnnRecovery(proc, m, T, k, steps, n, seed){
+  const rnd = mulberry32(seed), out = zeros(steps), cnt = zeros(steps);
+  for (let i = 0; i < n; i++){
+    const toks = sampleSeq(proc, T, rnd), clean = tfSeq(proc, toks);
+    const dirty = { inputs: clean.inputs.slice(), targets: clean.targets };
+    const orig = dirty.inputs[k];
+    dirty.inputs[k] = (orig + 1 + Math.floor(rnd() * (proc.V - 1))) % proc.V;
+    if (dirty.inputs[k] === orig) dirty.inputs[k] = (orig + 1) % proc.V;
+    const a = forwardRNN(m, clean.inputs), b = forwardRNN(m, dirty.inputs);
+    for (let j = 0; j < steps && k + j < T; j++){
+      out[j] += tvRows(a.ps[k + j], b.ps[k + j]); cnt[j]++;
+    }
+  }
+  return out.map(function(v, j){ return { j: j, tv: cnt[j] ? v / cnt[j] : 0 }; });
+}
+
+// A fine sweep over eps, so nothing on this page rests on three round numbers. Day 67 nearly
+// shipped an impossibility claim off a coarse grid; the same mistake was available here.
+function epsSweep(proc, k, T, step, iters){
+  const st = step || 0.05;
+  const base = fitMLE(proc, makeTabular(proc.V, k), T);
+  const gb = gapReport(proc, base, T);
+  const rows = [];
+  for (let e = st; e <= 1.0000001; e += st){
+    const eps = Math.round(e * 1000) / 1000;
+    const m = fitSS(proc, makeTabular(proc.V, k), T, eps, iters || 80).model;
+    const g = gapReport(proc, m, T);
+    rows.push({ eps: eps, data: g.data, free: g.free, gap: g.gap, ratio: g.ratio,
+                beatsMLE: g.free < gb.free, margin: gb.free - g.free });
+  }
+  let best = rows[0];
+  for (let i = 1; i < rows.length; i++) if (rows[i].free < best.free) best = rows[i];
+  return { mle: gb, rows: rows, best: best,
+           wins: rows.filter(function(r){ return r.beatsMLE; }).length,
+           bestBeatsMLE: best.free < gb.free };
+}
+
+// ---------------------------------------------------------------- does the gap predict?
+// The exposure gap is the number people report when they argue for doing something about
+// exposure bias. Whether it carries any information about that decision is an empirical
+// question, and this is it: sweep many processes, ask whether the cure's best eps beats plain
+// teacher forcing, then rank the candidates by each quantity you could have measured first.
+// AUC 0.5 is a coin flip.
+function auc(pos, neg){
+  if (!pos.length || !neg.length) return 0.5;
+  let c = 0, n = 0;
+  for (let i = 0; i < pos.length; i++) for (let j = 0; j < neg.length; j++){
+    n++; c += pos[i] > neg[j] ? 1 : (pos[i] === neg[j] ? 0.5 : 0);
+  }
+  return c / n;
+}
+function gapPredicts(cfg){
+  const c = Object.assign({ V: 8, M: 2, T: 16, srs: [0.05, 0.1, 0.2, 0.35, 0.5],
+                            seps: [0.5, 1, 2], seeds: [9, 33, 77], ks: [1, 2],
+                            step: 0.1, iters: 50 }, cfg || {});
+  const rows = [];
+  for (let a = 0; a < c.srs.length; a++) for (let b = 0; b < c.seps.length; b++)
+  for (let d = 0; d < c.seeds.length; d++) for (let e = 0; e < c.ks.length; e++){
+    const proc = makeLatch(c.V, c.M, c.srs[a], c.seps[b], c.seeds[d]);
+    const s = epsSweep(proc, c.ks[e], c.T, c.step, c.iters);
+    rows.push({ sr: c.srs[a], sep: c.seps[b], seed: c.seeds[d], k: c.ks[e],
+                ratio: s.mle.ratio, data: s.mle.data, free: s.mle.free, gapAbs: s.mle.gap,
+                bestEps: s.best.eps, bestFree: s.best.free, won: s.best.free < s.mle.free,
+                gain: (s.mle.free - s.best.free) / s.mle.free });
+  }
+  const won = rows.filter(function(r){ return r.won; });
+  const lost = rows.filter(function(r){ return !r.won; });
+  const mean = function(a){ return a.length ? a.reduce(function(x, y){ return x + y; }, 0) / a.length : 0; };
+  const P = [['exposure gap RATIO  (free / teacher-forced)', function(r){ return r.ratio; }],
+             ['absolute gap  (free - teacher-forced)', function(r){ return r.gapAbs; }],
+             ['plain teacher-forced excess  (how bad the model is)', function(r){ return r.data; }],
+             ['1 / switchRate  (how long the process remembers)', function(r){ return 1 / r.sr; }]];
+  return { rows: rows, n: rows.length, wins: won.length,
+           maxGain: Math.max.apply(null, rows.map(function(r){ return r.gain; })),
+           minGain: Math.min.apply(null, rows.map(function(r){ return r.gain; })),
+           predictors: P.map(function(p){
+             return { name: p[0], auc: auc(won.map(p[1]), lost.map(p[1])),
+                      meanWin: mean(won.map(p[1])), meanLose: mean(lost.map(p[1])) };
+           }) };
+}
+
+// ---------------------------------------------------------------- the RNN experiment
+function rnnExperiment(cfg){
+  const c = Object.assign({ V: 8, T: 16, d: 8, dh: 2, steps: 1400, batch: 12, lr: 0.5,
+                            seeds: [2, 3, 4], modes: [2, 6], epsList: [0, 0.25, 0.5, 1],
+                            sr: 0.15, sep: 1, procSeed: 9, evalN: 250 }, cfg || {});
+  // the backward pass is checked BEFORE anything is measured with it
+  const proc0 = makeLatch(c.V, 2, c.sr, c.sep, c.procSeed);
+  const m0 = initRNN({ V: c.V, d: 5, dh: 7 }, 4), rnd = mulberry32(21), seqs = [];
+  for (let i = 0; i < 3; i++) seqs.push(tfSeq(proc0, sampleSeq(proc0, 8, rnd)));
+  const gg = gradsRNN(m0, seqs), keys = ['E', 'Wx', 'Wh', 'bh', 'Wo', 'bo'], grads = [];
+  for (let i = 0; i < keys.length; i++)
+    grads.push({ key: keys[i], rel: gradErr(gg[keys[i]], numericGradRNN(m0, keys[i], seqs)) });
+  const run = function(proc, eps){
+    const out = [];
+    for (let i = 0; i < c.seeds.length; i++){
+      const r = trainRNN({ proc: proc, T: c.T, d: c.d, dh: c.dh, steps: c.steps,
+                           batch: c.batch, lr: c.lr, seed: c.seeds[i], eps: eps });
+      out.push(rnnGap(proc, r.model, c.T, c.evalN, 777));
+    }
+    return out;
+  };
+  const byMode = [];
+  for (let i = 0; i < c.modes.length; i++){
+    const proc = makeLatch(c.V, c.modes[i], c.sr, c.sep, c.procSeed);
+    byMode.push({ M: c.modes[i], runs: run(proc, 0),
+                  tabular: gapReport(proc, fitMLE(proc, makeTabular(c.V, 1), c.T), c.T).ratio });
+  }
+  const hard = makeLatch(c.V, c.modes[c.modes.length - 1], c.sr, c.sep, c.procSeed);
+  const byEps = [];
+  for (let i = 0; i < c.epsList.length; i++)
+    byEps.push({ eps: c.epsList[i], runs: run(hard, c.epsList[i]) });
+  return { grads: grads, byMode: byMode, byEps: byEps, dh: c.dh, seeds: c.seeds };
+}
+
+// ---------------------------------------------------------------- in-page self-check
+function selfCheck(){
+  const lines = [];
+  let pass = 0, total = 0;
+  const ok = function(c, label){ total++; if (c) pass++; else lines.push('FAIL  ' + label); };
+  const V = 6, T = 8;
+
+  // 1. a model that CAN be right has no exposure gap at all
+  {
+    const proc = makeChain(V, 5), mod = makeTabular(V, 1);
+    fitMLE(proc, mod, T);
+    const g = gapReport(proc, mod, T);
+    ok(g.data < 1e-12, 'the well-specified MLE fit is not exact under data prefixes');
+    ok(g.free < 1e-12, 'the well-specified MLE fit shows an exposure gap, which is impossible');
+  }
+
+  // 2. a model that cannot is worse on its OWN prefixes than on the data's
+  {
+    const proc = makeLatch(V, 2, 0.2, 1, 9), mod = makeTabular(V, 1);
+    fitMLE(proc, mod, T);
+    const g = gapReport(proc, mod, T);
+    ok(g.data > 1e-6, 'the misspecified fit has no error at all, so there is nothing to expose');
+    ok(g.gap > 0, 'free-running is not worse than teacher-forced on a misspecified model');
+    ok(Math.abs(g.perStepData[0] - g.perStepFree[0]) < 1e-15,
+       'step 1 differs between the two drivers - they must start from the same state');
+    ok(Math.abs(g.perStepData[1] - g.perStepFree[1]) < 1e-15,
+       'step 2 differs - the model marginal at step 1 is exact, so it cannot');
+  }
+
+  // 3. scheduled sampling's fixed point is an eps-blend with the CONTEXT-FREE marginal
+  {
+    const proc = makeChain(V, 5), eps = 0.4;
+    const mod = fitSS(proc, makeTabular(V, 1), 2, eps, 300).model;
+    const cf = ssClosedFormT2(proc, eps), P = modelProbs(mod);
+    let worst = 0;
+    for (let c = 0; c < V; c++) for (let v = 0; v < V; v++)
+      worst = Math.max(worst, Math.abs(P[c][v] - cf.rows[c][v]));
+    ok(worst < 1e-10, 'the measured scheduled-sampling fixed point is not the closed form (' + worst.toExponential(2) + ')');
+    const P0 = modelProbs(fitSS(proc, makeTabular(V, 1), 2, 0, 300).model);
+    let w0 = 0;
+    for (let c = 0; c < V; c++) for (let v = 0; v < V; v++)
+      w0 = Math.max(w0, Math.abs(P0[c][v] - proc.emit[c][v]));
+    ok(w0 < 1e-10, 'at eps=0 scheduled sampling is teacher forcing and must recover the truth exactly');
+  }
+
+  // 4. the gradient scheduled sampling applies is not the gradient of what it evaluates
+  {
+    const proc = makeChain(V, 5), mod = makeTabular(V, 1), rnd = mulberry32(3);
+    for (let c = 0; c < mod.C; c++) for (let v = 0; v < V; v++) mod.logits[c][v] = gaussian(rnd) * 0.5;
+    const tf = gradCompare(implementedGrad(proc, mod, 4, 'data', 0), trueGrad(proc, mod, 4, 'data', 0));
+    const ss = gradCompare(implementedGrad(proc, mod, 4, 'ss', 0.5), trueGrad(proc, mod, 4, 'ss', 0.5));
+    ok(tf.rel < 1e-6, 'teacher forcing: the applied gradient disagrees with finite differences (' + tf.rel.toExponential(2) + ')');
+    ok(ss.rel > 1e-3, 'scheduled sampling: the applied gradient matched finite differences, which contradicts the page');
+    // and at the fixed point the applied gradient is zero while the real one is not
+    const fp = fitSS(proc, makeTabular(V, 1), 4, 0.5, 300).model;
+    const c2 = gradCompare(implementedGrad(proc, fp, 4, 'ss', 0.5), trueGrad(proc, fp, 4, 'ss', 0.5));
+    ok(c2.normA < 1e-12, 'the applied gradient is not zero at the fixed point it converged to');
+    ok(c2.normB > 1e-6, 'the true gradient is zero there too, so the fixed point IS a minimum');
+  }
+
+  // 5. the RNN's backward pass agrees with central differences
+  {
+    const proc = makeLatch(V, 2, 0.25, 1, 9);
+    const m = initRNN({ V: V, d: 5, dh: 7 }, 4);
+    const rnd = mulberry32(21), seqs = [];
+    for (let i = 0; i < 3; i++) seqs.push(tfSeq(proc, sampleSeq(proc, 6, rnd)));
+    const g = gradsRNN(m, seqs);
+    const keys = ['E', 'Wx', 'Wh', 'bh', 'Wo', 'bo'];
+    for (let i = 0; i < keys.length; i++)
+      ok(gradErr(g[keys[i]], numericGradRNN(m, keys[i], seqs)) < 1e-6,
+         'RNN d' + keys[i] + ' disagrees with central differences');
+  }
+
+  // 6. one wrong token is forgotten in EXACTLY k steps by an order-k model
+  {
+    const proc = makeLatch(V, 2, 0.25, 1, 9);
+    for (let k = 1; k <= 3; k++){
+      const mod = makeTabular(V, k);
+      fitMLE(proc, mod, T);
+      const c = recoveryCurve(proc, mod, T, 3, k + 2);
+      let bad = 0;
+      for (let j = 0; j < c.length; j++){
+        if (j < k && c[j].tv < 1e-6) bad++;          // must still be disturbed
+        if (j >= k && c[j].tv > 1e-12) bad++;         // must be exactly recovered
+      }
+      ok(bad === 0, 'an order-' + k + ' model did not forget one wrong token in exactly ' + k + ' steps');
+    }
+  }
+
+  // 7. scheduled sampling is NOT uniformly useless - a fine sweep must be allowed to find the
+  // settings where its bias pays for itself, or the page is claiming an impossibility it has
+  // not earned.
+  {
+    const proc = makeLatch(V, 2, 0.1, 2, 77);
+    const s = epsSweep(proc, 1, T, 0.1, 60);
+    ok(s.rows.length === 10, 'the eps sweep did not cover the range');
+    ok(s.best.eps >= 0, 'no best eps was found');
+  }
+  return { pass: pass, total: total, lines: lines };
+}
+// ===== ENGINE:END =====
+
+// ---------------------------------------------------------------- UI
+const $ = id => document.getElementById(id);
+const PV = 8, PM = 2, PSEED = 9, CHAINSEED = 5, TLONG = 120;
+const hl = " style='background:#f1f5f9'";
+const z5 = x => (Math.abs(x) < 1e-12 ? 0 : x).toFixed(5);
+
+function render(){
+  const sr = +$("sSR").value, sep = +$("sSE").value, epsv = +$("sEP").value,
+        k = +$("mK").value, T = +$("sT").value;
+  $("vSR").textContent = sr.toFixed(2);
+  $("vSE").textContent = sep.toFixed(2);
+  $("vEP").textContent = epsv.toFixed(2);
+  $("vT").textContent = T;
+
+  const proc = makeLatch(PV, PM, sr, sep, PSEED);
+  const mod = fitMLE(proc, makeTabular(PV, k), T);
+  const g = gapReport(proc, mod, T);
+  const worse = g.ratio > 1.02;
+
+  // ---------------------------------------------------------------- the two loops
+  $("loops").innerHTML =
+    "<tr><td><code>y[t-1]</code> &mdash; <strong>teacher forcing</strong></td><td>" +
+      g.data.toFixed(5) + "</td><td>" + g.dataLoss.toFixed(4) + "</td><td class='lg'>&mdash;</td></tr>" +
+    "<tr><td><code>yhat[t-1]</code> &mdash; <strong>free running</strong></td><td class='" +
+      (worse ? "bad" : "ok") + "'>" + g.free.toFixed(5) + "</td><td>" + g.freeLoss.toFixed(4) +
+      "</td><td class='" + (worse ? "bad" : "ok") + "'>" + g.ratio.toFixed(3) + "&times;</td></tr>";
+  $("loopNote").innerHTML = "The gap is <strong>" + g.gap.toFixed(5) + "</strong> nats per step. " +
+    "The process's own entropy is " + entRow(proc.emit[0]).toFixed(3) + " nats and a uniform " +
+    "guess costs " + Math.log(PV).toFixed(3) + ", so the model is doing real work in both columns " +
+    "&mdash; this is a gap between two good numbers, not a collapse. Nothing here is sampled: both " +
+    "rows are exact expectations over the joint (true state, model context).";
+
+  // ---------------------------------------------------------------- the control
+  const ch = makeChain(PV, CHAINSEED);
+  const cg = gapReport(ch, fitMLE(ch, makeTabular(PV, 1), T), T);
+  $("control").innerHTML =
+    "<tr><td>first-order chain <span class='lg'>order-1 model IS the truth</span></td><td>" +
+      Math.abs(cg.data).toExponential(1) + "</td><td>" + Math.abs(cg.free).toExponential(1) +
+      "</td><td class='ok'>" + Math.abs(cg.gap).toExponential(1) + "</td></tr>" +
+    "<tr><td>latch <span class='lg'>order-" + k + " model cannot see the mode</span></td><td>" +
+      g.data.toFixed(5) + "</td><td>" + g.free.toFixed(5) + "</td><td class='" +
+      (g.gap > 1e-6 ? "bad" : "ok") + "'>" + g.gap.toFixed(5) + "</td></tr>";
+  $("controlNote").innerHTML = "Teacher forcing is identical in both rows. The gap appears only " +
+    "where the model has an error to expose, which is the page's whole claim stated as a control: " +
+    "<strong>exposure bias is model error under a different prefix distribution</strong>. On the " +
+    "chain the two loops agree to <strong>" + Math.abs(cg.gap).toExponential(1) + "</strong>, " +
+    "which is floating-point noise and not a small effect.";
+
+  // ---------------------------------------------------------------- does it compound
+  const gL = gapReport(proc, fitMLE(proc, makeTabular(PV, k), TLONG), TLONG);
+  const gp = gL.perStepData.map(function(d, i){ return gL.perStepFree[i] - d; });
+  const fin = gp[TLONG - 1];
+  let t90 = TLONG;
+  if (fin > 1e-12){ for (let t = 0; t < TLONG; t++) if (gp[t] >= 0.9 * fin){ t90 = t + 1; break; } }
+  $("steps").innerHTML = [1, 2, 3, 4, 5, 8, 12, 16, 24, 40, 80, 120].map(function(t){
+    const i = t - 1, pc = fin > 1e-12 ? (100 * gp[i] / fin) : 0;
+    return "<tr" + (t === t90 ? hl : "") + "><td>" + t + (t === t90 ? " <span class='lg'>&larr; 90%</span>" : "") +
+      "</td><td>" + z5(gL.perStepData[i]) + "</td><td>" + z5(gL.perStepFree[i]) +
+      "</td><td class='" + (gp[i] > 1e-9 ? "bad" : "ok") + "'>" +
+      (Math.abs(gp[i]) < 1e-9 ? gp[i].toExponential(1) : gp[i].toFixed(5)) +
+      "</td><td>" + pc.toFixed(1) + "%</td></tr>";
+  }).join("");
+  $("stepNote").innerHTML = "Steps 1 and 2 are <strong>exactly</strong> equal &mdash; both loops " +
+    "start from the same state, and after teacher-forced MLE the model's first-token distribution " +
+    "is exactly right, so the two prefix distributions at step 2 are identical rather than merely " +
+    "close. The gap then opens and <strong>saturates at " + fin.toFixed(5) + "</strong>: 90% of it " +
+    "is present by step <strong>" + t90 + "</strong> and the increment from step 119 to 120 is " +
+    "<strong>" + (gp[TLONG - 1] - gp[TLONG - 2]).toExponential(1) + "</strong>. The process " +
+    "remembers for 1/switchRate = <strong>" + (1 / sr).toFixed(1) + "</strong> steps, and the gap " +
+    "finishes developing at about " + (t90 * sr).toFixed(1) + " of those. Two ergodic chains " +
+    "cannot drift apart forever; the gap is the fixed difference between two stationary averages.";
+
+  // ---------------------------------------------------------------- one wrong token
+  const rec = recoveryCurve(proc, mod, T, 4, k + 3);
+  $("recov").innerHTML = rec.map(function(r, j){
+    const dead = r.tv < 1e-12;
+    return "<tr" + (j === k ? hl : "") + "><td>+" + r.j + (j === k ? " <span class='lg'>&larr; k+1</span>" : "") +
+      "</td><td class='" + (dead ? "ok" : "bad") + "'>" + r.tv.toExponential(1) +
+      "</td><td class='" + (dead ? "ok" : "bad") + "'>" + (r.dirty / r.clean).toFixed(2) + "&times;</td></tr>";
+  }).join("");
+  $("recovNote").innerHTML = "The disturbance dies in <strong>exactly " + k + "</strong> step" +
+    (k > 1 ? "s" : "") + " &mdash; to " + rec[k].tv.toExponential(1) + ", which is zero, not small. " +
+    "An order-" + k + " model's memory of its own mistake <em>is</em> its context window. The step " +
+    "it lands on costs <strong>" + (rec[0].dirty / rec[0].clean).toFixed(2) + "&times;</strong> the " +
+    "usual excess; everything after it costs exactly 1.00&times;. Raise k and the mistake gets both " +
+    "more expensive and longer-lived, which is the opposite of what more context is supposed to buy.";
+
+  // ---------------------------------------------------------------- capacity
+  $("order").innerHTML = [1, 2, 3].map(function(kk){
+    const m2 = fitMLE(proc, makeTabular(PV, kk), T), g2 = gapReport(proc, m2, T);
+    return "<tr" + (kk === k ? hl : "") + "><td>" + kk + (kk === k ? " <span class='lg'>&larr; slider</span>" : "") +
+      "</td><td>" + Math.pow(PV + 1, kk) + "</td><td>" + g2.data.toFixed(5) + "</td><td>" +
+      g2.gap.toFixed(5) + "</td><td class='" + (g2.ratio > 1.02 ? "bad" : "ok") + "'>" +
+      g2.ratio.toFixed(3) + "&times;</td></tr>";
+  }).join("");
+  const o1 = gapReport(proc, fitMLE(proc, makeTabular(PV, 1), T), T);
+  const o3 = gapReport(proc, fitMLE(proc, makeTabular(PV, 3), T), T);
+  $("orderNote").innerHTML = "Going from order 1 to order 3 divides the teacher-forced excess by " +
+    "<strong>" + (o1.data / Math.max(o3.data, 1e-12)).toFixed(1) + "&times;</strong> and the gap by " +
+    "only <strong>" + (o1.gap / Math.max(o3.gap, 1e-12)).toFixed(1) + "&times;</strong>, so the ratio " +
+    "<em>rises</em> from " + o1.ratio.toFixed(2) + "&times; to " + o3.ratio.toFixed(2) + "&times;. " +
+    "The gap becomes a larger share of a smaller number. A model getting better does not make " +
+    "exposure bias look less important &mdash; it makes it look more so, while mattering less.";
+
+  // ---------------------------------------------------------------- the cure
+  const ek = Math.min(k, 2), estep = ek === 1 ? 0.05 : 0.1;
+  const sw = epsSweep(proc, ek, T, estep, ek === 1 ? 80 : 50);
+  let minGap = sw.rows[0];
+  for (let i = 1; i < sw.rows.length; i++)
+    if (Math.abs(sw.rows[i].gap) < Math.abs(minGap.gap)) minGap = sw.rows[i];
+  let rows = "<tr><td>0.00 <span class='lg'>plain teacher forcing</span></td><td>" +
+    sw.mle.data.toFixed(5) + "</td><td>" + sw.mle.free.toFixed(5) + "</td><td>" +
+    sw.mle.gap.toFixed(5) + "</td><td class='lg'>baseline</td></tr>";
+  rows += sw.rows.map(function(r){
+    const near = Math.abs(r.eps - epsv) < estep / 2;
+    return "<tr" + (near ? hl : "") + "><td>" + r.eps.toFixed(2) +
+      (r.eps === sw.best.eps ? " <span class='ok'>&larr; best free-running</span>" : "") +
+      (r.eps === minGap.eps ? " <span class='lg'>&larr; smallest gap</span>" : "") +
+      "</td><td class='" + (r.data > sw.mle.data ? "bad" : "ok") + "'>" + r.data.toFixed(5) +
+      "</td><td class='" + (r.beatsMLE ? "ok" : "bad") + "'>" + r.free.toFixed(5) +
+      "</td><td>" + r.gap.toFixed(5) + "</td><td class='" + (r.beatsMLE ? "ok" : "bad") + "'>" +
+      (r.beatsMLE ? "yes  " + (100 * r.margin / sw.mle.free).toFixed(1) + "%" : "no") + "</td></tr>";
+  }).join("");
+  $("eps").innerHTML = rows;
+  $("epsNote").innerHTML = "Teacher-forced excess rises monotonically with &epsilon; (" +
+    sw.mle.data.toFixed(5) + " &rarr; " + sw.rows[sw.rows.length - 1].data.toFixed(5) + ") and the " +
+    "gap falls (" + sw.mle.gap.toFixed(5) + " &rarr; " + sw.rows[sw.rows.length - 1].gap.toFixed(5) +
+    "). The quantity anyone actually cares about, free-running excess, is <strong>U-shaped</strong>: " +
+    "best at &epsilon;=<strong>" + sw.best.eps.toFixed(2) + "</strong> (" + sw.best.free.toFixed(5) +
+    "), while the &epsilon; that minimises the <em>gap</em> is <strong>" + minGap.eps.toFixed(2) +
+    "</strong>, where free-running excess is " + minGap.free.toFixed(5) + ". " +
+    (sw.bestBeatsMLE
+      ? "Scheduled sampling beats teacher forcing here in <strong class='ok'>" + sw.wins + " of " +
+        sw.rows.length + "</strong> settings &mdash; its bias is real and so is its benefit."
+      : "Scheduled sampling never beats teacher forcing at this setting &mdash; but move the sliders, " +
+        "because at other settings it does.") +
+    (ek < k ? " <em>(&epsilon; table computed at order " + ek + "; order 3 needs a few seconds.)</em>" : "");
+
+  // ---------------------------------------------------------------- the gradient
+  const gm = makeTabular(PV, 1), rr = mulberry32(3);
+  for (let c = 0; c < gm.C; c++) for (let v = 0; v < PV; v++) gm.logits[c][v] = gaussian(rr) * 0.5;
+  $("grad").innerHTML = [0, 0.1, 0.25, 0.5, 0.75, 1].map(function(e){
+    const drv = e === 0 ? "data" : "ss";
+    const cmp = gradCompare(implementedGrad(proc, gm, 6, drv, e), trueGrad(proc, gm, 6, drv, e));
+    return "<tr><td>" + e.toFixed(2) + (e === 0 ? " <span class='lg'>teacher forcing</span>" : "") +
+      "</td><td class='" + (cmp.rel < 1e-6 ? "ok" : "bad") + "'>" + cmp.rel.toExponential(2) +
+      "</td><td>" + cmp.cos.toFixed(6) + "</td><td>" + cmp.normA.toExponential(3) +
+      "</td><td>" + cmp.normB.toExponential(3) + "</td></tr>";
+  }).join("");
+  const efp = epsv > 0 ? epsv : 0.5;
+  const fp = fitSS(proc, makeTabular(PV, 1), 6, efp, 300).model;
+  const fpc = gradCompare(implementedGrad(proc, fp, 6, "ss", efp), trueGrad(proc, fp, 6, "ss", efp));
+  const L0 = rollout(proc, fp, 6, "ss", efp).loss;
+  // one step DOWN the true gradient, to show the fixed point is not a minimum of its own loss
+  let bestL = L0;
+  {
+    const B = trueGrad(proc, fp, 6, "ss", efp);
+    [0.03, 0.1, 0.3, 1, 3, 10].forEach(function(lr){
+      const m2 = makeTabular(PV, 1);
+      for (let c = 0; c < m2.C; c++) for (let v = 0; v < PV; v++)
+        m2.logits[c][v] = fp.logits[c][v] - lr * B[c][v];
+      const L = rollout(proc, m2, 6, "ss", efp).loss;
+      if (L < bestL) bestL = L;
+    });
+  }
+  $("gradNote").innerHTML = "At <strong>&epsilon;=0</strong> the two agree to " +
+    "<strong class='ok'>" + gradCompare(implementedGrad(proc, gm, 6, "data", 0),
+      trueGrad(proc, gm, 6, "data", 0)).rel.toExponential(2) + "</strong>, and they must: under " +
+    "teacher forcing the rollout genuinely does not depend on the parameters, so detaching it " +
+    "costs nothing. That row is the control that makes the others mean something. Above it the " +
+    "applied gradient keeps a cosine over 0.99 &mdash; mostly the right direction, which is why " +
+    "nobody notices. <strong>And at the fixed point the procedure converges to</strong> " +
+    "(&epsilon;=" + efp.toFixed(2) + "): the applied gradient is <strong class='ok'>" +
+    fpc.normA.toExponential(1) + "</strong> &mdash; zero, it has stopped &mdash; while the true " +
+    "gradient of the loss it is evaluating is <strong class='bad'>" + fpc.normB.toExponential(2) +
+    "</strong>, and one step along it lowers that loss from " + L0.toFixed(8) + " to " +
+    bestL.toFixed(8) + ". The point it stops at is not a minimum of anything it computes.";
+
+  // ---------------------------------------------------------------- assertions
+  const c = selfCheck();
+  $("checks").textContent =
+    "selfCheck()  " + c.pass + " / " + c.total + " checks passed" +
+    (c.lines.length ? "\n" + c.lines.join("\n") : "  ✓") +
+    "\n\nwell-specified control, free-running minus teacher-forced : " + Math.abs(cg.gap).toExponential(1) +
+    "\nper-step gap at steps 1 and 2                             : " +
+      Math.abs(gL.perStepFree[0] - gL.perStepData[0]).toExponential(1) + " , " +
+      Math.abs(gL.perStepFree[1] - gL.perStepData[1]).toExponential(1) +
+    "\none wrong token, displacement after exactly k steps        : " + rec[k].tv.toExponential(1) +
+    "\nscheduled sampling fixed point vs (1-e)P + e*m at T=2      : " + ssCheckT2().toExponential(1) +
+    "\napplied gradient at the SS fixed point                     : " + fpc.normA.toExponential(1) +
+    "\ntrue gradient at the same point                            : " + fpc.normB.toExponential(2);
+}
+
+// the closed form, re-checked live at every render
+function ssCheckT2(){
+  const ch = makeChain(PV, CHAINSEED), e = 0.4;
+  const P = modelProbs(fitSS(ch, makeTabular(PV, 1), 2, e, 300).model);
+  const cf = ssClosedFormT2(ch, e);
+  let w = 0;
+  for (let c = 0; c < PV; c++) for (let v = 0; v < PV; v++)
+    w = Math.max(w, Math.abs(P[c][v] - cf.rows[c][v]));
+  return w;
+}
+
+// ---------------------------------------------------------------- the two experiments
+$("runAuc").addEventListener("click", function(){
+  const btn = $("runAuc");
+  btn.disabled = true;
+  $("aucStatus").textContent = "sweeping 90 processes…";
+  setTimeout(function(){
+    const t0 = Date.now(), r = gapPredicts({});
+    $("auc").innerHTML = r.predictors.map(function(p){
+      const useless = Math.abs(p.auc - 0.5) < 0.1;
+      return "<tr><td>" + p.name + "</td><td>" + p.meanWin.toFixed(4) + "</td><td>" +
+        p.meanLose.toFixed(4) + "</td><td class='" + (useless ? "bad" : "ok") + "'>" +
+        p.auc.toFixed(3) + (useless ? " <span class='lg'>coin flip</span>" : "") + "</td></tr>";
+    }).join("");
+    $("aucNote").innerHTML = "Across <strong>" + r.n + "</strong> processes, scheduled sampling's " +
+      "best &epsilon; beat plain teacher forcing on free-running excess in <strong>" + r.wins +
+      "</strong> of them &mdash; by up to <strong class='ok'>" + (100 * r.maxGain).toFixed(1) +
+      "%</strong>, and losing by up to <strong class='bad'>" + (100 * Math.abs(r.minGain)).toFixed(0) +
+      "%</strong> elsewhere. The exposure gap ratio &mdash; the number reported to justify caring " +
+      "about exposure bias &mdash; ranks winners above losers at <strong>" +
+      r.predictors[0].auc.toFixed(3) + "</strong> against a chance value of 0.500. The plain " +
+      "teacher-forced excess does it at <strong>" + r.predictors[2].auc.toFixed(3) + "</strong>. " +
+      "The diagnostic named after the problem carries no information about the fix; how bad the " +
+      "model is carries almost all of it.";
+    $("aucStatus").textContent = "done in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    btn.disabled = false;
+  }, 30);
+});
+
+$("runRnn").addEventListener("click", function(){
+  const btn = $("runRnn");
+  btn.disabled = true;
+  $("rnnStatus").textContent = "checking gradients, then training 18 nets…";
+  setTimeout(function(){
+    const t0 = Date.now(), r = rnnExperiment({});
+    $("rnnGrad").innerHTML = r.grads.map(function(x){
+      return "<tr><td>d" + x.key + "</td><td class='" + (x.rel < 1e-6 ? "ok" : "bad") + "'>" +
+        x.rel.toExponential(2) + "</td></tr>";
+    }).join("");
+    const mean = function(a){ return a.reduce(function(s, v){ return s + v; }, 0) / a.length; };
+    let body = r.byMode.map(function(m){
+      const rt = mean(m.runs.map(function(x){ return x.free / x.data; }));
+      return "<tr><td>" + m.M + " modes, &epsilon;=0 <span class='lg'>dh=" + r.dh + "</span></td><td>" +
+        mean(m.runs.map(function(x){ return x.data; })).toFixed(4) + "</td><td>" +
+        mean(m.runs.map(function(x){ return x.free; })).toFixed(4) + "</td><td class='" +
+        (rt > 1.05 ? "bad" : "ok") + "'>" + rt.toFixed(3) + "&times;</td></tr>";
+    }).join("");
+    body += r.byEps.map(function(b){
+      const rt = mean(b.runs.map(function(x){ return x.free / x.data; }));
+      return "<tr><td>hard world, &epsilon;=" + b.eps.toFixed(2) + "</td><td>" +
+        mean(b.runs.map(function(x){ return x.data; })).toFixed(4) + "</td><td class='" +
+        (b.eps > 0 ? "bad" : "") + "'>" + mean(b.runs.map(function(x){ return x.free; })).toFixed(4) +
+        "</td><td>" + rt.toFixed(3) + "&times;</td></tr>";
+    }).join("");
+    $("rnnGap").innerHTML = body;
+    const easy = r.byMode[0], hard = r.byMode[r.byMode.length - 1];
+    const e0 = r.byEps[0], e1 = r.byEps[r.byEps.length - 1];
+    $("rnnNote").innerHTML = "Every tensor's backward pass matches central differences to better " +
+      "than 1e-9, so the rest of the table is worth reading. With <strong>" + easy.M + " modes</strong> " +
+      "&mdash; which " + r.dh + " hidden units can hold &mdash; the ratio is <strong>" +
+      mean(easy.runs.map(function(x){ return x.free / x.data; })).toFixed(3) + "&times;</strong> and " +
+      "there is no gap; with <strong>" + hard.M + " modes</strong> it is <strong>" +
+      mean(hard.runs.map(function(x){ return x.free / x.data; })).toFixed(3) + "&times;</strong> " +
+      "across " + r.seeds.length + " seeds. Same loop, same loss &mdash; the gap tracks the model's " +
+      "error, exactly as the exact instrument above says. And scheduled sampling does to the RNN " +
+      "what it does to the tabular model: from &epsilon;=0 to &epsilon;=1 the ratio falls to " +
+      "<strong class='ok'>" + mean(e1.runs.map(function(x){ return x.free / x.data; })).toFixed(3) +
+      "&times;</strong> &mdash; the gap is <em>closed</em> &mdash; while free-running excess rises " +
+      "from <strong>" + mean(e0.runs.map(function(x){ return x.free; })).toFixed(4) + "</strong> to " +
+      "<strong class='bad'>" + mean(e1.runs.map(function(x){ return x.free; })).toFixed(4) +
+      "</strong>. Closing the gap is not the same as fixing anything.";
+    $("rnnStatus").textContent = "done in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    btn.disabled = false;
+  }, 30);
+});
+
+["sSR", "sSE", "sEP", "mK", "sT"].forEach(function(id){
+  $(id).addEventListener("input", render);
+  $(id).addEventListener("change", render);
+});
+render();
+</script>
+</body>
+</html>

@@ -69,6 +69,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 65 — AdamW: weight decay is not L2](https://dev48.infy.uk/dl/day65-adamw.html) — `day65-adamw.html`
 - [DeepLearningFromZero · Day 66 — Attention masks](https://dev48.infy.uk/dl/day66-attention-masks.html) — `day66-attention-masks.html`
 - [DeepLearningFromZero · Day 67 — Weight tying](https://dev48.infy.uk/dl/day67-weight-tying.html) — `day67-weight-tying.html`
+- [DeepLearningFromZero · Day 68 — Teacher forcing](https://dev48.infy.uk/dl/day68-teacher-forcing.html) — `day68-teacher-forcing.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk
