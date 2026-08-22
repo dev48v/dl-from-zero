@@ -70,6 +70,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 66 — Attention masks](https://dev48.infy.uk/dl/day66-attention-masks.html) — `day66-attention-masks.html`
 - [DeepLearningFromZero · Day 67 — Weight tying](https://dev48.infy.uk/dl/day67-weight-tying.html) — `day67-weight-tying.html`
 - [DeepLearningFromZero · Day 68 — Teacher forcing](https://dev48.infy.uk/dl/day68-teacher-forcing.html) — `day68-teacher-forcing.html`
+- [DeepLearningFromZero · Day 69 — KV cache](https://dev48.infy.uk/dl/day69-kv-cache.html) — `day69-kv-cache.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk

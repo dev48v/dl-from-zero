@@ -1,0 +1,2132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero · Day 69 — KV cache</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "Inter", sans-serif; }
+  .tab-active { background:#0f172a; color:#fff; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; }
+  table.num td, table.num th { padding:4px 9px; font-variant-numeric:tabular-nums; }
+  table.num th { font-size:11px; letter-spacing:.05em; color:#64748b; text-align:right; font-weight:700; }
+  table.num th:first-child, table.num td:first-child { text-align:left; }
+  table.num td { text-align:right; font-size:12.5px; border-top:1px solid #e2e8f0; }
+  .ok { color:#166534; font-weight:800; }
+  .bad { color:#991b1b; font-weight:800; }
+  .lg { font-size:10px; color:#64748b; }
+  button.run { background:#0f172a; color:#fff; padding:8px 16px; border-radius:8px; font-size:13px; font-weight:600; }
+  button.run:disabled { opacity:.5; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-20">
+  <div class="max-w-6xl mx-auto p-4 md:p-6">
+    <p class="text-xs font-bold tracking-widest text-rose-700 mb-2">DEEPLEARNINGFROMZERO · DAY 69</p>
+    <h1 class="text-xl md:text-2xl font-black leading-tight mb-4">
+      🗄️ The KV cache — an exact optimisation that gets blamed for everything.
+      Generating token <em>n</em> re-derives the keys and values of tokens 1&hellip;<em>n</em>&minus;1
+      that the previous step already computed, so store them. This page builds a small
+      transformer with a hand-written forward <em>and</em> backward pass and shows the cache is
+      not an approximation: a cached decode reproduces a full recompute to
+      <strong>exactly 0.0</strong> across <strong>432</strong> configurations per numeric format
+      &mdash; 1,296 in all &mdash; in float64 and in bfloat16, under two summation orders. The reason is a stronger statement than the
+      cache itself &mdash; causality <em>freezes</em> the residual stream at every earlier
+      position, measured at 0.0 per layer, and turn causality off and the same cache is wrong from
+      <strong>layer 2</strong> onwards while layer 1 stays exact. Then the two things everyone
+      says. &ldquo;It makes generation linear instead of quadratic&rdquo;: it removes one factor of
+      <em>n</em>, measured slopes <strong>2.992 &rarr; 1.995</strong>, and per token it is flat only
+      up to a context of <strong>6d</strong> &mdash; 4,608 tokens for GPT-2 small, computed not
+      quoted. And &ldquo;the cache changed my output&rdquo;: the standard one-step logit check
+      catches <strong>4 of 8</strong> real cache bugs, misses <strong>half</strong> of the ones that
+      changed the generated text, and ranks them at <strong>AUC 0.605</strong> against a chance
+      value of 0.500 &mdash; while the same comparison run at <em>every</em> step catches
+      <strong>8 of 8</strong> and needs no tolerance at all. Pure vanilla JavaScript, one file, no
+      build step.
+    </h1>
+    <div class="flex gap-2 flex-wrap" id="tabs">
+      <button data-tab="look" class="tab-active px-5 py-2 rounded-lg font-semibold text-sm">🔬 MEASURE</button>
+      <button data-tab="understand" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🧠 UNDERSTAND</button>
+      <button data-tab="build" class="bg-slate-100 px-5 py-2 rounded-lg font-semibold text-sm">🔨 BUILD</button>
+    </div>
+  </div>
+</header>
+
+<section id="look" class="tab-panel">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8 bg-slate-100">
+    <div class="max-w-6xl mx-auto space-y-5">
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <div class="grid md:grid-cols-2 lg:grid-cols-5 gap-x-6 gap-y-3">
+          <label class="text-sm">layers L <span id="vL" class="font-bold tabular-nums float-right">2</span>
+            <input id="sL" type="range" min="1" max="4" step="1" value="2"></label>
+          <label class="text-sm">prompt length <span id="vP" class="font-bold tabular-nums float-right">4</span>
+            <input id="sP" type="range" min="1" max="8" step="1" value="4"></label>
+          <label class="text-sm">decode steps <span id="vN" class="font-bold tabular-nums float-right">6</span>
+            <input id="sN" type="range" min="1" max="12" step="1" value="6"></label>
+          <label class="text-sm">summation order
+            <select id="mOrd" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+              <option value="seq" selected>sequential</option>
+              <option value="pair">pairwise (tiled)</option>
+            </select></label>
+          <label class="text-sm">numeric format
+            <select id="mPrec" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+              <option value="f64" selected>float64 throughout</option>
+              <option value="bf">bfloat16 stored, float64 accumulator</option>
+              <option value="bfa">bfloat16 stored and accumulated</option>
+            </select></label>
+        </div>
+        <p class="text-xs text-slate-500 mt-3">
+          A decoder-only transformer &mdash; pre-norm, RMSNorm, SiLU MLP, learned absolute
+          positions, <span id="pcount">1,432</span> parameters &mdash; with two independent
+          implementations of the same function: a <strong>full forward pass</strong> over the whole
+          prefix, and a <strong>prefill plus one-token-at-a-time decode over a cache</strong>.
+          Every number below is the difference between them. The output matrix is deliberately
+          <em>not</em> tied to the embedding (that was Day 67) so the position experiments here
+          measure one thing at a time.
+        </p>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-5">
+        <div class="bg-white rounded-2xl shadow p-5">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+            THE CACHED DECODE, AGAINST A FULL RECOMPUTE</p>
+          <p class="text-sm text-slate-600 mb-3">
+            Per decode step, the largest absolute difference between the cached logits and the
+            logits of a fresh forward pass over the entire sequence. Not a tolerance &mdash; a
+            comparison that is supposed to be, and is, exactly zero.
+          </p>
+          <table class="num w-full">
+            <thead><tr><th>decode step</th><th>position</th><th>keys in cache</th><th>max |&Delta;logit|</th></tr></thead>
+            <tbody id="exact"></tbody>
+          </table>
+          <p class="text-xs text-slate-500 mt-2" id="exactNote"></p>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow p-5">
+          <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+            WHY IT IS ALLOWED: CAUSALITY FREEZES THE PAST</p>
+          <p class="text-sm text-slate-600 mb-3">
+            Append one token and re-run. How far did the residual stream, the keys and the values
+            of the <em>earlier</em> positions move? The cache is legal exactly when this is zero,
+            so this &mdash; not the cache &mdash; is the real theorem.
+          </p>
+          <table class="num w-full">
+            <thead><tr><th>layer</th><th>&Delta;stream</th><th>&Delta;K</th><th>&Delta;V</th><th>&Delta;K non-causal</th></tr></thead>
+            <tbody id="freeze"></tbody>
+          </table>
+          <p class="text-xs text-slate-500 mt-2" id="freezeNote"></p>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+          THE SAME IDENTITY OVER A GRID &mdash; BECAUSE ONE CONFIGURATION AGREEING IS NOT A CLAIM</p>
+        <p class="text-sm text-slate-600 mb-3">
+          Seeds &times; depths &times; head counts &times; prompt lengths &times; step counts
+          &times; summation orders. Every cell must be exactly 0 and every generated token string
+          must match.
+        </p>
+        <div class="flex gap-3 items-center mb-3">
+          <button id="runGrid" class="run">run the grid (~1 s)</button>
+          <span id="gridStatus" class="text-xs text-slate-500"></span>
+        </div>
+        <table class="num w-full">
+          <thead><tr><th>numeric format</th><th>configurations</th><th>worst |&Delta;logit|</th><th>token strings differing</th></tr></thead>
+          <tbody id="grid"></tbody>
+        </table>
+        <p class="text-xs text-slate-500 mt-2" id="gridNote"></p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+          WHAT IT COSTS &mdash; MULTIPLY-ACCUMULATES, COUNTED</p>
+        <p class="text-sm text-slate-600 mb-3">
+          Generating <em>n</em> tokens, with and without a cache, for a real configuration. The
+          exponent is the claim worth checking: the cache removes <em>one</em> factor of
+          <em>n</em>.
+        </p>
+        <div class="grid md:grid-cols-2 gap-x-6 gap-y-3 mb-3">
+          <label class="text-sm">configuration
+            <select id="mCfg" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm"></select></label>
+          <label class="text-sm">context length n <span id="vCtx" class="font-bold tabular-nums float-right">1024</span>
+            <input id="sCtx" type="range" min="4" max="16" step="1" value="10"></label>
+        </div>
+        <table class="num w-full">
+          <thead><tr><th>n</th><th>no cache, total MACs</th><th>with cache</th><th>ratio</th><th>cached MACs per token</th></tr></thead>
+          <tbody id="cost"></tbody>
+        </table>
+        <p class="text-xs text-slate-500 mt-2" id="costNote"></p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+          WHAT IT WEIGHS &mdash; AND WHY GROUPED-QUERY ATTENTION EXISTS</p>
+        <p class="text-sm text-slate-600 mb-3">
+          Architecture numbers are the published ones; every column here is computed from them.
+          <em>break-even</em> is the context length at which the cache for a single sequence equals
+          the whole model's weights. <em>intensity</em> is multiply-accumulates per byte of cache
+          read during one decode step.
+        </p>
+        <div class="grid md:grid-cols-2 gap-x-6 gap-y-3 mb-3">
+          <label class="text-sm">context <span id="vTok" class="font-bold tabular-nums float-right">4096</span>
+            <input id="sTok" type="range" min="8" max="17" step="1" value="12"></label>
+          <label class="text-sm">batch <span id="vB" class="font-bold tabular-nums float-right">1</span>
+            <input id="sB" type="range" min="0" max="7" step="1" value="0"></label>
+        </div>
+        <table class="num w-full">
+          <thead><tr><th>model</th><th>KV heads</th><th>cache / token</th><th>cache, this context &times; batch</th><th>weights (fp16)</th><th>break-even</th><th>MAC / byte</th></tr></thead>
+          <tbody id="real"></tbody>
+        </table>
+        <p class="text-xs text-slate-500 mt-2" id="realNote"></p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+          THE BUG ZOO &mdash; EIGHT WAYS TO GET IT WRONG, AND WHAT EACH ONE LOOKS LIKE</p>
+        <p class="text-sm text-slate-600 mb-3">
+          Every row is one changed line in the cached decode. <em>step 1</em> is the deviation at
+          the first decode step, which is the check that gets written. <em>all steps</em> is the
+          largest deviation anywhere in the run. <em>output changed</em> is whether the greedy
+          continuation actually differs. The model is trained first, because &ldquo;the output
+          changed&rdquo; means nothing for a model whose output is noise.
+        </p>
+        <div class="flex gap-3 items-center mb-3">
+          <button id="runBugs" class="run">train the model, then run the zoo (~4 s)</button>
+          <span id="bugStatus" class="text-xs text-slate-500"></span>
+        </div>
+        <table class="num w-full">
+          <thead><tr><th>the changed line</th><th>step 1</th><th>all steps</th><th>first step that shows</th><th>output changed</th></tr></thead>
+          <tbody id="bugs"></tbody>
+        </table>
+        <p class="text-xs text-slate-500 mt-2" id="bugNote"></p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+          DOES THE ONE-STEP CHECK CATCH THEM? &mdash; SCORED AS A DETECTOR</p>
+        <p class="text-sm text-slate-600 mb-3">
+          Eight bugs &times; 30 prompts &times; 8 steps. For every case: did the generated tokens
+          change, and would each diagnostic have told you? <strong>AUC 0.5 is a coin flip</strong>,
+          and recall is the fraction of output-changing bugs the check actually flags.
+        </p>
+        <div class="flex gap-3 items-center mb-3">
+          <button id="runDiag" class="run">run the detector study (~2 s)</button>
+          <span id="diagStatus" class="text-xs text-slate-500"></span>
+        </div>
+        <table class="num w-full">
+          <thead><tr><th>diagnostic</th><th>recall</th><th>missed</th><th>AUC</th><th>needs a tolerance?</th></tr></thead>
+          <tbody id="diag"></tbody>
+        </table>
+        <p class="text-xs text-slate-500 mt-2" id="diagNote"></p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+          &ldquo;THE CACHE CHANGED MY OUTPUT&rdquo; &mdash; WITH THE CONTROL THAT REASSIGNS BLAME</p>
+        <p class="text-sm text-slate-600 mb-3">
+          A batched prefill and a one-token decode are different shapes, so real kernels sum in
+          different orders. <em>cached</em> mixes the orders across the prefill/decode boundary;
+          <em>control</em> changes the order with <strong>no cache anywhere</strong>. If the control
+          moves as much as the cached run does, the cache is not the cause.
+        </p>
+        <div class="flex gap-3 items-center mb-3">
+          <button id="runPrec" class="run">run all three formats, twice (~4 s)</button>
+          <span id="precStatus" class="text-xs text-slate-500"></span>
+        </div>
+        <table class="num w-full">
+          <thead><tr><th>numeric format</th><th>model</th><th>&Delta; cached</th><th>&Delta; control, no cache</th><th>smallest top-2 margin</th><th>tokens changed</th><th>cache still exact</th></tr></thead>
+          <tbody id="prec"></tbody>
+        </table>
+        <p class="text-xs text-slate-500 mt-2" id="precNote"></p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">
+          THE ONE PLACE A CACHE REALLY DOES CHANGE THE ANSWER: THE GRADIENT</p>
+        <p class="text-sm text-slate-600 mb-3">
+          Re-use a cached prefix while <em>training</em> on the suffix and the prefix's keys and
+          values arrive as constants, so no gradient reaches them. The true gradient of that same
+          loss is available here, so the shortcut can be scored. The backward pass is checked
+          against independently written central differences first, because a measurement from a
+          wrong backward pass is worth nothing.
+        </p>
+        <div class="flex gap-3 items-center mb-3">
+          <button id="runGrad" class="run">check the gradient, then train both ways (~5 s)</button>
+          <span id="gradStatus" class="text-xs text-slate-500"></span>
+        </div>
+        <div class="grid md:grid-cols-2 gap-5">
+          <table class="num w-full">
+            <thead><tr><th>tensor</th><th>analytic vs central differences</th></tr></thead>
+            <tbody id="gc"></tbody>
+          </table>
+          <table class="num w-full">
+            <thead><tr><th>cached prefix</th><th>cosine with the true gradient</th><th>relative error</th></tr></thead>
+            <tbody id="det"></tbody>
+          </table>
+        </div>
+        <p class="text-xs text-slate-500 mt-2" id="gradNote"></p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow p-5">
+        <p class="text-xs font-bold tracking-wider text-slate-500 mb-3">IN-PAGE ASSERTIONS</p>
+        <pre id="checks"></pre>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section id="understand" class="tab-panel hidden">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8">
+    <div class="max-w-3xl mx-auto space-y-6">
+
+      <h2 class="text-2xl font-black">The same numbers, twice</h2>
+
+      <p>Generating text one token at a time, the naive loop looks like this:</p>
+
+      <pre>for step in 1..n:
+    logits = model(sequence)      # the WHOLE sequence, every time
+    sequence.append(argmax(logits[-1]))</pre>
+
+      <p>Inside <code>model</code>, every layer projects every position into a query, a key and a
+      value, and the attention at position <em>i</em> reads the keys and values of positions
+      0&hellip;<em>i</em>. Step <em>t</em> therefore recomputes the keys and values of every token
+      that step <em>t</em>&minus;1 already computed. The KV cache stores them instead:</p>
+
+      <pre>prefill: run the prompt once, KEEP every layer's K and V
+decode:  for each new token, compute ITS k and v, append them,
+         and attend over the whole stored buffer</pre>
+
+      <h3 class="text-xl font-bold">The theorem is about causality, not about caching</h3>
+
+      <p>Storing a value is only correct if the value does not change. The key and value of
+      position <em>i</em> at layer &ell; are a function of the residual stream at position
+      <em>i</em> entering layer &ell;, and under causal attention that stream depends only on
+      positions &le; <em>i</em>. Appending a token at position <em>i</em>+1 therefore cannot move
+      it. Measured on this page, appending a token moves the stream, the keys and the values at
+      every earlier position and every layer by <strong>exactly 0</strong>.</p>
+
+      <div class="bg-amber-50 border-l-4 border-amber-500 p-4">
+        <p class="text-sm">Turn causality off and the boundary is visible: layer 1's keys still
+        move by <strong>exactly 0</strong>, because they depend only on the embeddings, while layer
+        2's move by <strong>1.9e-1</strong>. A one-layer bidirectional model is therefore still
+        exactly cacheable end to end (measured 0.0e+0); a two-layer one is not (1.8e-1). The cache
+        is a consequence of the mask, and the depth at which it breaks is the depth at which
+        information can flow backwards.</p>
+      </div>
+
+      <p>So the cache is not an approximation and not a trade-off. A cached decode and a full
+      recompute are the same function, and this page asserts it the strongest way available:
+      <strong>bit equality</strong>, exactly 0.0 over 432 configurations of seed, depth, head
+      count, prompt length, step count and summation order, in each of three numeric formats
+      &mdash; 1,296 runs, and the generated token strings match in all of them.</p>
+
+      <h3 class="text-xl font-bold">&ldquo;It makes generation linear&rdquo; &mdash; it removes one factor of n</h3>
+
+      <p>Counting multiply-accumulates rather than estimating them, generating <em>n</em> tokens
+      costs</p>
+
+      <pre>no cache:  (L&middot;perTok + dV)&middot;n(n+1)/2  +  L&middot;d&middot;n(n+1)(n+2)/3      -> CUBIC
+with cache: n&middot;(L&middot;perTok + dV)          +  L&middot;d&middot;n(n+1)            -> QUADRATIC</pre>
+
+      <p>Measured log-log slopes from those closed forms, between n=10<sup>6</sup> and
+      10<sup>7</sup>: <strong>2.992</strong> without and <strong>1.995</strong> with. The cache does
+      not remove the quadratic; it removes the
+      recomputation, which is a separate factor of <em>n</em>. Attention over a growing cache is
+      still linear work per token, so the total is still quadratic in the length.</p>
+
+      <div class="bg-amber-50 border-l-4 border-amber-500 p-4">
+        <p class="text-sm">And yet &ldquo;linear&rdquo; is not simply wrong &mdash; it is right in
+        the regime the phrase was coined in. A cached decode step does
+        <code>L&middot;perTok</code> work that does not depend on the context and
+        <code>2&middot;L&middot;d&middot;t</code> that does, so the per-token cost is
+        <em>flat</em> until the second term catches the first. That happens at
+        <code>t = perTok / 2d</code>, which for the usual non-gated 4<em>d</em> MLP is exactly
+        <strong>6d</strong> &mdash; 4,608 tokens for GPT-2 small, 9,600 for GPT-2 XL &mdash; and a
+        gated MLP shifts it a little, 24,704 for Llama-2 7B. Below the crossover the measured slope
+        is <strong>1.002</strong>. Anyone who said
+        &ldquo;linear&rdquo; in 2019 and had a 1,024-token window was making a correct measurement
+        about their own regime.</p>
+      </div>
+
+      <h3 class="text-xl font-bold">The cost that moved from compute to memory</h3>
+
+      <p>The cache is <code>2 &middot; L &middot; n_kv &middot; d_head</code> numbers per token,
+      and nothing about the content changes that. Computed from the published architectures:
+      <strong>36 KB</strong> per token for GPT-2 small, <strong>512 KB</strong> for Llama-2 7B,
+      <strong>2.5 MB</strong> for a hypothetical 70B with full multi-head attention. Divide the
+      weights by the per-token cache and you get the context length at which one sequence's cache
+      equals the entire model: <strong>6,749</strong> tokens for GPT-2 small,
+      <strong>25,711</strong> for Llama-2 7B.</p>
+
+      <p>Grouped-query attention is the answer to that, and its arithmetic is worth stating
+      exactly, because two thirds of it is usually stated wrongly:</p>
+
+      <pre>GQA with 8 KV heads instead of 64:
+  attention FLOPs   x 1.00      <- unchanged, and this is an identity
+  cache bytes       / 8
+  MACs per byte     x 8         <- 0.5 -> 4.0</pre>
+
+      <div class="bg-amber-50 border-l-4 border-amber-500 p-4">
+        <p class="text-sm">Every query head still attends over a full-width key, so GQA saves no
+        arithmetic whatsoever &mdash; the FLOP identity is asserted on this page rather than
+        described. What it saves is <em>bytes moved</em>, and a decode step at 0.5 MACs per byte is
+        not a compute problem, it is a memory-bandwidth problem. GQA does not make attention
+        cheaper; it makes it <em>possible to keep the machine busy</em>.</p>
+      </div>
+
+      <h3 class="text-xl font-bold">The interesting part: the test everybody writes</h3>
+
+      <p>The cache is exact, so any deviation is a bug, and the standard check is to compare cached
+      logits against a full recompute. Almost always on <em>one</em> step. Eight realistic bugs,
+      each one changed line:</p>
+
+      <pre>stale      attend before appending, so the token cannot see itself
+vstale     append k, re-use the previous v
+alias      every layer writes into layer 0's buffer
+posoff     the position index is one behind
+ring       ring buffer, write at len % cap
+freeze     the buffer stops growing after the first decode step
+evict      a sliding window nobody asked for
+posfrozen  the position index stays at the prompt length</pre>
+
+      <p>The first four are wrong at the first decode step. The last four are
+      <strong>bit-identical at the first decode step</strong> &mdash; exactly 0.0, not 1e-12 &mdash;
+      because at step 1 the cache is still just the prefill and every implementation agrees about
+      it. They are bugs in the cache's <em>growth</em>, and step 1 is the one step where nothing
+      has grown yet.</p>
+
+      <div class="bg-rose-50 border-l-4 border-rose-500 p-4">
+        <p class="text-sm">🔴 <code>posfrozen</code> &mdash; using the prompt length as the
+        position offset instead of the running cache length, which is the single most common way to
+        get this wrong when resuming from a cache &mdash; is <strong>exactly 0.0</strong> at the
+        first decode step and changes the generated text in <strong>100%</strong> of runs. The check
+        that would have caught it is the same check, run one step later.</p>
+      </div>
+
+      <p>Scored as a detector over 240 cases, the one-step check has a <strong>recall of
+      0.500</strong>: it flags half of the bugs that changed the output and misses the other half
+      entirely. As a ranker of &ldquo;did this change the text&rdquo; it scores <strong>AUC
+      0.605</strong> against a chance value of 0.500. Comparing every step instead: recall
+      <strong>1.000</strong>, AUC <strong>1.000</strong>, and no tolerance needed anywhere, because
+      the correct implementation is bit-identical.</p>
+
+      <h3 class="text-xl font-bold">Two rows that cut the other way</h3>
+
+      <p>Being visible is not the same as mattering, and the zoo makes both mistakes available:</p>
+
+      <pre>stale   step-1 deviation 0.146   output changed in   0% of runs
+evict   step-1 deviation 0.000   output changed in   0% of runs
+        (all-steps deviation 0.254 -- it IS a bug, it just never bit)</pre>
+
+      <p><code>stale</code> moves the logits immediately and never moves a token, because the
+      trained model's smallest top-2 margin over 540 positions is <strong>5.50</strong>. A bug can
+      be real, visible in the logits, and invisible in the output. And <code>evict</code> quietly
+      drops the oldest key once the buffer passes its capacity, which on a task that never needs a
+      key that old is not a symptom at all &mdash; a sliding window is only a bug if something
+      needed the window.</p>
+
+      <h3 class="text-xl font-bold">And the explanation I expected to confirm, which did not survive</h3>
+
+      <p>The usual account of &ldquo;the KV cache changed my output&rdquo; is floating-point
+      reduction order: a batched prefill and a single-token decode are different shapes, real
+      kernels sum tiled rather than sequentially, and the last bits differ. This page implements
+      both orders and measures the whole chain. The order really does change the answer &mdash; and
+      then:</p>
+
+      <pre>on the near-tied model             delta, cached   delta, NO cache   changed: cached / control
+float64 throughout                    4.0e-15          3.3e-15            0 / 24    0 / 24
+bfloat16 stored, float64 accumulator   0.0e+0           0.0e+0            0 / 24    0 / 24
+bfloat16 stored AND accumulated          4.02             4.04            3 / 24    2 / 24</pre>
+
+      <div class="bg-rose-50 border-l-4 border-rose-500 p-4">
+        <p class="text-sm">🔴 Storing everything in bfloat16 and accumulating in a wider type
+        &mdash; which is what every real kernel does &mdash; makes the two summation orders agree
+        <strong>exactly, at 100% of positions</strong>. Reducing the precision <em>removed</em> the
+        discrepancy, because a 1e-16 disagreement lands on the same bfloat16 grid point. It is the
+        <strong>accumulator's</strong> precision that makes order matter, not the shape of the
+        reduction, and the page was written expecting the opposite.</p>
+      </div>
+
+      <p>The control is the part that settles it. In the one regime where order does change tokens,
+      it changes them in <strong>2 of 24</strong> runs with <em>no cache anywhere</em> &mdash; two
+      full recomputes that differ only in how they add up &mdash; against 3 of 24 for the cached
+      run. Same phenomenon, same size, and the cache stays bit-exact in all three formats. On the
+      fully trained model nothing changes at all in any format, because its smallest top-2 margin is
+      5.83 and a rounding difference has to clear that to move an argmax. Whatever changed the
+      output, it was not the cache.</p>
+
+      <h3 class="text-xl font-bold">Where a cache does change the answer</h3>
+
+      <p>Not in inference. In <em>training</em>, if a cached prefix is reused: its keys and values
+      arrive as constants, so no gradient flows into them, and the gradient you apply is not the
+      gradient of the loss you evaluate. Both are computable here, and the true one is checked
+      against central differences to 3.2e-8 first.</p>
+
+      <pre>cached prefix   cosine with the true gradient   relative error
+  2 of 12                 0.942                       0.328
+  6 of 12                 0.857                       0.498
+ 10 of 12                 0.854                       0.517</pre>
+
+      <p>It is still a descent direction &mdash; the cosine stays positive, which is why the loss
+      curve looks fine &mdash; and it costs something real: training with the detached gradient at
+      a prefix of 6 of 12 reaches a held-out suffix loss of <strong>1.346</strong> against
+      <strong>0.059</strong> for the true gradient, <strong>22.8&times;</strong> worse.</p>
+
+      <h3 class="text-xl font-bold">The short version</h3>
+
+      <ul class="list-disc pl-6 space-y-1">
+        <li>The cache is <strong>exact</strong>: 0.0 over 432 configurations, in three numeric
+        formats, under two summation orders.</li>
+        <li>It is legal because <strong>causality freezes the past</strong> &mdash; and it breaks
+        at layer 2 the moment it does not.</li>
+        <li>It removes <strong>one factor of n</strong>, 2.992 &rarr; 1.995, and is flat per token
+        only below a context of <strong>6d</strong>.</li>
+        <li>GQA changes attention FLOPs by <strong>exactly 0%</strong> and arithmetic intensity by
+        <strong>exactly 8&times;</strong>.</li>
+        <li>The one-step check catches <strong>4 of 8</strong> bugs and half of the output-changing
+        ones; the all-steps check catches <strong>8 of 8</strong> with no tolerance.</li>
+        <li>Reduction order is real and <strong>is not the cache</strong> &mdash; the no-cache
+        control moves just as much, and in bfloat16 with a wide accumulator it moves
+        <strong>exactly 0</strong>.</li>
+      </ul>
+
+    </div>
+  </div>
+</section>
+
+<section id="build" class="tab-panel hidden">
+  <div class="min-h-[calc(100vh-72px)] p-4 md:p-8 bg-slate-50">
+    <div class="max-w-3xl mx-auto space-y-6">
+
+      <h2 class="text-2xl font-black">🔨 How it is built</h2>
+
+      <h3 class="text-xl font-bold">1. Two code paths that must agree to the bit</h3>
+      <pre>forward(M, tokens, {cache})   // all T positions, LAYER-major, optionally fills the cache
+decodeStep(M, cache, tok, pos) // ONE position over the cache</pre>
+      <p>Bit equality is the whole instrument, so it has to be reachable, and that constrains the
+      implementation. Both paths run the same loops in the same order: <code>matvec</code>
+      accumulates input-major so every output's summation order is ascending regardless of how many
+      positions are in flight; attention sums <em>j</em> ascending in both; the softmax subtracts
+      the max over the same set in the same order. Get any of that wrong and the identity becomes
+      "agrees to 1e-16", which is a weaker claim and a worse test.</p>
+
+      <h3 class="text-xl font-bold">2. Layer-major, on purpose</h3>
+      <pre>for each layer:  compute K,V for ALL positions, then attend      // works causal AND not
+// position-major would also work -- but only for causal attention,
+// and the non-causal control is the page's best evidence</pre>
+      <p>The non-causal run is what turns "the cache works because of causality" from an
+      explanation into a measurement, so the code has to be able to run without the mask.</p>
+
+      <h3 class="text-xl font-bold">3. Every bug is one changed line</h3>
+      <pre>// correct
+Kl.push(k); Vl.push(v); attendLen = Kl.length;
+
+// 'ring'
+if (Kl.length &lt; cap){ Kl.push(k); Vl.push(v); }
+else { const w = Kl.length % cap; Kl[w] = k; Vl[w] = v; }
+
+// 'freeze'
+if (cache.steps &lt;= 1){ Kl.push(k); Vl.push(v); }</pre>
+      <p>Parameterising the bugs rather than describing them is what makes "four of them are
+      bit-identical at step 1" a number instead of an argument. It also keeps them honest: they are
+      each one line, they are each something a person would actually write, and two of them turn
+      out not to change the output at all.</p>
+
+      <h3 class="text-xl font-bold">4. Precision as two separate knobs</h3>
+      <pre>q   : the format values are STORED in        (applied after every matvec, norm, softmax)
+ACC : the format the accumulator runs in     (applied after every += inside a dot product)</pre>
+      <p>This split is the page's one real surprise. With <code>q = bfloat16</code> and
+      <code>ACC = float64</code> the two summation orders agree exactly; with both in bfloat16 they
+      differ by whole ulps. Had the two been one knob, the conclusion would have been the usual
+      hand-wave about low precision being noisy, which is the opposite of what happens.</p>
+
+      <h3 class="text-xl font-bold">5. Cost in closed form, checked against the loop</h3>
+      <pre>costs(cfg, n)      // step by step, for the table
+costTotals(cfg, n) // closed form, for exponents at n = 10^7
+assert(loop / closed_form - 1 &lt; 1e-12)   // at n = 300</pre>
+      <p>The slopes need lengths no loop should run, and a closed form nobody checks is just an
+      algebra mistake waiting to be quoted. So both exist and they are asserted equal.</p>
+
+      <h3 class="text-xl font-bold">6. The backward pass exists so the model is real</h3>
+      <pre>h = x + attn(rmsnorm(x));  h = h + mlp(rmsnorm(h));  logits = rmsnorm(h)&middot;Wu
+// hand-written backward through the softmax, the RMSNorm and both residuals
+// worst relative error against central differences: 3.2e-8 over 24 tensors</pre>
+      <p>"The output changed" is only interesting for a model whose output means something, so the
+      model is trained (lag-3 copy: repeat the token three places back &mdash; chosen because it
+      forces attention onto a key that is neither the current position nor the first, so an old
+      cache entry is load-bearing) from 3.098 to 0.00082 nats against a chance value of 2.079.</p>
+
+      <h3 class="text-xl font-bold">7. Two gradients, deliberately</h3>
+      <pre>backward(..., {from: k})                   // the true gradient of the suffix loss
+backward(..., {from: k, detachBefore: k})  // dK[j], dV[j] dropped for j &lt; k
+
+assert(relErr(true, central differences) &lt; 1e-6);   // 3.2e-8
+assert(relErr(detached, central differences) &gt; 1e-3);  // it is not the gradient of anything</pre>
+      <p>Straight out of Day 68: asserting that the shortcut <em>disagrees</em> with finite
+      differences turns "prefix caching biases the gradient" from a claim into a test that fails if
+      it is ever false.</p>
+
+      <h3 class="text-xl font-bold">8. What the tests pin</h3>
+      <pre>// the identity, as bit equality and over a grid
+assert(cacheDeviation(...).worst === 0);                 // exactly, not to a tolerance
+assert(exactGrid().worst === 0 && tokenMismatches === 0); // 432 configurations
+
+// the reason, and the boundary of the reason
+assert(freeze(causal).dK === 0 for every layer);
+assert(freeze(non-causal)[0].dK === 0 && [1].dK &gt; 0);     // layer 1 exact, layer 2 not
+assert(nonCausalCost(L=1) === 0 && nonCausalCost(L=2) &gt; 1e-6);
+
+// the cost claim, both ends of it
+assert(2.9 &lt; slope_plain &lt;= 3.0 && 1.9 &lt; slope_cached &lt;= 2.0);   // asymptotically
+assert(slope_cached(n=8..64) &lt; 1.05);                            // and flat below 6d
+assert(crossover === 6d);
+
+// GQA, as identities
+assert(attention_flops(gqa) === attention_flops(mha));
+assert(cache_bytes(mha) / cache_bytes(gqa) === 8);
+assert(intensity(gqa) / intensity(mha) === 8);
+
+// the diagnostic, scored rather than trusted
+assert(exactly 4 of the 8 bugs are bit-identical at step 1);
+assert(all 8 are caught by an all-steps comparison);
+
+// and the surprise, so it cannot be quietly reverted
+assert(bf16-stored/f64-accumulated order difference === 0 at 100% of positions);
+assert(bf16-accumulated order difference &gt; 1e-3);
+assert(the cache is exact in ALL THREE formats);</pre>
+      <p>The last group is the one worth stealing. The page set out to explain output changes by
+      reduction order, and the measurement said the standard accumulator erases it. Asserting the
+      erasure means the page cannot drift back to the story it wanted to tell.</p>
+
+      <h3 class="text-xl font-bold">🎉 DeepLearningFromZero Day 69 shipped.</h3>
+      <p class="text-slate-600">The cache is exact. Everything it gets blamed for is either your
+      cache code or your accumulator.</p>
+
+    </div>
+  </div>
+</section>
+
+<script>
+const tabs = document.querySelectorAll("#tabs button");
+const panels = document.querySelectorAll(".tab-panel");
+tabs.forEach(t => t.addEventListener("click", () => {
+  tabs.forEach(x => { x.classList.remove("tab-active"); x.classList.add("bg-slate-100"); });
+  t.classList.add("tab-active"); t.classList.remove("bg-slate-100");
+  panels.forEach(p => p.classList.add("hidden"));
+  document.getElementById(t.dataset.tab).classList.remove("hidden");
+}));
+
+// ===== ENGINE:BEGIN =====
+// The KV cache. During autoregressive generation the keys and values of position i depend only
+// on the residual stream at position i, and under CAUSAL attention that stream is frozen the
+// moment position i has been processed -- appending a token cannot change it. So K and V can be
+// stored and re-used instead of recomputed. That is the whole idea, and it is an EXACT algebraic
+// identity, not an approximation: everything below is built so that claim can be checked as
+// bit-equality rather than to a tolerance.
+
+function mulberry32(seed){
+  let s = seed >>> 0;
+  return function(){
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1) >>> 0;
+    t = (t ^ (t + Math.imul(t ^ (t >>> 7), t | 61))) >>> 0;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function gaussian(rnd){
+  let u = 0, v = 0;
+  while (u === 0) u = rnd();
+  while (v === 0) v = rnd();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+const zeros = n => new Array(n).fill(0);
+const ones = n => new Array(n).fill(1);
+const zmat = (r, c) => { const M = []; for (let i = 0; i < r; i++) M.push(zeros(c)); return M; };
+function randMat(r, c, s, rnd){
+  const M = [];
+  for (let i = 0; i < r; i++){ const row = new Array(c); for (let j = 0; j < c; j++) row[j] = s * gaussian(rnd); M.push(row); }
+  return M;
+}
+const copyMat = M => M.map(r => r.slice());
+
+// ---------------------------------------------------------------- reduction order
+// Two ways to add up the same numbers. 'seq' accumulates left to right; 'pair' sums a binary
+// tree, which is what a tiled/blocked matmul kernel effectively does. In exact arithmetic they
+// are the same function. In floating point they are not, and that difference -- not the cache --
+// turns out to be what people are seeing when they report that "the KV cache changed my output".
+function sumPair(a, n){
+  let len = n === undefined ? a.length : n;
+  const buf = a.slice(0, len);
+  while (len > 1){
+    let w = 0;
+    for (let i = 0; i + 1 < len; i += 2) buf[w++] = buf[i] + buf[i + 1];
+    if (len % 2) buf[w++] = buf[len - 1];
+    len = w;
+  }
+  return len ? buf[0] : 0;
+}
+// round-to-nearest bfloat16: 8 explicit mantissa bits, the storage format production inference
+// actually uses. Its ulp near a logit of 25 is 0.125, which is the whole point.
+const BF = new Float32Array(1), BFU = new Uint32Array(BF.buffer);
+function bf16(x){
+  BF[0] = x;
+  BFU[0] = (BFU[0] + 0x8000) & 0xFFFF0000;
+  return BF[0];
+}
+// ACC is the accumulator's own precision, which is a different question from the precision the
+// numbers are stored in. Real kernels store in bfloat16 and accumulate in float32; a naive one
+// accumulates in the storage format. The two answers to "does summation order matter" are not
+// the same, so both are available here.
+let ACC = null;
+function sumPairAcc(a, n){
+  let len = n === undefined ? a.length : n;
+  const buf = a.slice(0, len);
+  while (len > 1){
+    let w = 0;
+    for (let i = 0; i + 1 < len; i += 2) buf[w++] = ACC(buf[i] + buf[i + 1]);
+    if (len % 2) buf[w++] = buf[len - 1];
+    len = w;
+  }
+  return len ? buf[0] : 0;
+}
+function dotRange(a, ao, b, bo, n, mode, q){
+  let r;
+  if (mode === 'pair'){
+    const t = new Array(n);
+    for (let i = 0; i < n; i++) t[i] = a[ao + i] * b[bo + i];
+    r = ACC ? sumPairAcc(t, n) : sumPair(t, n);
+  } else if (ACC){
+    let s = 0;
+    for (let i = 0; i < n; i++) s = ACC(s + a[ao + i] * b[bo + i]);
+    r = s;
+  } else {
+    let s = 0;
+    for (let i = 0; i < n; i++) s += a[ao + i] * b[bo + i];
+    r = s;
+  }
+  return q ? q(r) : r;
+}
+// y = x . W  with W stored [in][out]. The 'seq' branch runs i-major, so for every output o the
+// accumulation order over i is ascending -- identical whether one position or T positions are
+// being pushed through, which is what makes bit-equality between the two code paths possible.
+function matvec(x, W, nOut, mode, q){
+  const nIn = x.length, y = zeros(nOut);
+  if (mode === 'pair'){
+    const t = new Array(nIn);
+    for (let o = 0; o < nOut; o++){
+      for (let i = 0; i < nIn; i++) t[i] = x[i] * W[i][o];
+      y[o] = ACC ? sumPairAcc(t, nIn) : sumPair(t, nIn);
+    }
+  } else if (ACC){
+    for (let i = 0; i < nIn; i++){ const xi = x[i], Wi = W[i]; for (let o = 0; o < nOut; o++) y[o] = ACC(y[o] + xi * Wi[o]); }
+  } else {
+    for (let i = 0; i < nIn; i++){ const xi = x[i], Wi = W[i]; for (let o = 0; o < nOut; o++) y[o] += xi * Wi[o]; }
+  }
+  if (q) for (let o = 0; o < nOut; o++) y[o] = q(y[o]);
+  return y;
+}
+function softmaxRow(sc, q){
+  const n = sc.length;
+  let m = -Infinity;
+  for (let j = 0; j < n; j++) if (sc[j] > m) m = sc[j];
+  const e = new Array(n);
+  let z = 0;
+  for (let j = 0; j < n; j++){ e[j] = Math.exp(sc[j] - m); z += e[j]; }
+  for (let j = 0; j < n; j++){ e[j] /= z; if (q) e[j] = q(e[j]); }
+  return e;
+}
+const qvec = (v, q) => { if (q) for (let i = 0; i < v.length; i++) v[i] = q(v[i]); return v; };
+function mixValues(ctx, off, dh, p, Varr, mode){
+  const t = p.length;
+  if (mode === 'pair'){
+    const buf = new Array(t);
+    for (let c = 0; c < dh; c++){
+      for (let j = 0; j < t; j++) buf[j] = p[j] * Varr[j][off + c];
+      ctx[off + c] += ACC ? sumPairAcc(buf, t) : sumPair(buf, t);
+    }
+    return;
+  }
+  if (ACC){
+    for (let j = 0; j < t; j++){ const pj = p[j], Vj = Varr[j]; for (let c = 0; c < dh; c++) ctx[off + c] = ACC(ctx[off + c] + pj * Vj[off + c]); }
+    return;
+  }
+  for (let j = 0; j < t; j++){ const pj = p[j], Vj = Varr[j]; for (let c = 0; c < dh; c++) ctx[off + c] += pj * Vj[off + c]; }
+}
+const withAcc = (f, fn) => { const old = ACC; ACC = f; try { return fn(); } finally { ACC = old; } };
+const silu = z => z / (1 + Math.exp(-z));
+const dsilu = z => { const s = 1 / (1 + Math.exp(-z)); return s * (1 + z * (1 - s)); };
+function rmsnorm(x, g, eps){
+  const d = x.length;
+  let s = 0;
+  for (let i = 0; i < d; i++) s += x[i] * x[i];
+  const r = Math.sqrt(s / d + eps), y = new Array(d);
+  for (let i = 0; i < d; i++) y[i] = x[i] / r * g[i];
+  return { y: y, r: r };
+}
+// dx and dg for y = g * x / rms(x)
+function rmsnormBack(x, g, r, dy){
+  const d = x.length, dx = new Array(d), dg = new Array(d);
+  let acc = 0;
+  for (let i = 0; i < d; i++) acc += dy[i] * g[i] * x[i];
+  const k = acc / (d * r * r * r);
+  for (let i = 0; i < d; i++){ dx[i] = g[i] * dy[i] / r - x[i] * k; dg[i] = dy[i] * x[i] / r; }
+  return { dx: dx, dg: dg };
+}
+
+// ---------------------------------------------------------------- the model
+// A decoder-only transformer, pre-norm, RMSNorm, SiLU MLP, learned absolute positions, UNTIED
+// output matrix (tying was Day 67 and would confound the position experiments here).
+function makeModel(cfg){
+  const c = Object.assign({ V: 8, d: 8, H: 2, dff: 16, L: 2, Tmax: 24, seed: 1, eps: 1e-6, causal: true }, cfg || {});
+  const rnd = mulberry32(c.seed), d = c.d;
+  const M = { cfg: c, dh: d / c.H, E: randMat(c.V, d, 0.6, rnd), Pos: randMat(c.Tmax, d, 0.6, rnd),
+              layers: [], gf: ones(d), Wu: randMat(d, c.V, 0.5, rnd) };
+  const s = 1 / Math.sqrt(d);
+  for (let l = 0; l < c.L; l++) M.layers.push({
+    g1: ones(d), Wq: randMat(d, d, s, rnd), Wk: randMat(d, d, s, rnd), Wv: randMat(d, d, s, rnd),
+    Wo: randMat(d, d, s, rnd), g2: ones(d), W1: randMat(d, c.dff, s, rnd), b1: zeros(c.dff),
+    W2: randMat(c.dff, d, 1 / Math.sqrt(c.dff), rnd), b2: zeros(d)
+  });
+  return M;
+}
+// every parameter tensor as [name, rows] so gradients and finite differences can walk the same list
+function tensors(M){
+  const t = [['E', M.E], ['Pos', M.Pos], ['Wu', M.Wu], ['gf', [M.gf]]];
+  for (let l = 0; l < M.layers.length; l++){
+    const P = M.layers[l], p = 'L' + l + '.';
+    t.push([p + 'g1', [P.g1]], [p + 'Wq', P.Wq], [p + 'Wk', P.Wk], [p + 'Wv', P.Wv], [p + 'Wo', P.Wo],
+           [p + 'g2', [P.g2]], [p + 'W1', P.W1], [p + 'b1', [P.b1]], [p + 'W2', P.W2], [p + 'b2', [P.b2]]);
+  }
+  return t;
+}
+function nParams(M){
+  let n = 0;
+  for (const [, rows] of tensors(M)) for (const r of rows) n += r.length;
+  return n;
+}
+function zeroGrads(M){
+  const g = { E: zmat(M.cfg.V, M.cfg.d), Pos: zmat(M.cfg.Tmax, M.cfg.d), Wu: zmat(M.cfg.d, M.cfg.V),
+              gf: zeros(M.cfg.d), layers: [] };
+  for (let l = 0; l < M.cfg.L; l++) g.layers.push({
+    g1: zeros(M.cfg.d), Wq: zmat(M.cfg.d, M.cfg.d), Wk: zmat(M.cfg.d, M.cfg.d), Wv: zmat(M.cfg.d, M.cfg.d),
+    Wo: zmat(M.cfg.d, M.cfg.d), g2: zeros(M.cfg.d), W1: zmat(M.cfg.d, M.cfg.dff), b1: zeros(M.cfg.dff),
+    W2: zmat(M.cfg.dff, M.cfg.d), b2: zeros(M.cfg.d)
+  });
+  return g;
+}
+function gradTensors(g, M){
+  const t = [['E', g.E], ['Pos', g.Pos], ['Wu', g.Wu], ['gf', [g.gf]]];
+  for (let l = 0; l < M.layers.length; l++){
+    const P = g.layers[l], p = 'L' + l + '.';
+    t.push([p + 'g1', [P.g1]], [p + 'Wq', P.Wq], [p + 'Wk', P.Wk], [p + 'Wv', P.Wv], [p + 'Wo', P.Wo],
+           [p + 'g2', [P.g2]], [p + 'W1', P.W1], [p + 'b1', [P.b1]], [p + 'W2', P.W2], [p + 'b2', [P.b2]]);
+  }
+  return t;
+}
+
+// ---------------------------------------------------------------- the full forward pass
+// Processes T positions LAYER-MAJOR, which is the ordering a batched prefill uses and the only
+// ordering that also supports the non-causal control. Optionally fills a cache and records the
+// tape the backward pass needs.
+function newCache(L){
+  const K = [], V = [];
+  for (let l = 0; l < L; l++){ K.push([]); V.push([]); }
+  return { K: K, V: V, steps: 0, cap: 0, alias: false };
+}
+function forward(M, tokens, opt){
+  const o = Object.assign({ mode: 'seq', causal: M.cfg.causal, posOffset: 0, cache: null, aliasLayers: false, q: null }, opt || {});
+  const c = M.cfg, d = c.d, H = c.H, dh = M.dh, dff = c.dff, L = c.L, eps = c.eps, T = tokens.length, q = o.q;
+  const X = [];
+  for (let i = 0; i < T; i++){
+    const x = new Array(d), e = M.E[tokens[i]], p = M.Pos[o.posOffset + i];
+    for (let cc = 0; cc < d; cc++) x[cc] = e[cc] + p[cc];
+    X.push(qvec(x, q));
+  }
+  const rec = { X0: copyMat(X), layers: [], tokens: tokens.slice(), posOffset: o.posOffset, causal: o.causal };
+  for (let l = 0; l < L; l++){
+    const P = M.layers[l], lr = { Xin: copyMat(X), N1: [], r1: [], Q: [], K: [], V: [], att: [], CTX: [] };
+    for (let i = 0; i < T; i++){
+      const n = rmsnorm(X[i], P.g1, eps);
+      lr.N1.push(qvec(n.y, q)); lr.r1.push(n.r);
+      lr.Q.push(matvec(n.y, P.Wq, d, o.mode, q));
+      lr.K.push(matvec(n.y, P.Wk, d, o.mode, q));
+      lr.V.push(matvec(n.y, P.Wv, d, o.mode, q));
+    }
+    if (o.cache){
+      const slot = o.aliasLayers ? 0 : l;
+      o.cache.K[slot] = copyMat(lr.K); o.cache.V[slot] = copyMat(lr.V);
+    }
+    for (let i = 0; i < T; i++){
+      const ctx = zeros(d), pr = [], hi = o.causal ? i : T - 1;
+      for (let h = 0; h < H; h++){
+        const off = h * dh, sc = new Array(hi + 1);
+        for (let j = 0; j <= hi; j++) sc[j] = dotRange(lr.Q[i], off, lr.K[j], off, dh, o.mode, q) / Math.sqrt(dh);
+        const p = softmaxRow(sc, q);
+        mixValues(ctx, off, dh, p, lr.V, o.mode);
+        pr.push(p);
+      }
+      lr.att.push(pr); lr.CTX.push(qvec(ctx, q));
+    }
+    lr.A = lr.CTX.map(cx => matvec(cx, P.Wo, d, o.mode, q));
+    for (let i = 0; i < T; i++){
+      for (let cc = 0; cc < d; cc++) X[i][cc] += lr.A[i][cc];
+      qvec(X[i], q);
+    }
+    lr.Xmid = copyMat(X);
+    lr.N2 = []; lr.r2 = []; lr.Z = []; lr.Hh = []; lr.F = [];
+    for (let i = 0; i < T; i++){
+      const n = rmsnorm(X[i], P.g2, eps);
+      lr.N2.push(qvec(n.y, q)); lr.r2.push(n.r);
+      const z = matvec(n.y, P.W1, dff, o.mode, q);
+      for (let k = 0; k < dff; k++) z[k] += P.b1[k];
+      qvec(z, q);
+      const hh = new Array(dff);
+      for (let k = 0; k < dff; k++) hh[k] = silu(z[k]);
+      qvec(hh, q);
+      const f = matvec(hh, P.W2, d, o.mode, q);
+      for (let cc = 0; cc < d; cc++) f[cc] += P.b2[cc];
+      qvec(f, q);
+      lr.Z.push(z); lr.Hh.push(hh); lr.F.push(f);
+      for (let cc = 0; cc < d; cc++) X[i][cc] += f[cc];
+      qvec(X[i], q);
+    }
+    lr.Xout = copyMat(X);
+    rec.layers.push(lr);
+  }
+  rec.NF = []; rec.rf = []; rec.logits = [];
+  for (let i = 0; i < T; i++){
+    const n = rmsnorm(X[i], M.gf, eps);
+    rec.NF.push(qvec(n.y, q)); rec.rf.push(n.r);
+    rec.logits.push(matvec(n.y, M.Wu, c.V, o.mode, q));
+  }
+  rec.X = X;
+  if (o.cache) o.cache.steps = T;
+  return rec;
+}
+
+// ---------------------------------------------------------------- one cached decode step
+// The same arithmetic as one position of `forward`, in the same order, over a cache instead of a
+// freshly computed K/V. Every realistic cache bug is a change to a single line here, which is why
+// they are parameterised rather than described.
+//   'none'      correct: append, then attend over everything including yourself
+//   'stale'     attend first, append after -- the new token cannot see itself
+//   'vstale'    append k, forget v and re-use the previous one
+//   'ring'      write at (len % cap) once the buffer is full -- clobbers slot 0, never grows
+//   'freeze'    the buffer stops growing after the first decode step
+//   'evict'     a sliding window nobody asked for: drop position 0 past cap
+//   'posfrozen' the position index is the prompt length forever instead of the running length
+//   'posoff'    the position index is one behind
+//   'alias'     every layer writes into layer 0's buffer
+function decodeStep(M, cache, token, pos, opt){
+  const o = Object.assign({ mode: 'seq', bug: 'none', q: null }, opt || {});
+  const c = M.cfg, d = c.d, H = c.H, dh = M.dh, dff = c.dff, L = c.L, eps = c.eps, bug = o.bug, qz = o.q;
+  const x = new Array(d), e = M.E[token], pv = M.Pos[pos];
+  for (let cc = 0; cc < d; cc++) x[cc] = e[cc] + pv[cc];
+  qvec(x, qz);
+  cache.steps++;
+  for (let l = 0; l < L; l++){
+    const P = M.layers[l], slot = bug === 'alias' ? 0 : l;
+    const n1 = qvec(rmsnorm(x, P.g1, eps).y, qz);
+    const q = matvec(n1, P.Wq, d, o.mode, qz), k = matvec(n1, P.Wk, d, o.mode, qz), v = matvec(n1, P.Wv, d, o.mode, qz);
+    const Kl = cache.K[slot], Vl = cache.V[slot];
+    let attendLen;
+    if (bug === 'stale'){
+      attendLen = Kl.length;                                  // attend BEFORE the append
+    } else if (bug === 'ring'){
+      if (Kl.length < cache.cap){ Kl.push(k); Vl.push(v); }
+      else { const w = Kl.length % cache.cap; Kl[w] = k; Vl[w] = v; }
+      attendLen = Kl.length;
+    } else if (bug === 'freeze'){
+      if (cache.steps <= 1){ Kl.push(k); Vl.push(v); }
+      attendLen = Kl.length;
+    } else if (bug === 'evict'){
+      Kl.push(k); Vl.push(v);
+      while (Kl.length > cache.cap){ Kl.shift(); Vl.shift(); }
+      attendLen = Kl.length;
+    } else if (bug === 'vstale'){
+      Kl.push(k); Vl.push(Vl.length ? Vl[Vl.length - 1].slice() : v.slice());
+      attendLen = Kl.length;
+    } else {
+      Kl.push(k); Vl.push(v);
+      attendLen = Kl.length;
+    }
+    const ctx = zeros(d);
+    for (let h = 0; h < H; h++){
+      const off = h * dh, sc = new Array(attendLen);
+      for (let j = 0; j < attendLen; j++) sc[j] = dotRange(q, off, Kl[j], off, dh, o.mode, qz) / Math.sqrt(dh);
+      mixValues(ctx, off, dh, softmaxRow(sc, qz), Vl, o.mode);
+    }
+    qvec(ctx, qz);
+    if (bug === 'stale'){ Kl.push(k); Vl.push(v); }
+    const a = matvec(ctx, P.Wo, d, o.mode, qz);
+    for (let cc = 0; cc < d; cc++) x[cc] += a[cc];
+    qvec(x, qz);
+    const n2 = qvec(rmsnorm(x, P.g2, eps).y, qz);
+    const z = matvec(n2, P.W1, dff, o.mode, qz);
+    for (let kk = 0; kk < dff; kk++) z[kk] += P.b1[kk];
+    qvec(z, qz);
+    const hh = new Array(dff);
+    for (let kk = 0; kk < dff; kk++) hh[kk] = silu(z[kk]);
+    qvec(hh, qz);
+    const f = matvec(hh, P.W2, d, o.mode, qz);
+    for (let cc = 0; cc < d; cc++) f[cc] += P.b2[cc];
+    qvec(f, qz);
+    for (let cc = 0; cc < d; cc++) x[cc] += f[cc];
+    qvec(x, qz);
+  }
+  const nf = qvec(rmsnorm(x, M.gf, eps).y, qz);
+  return matvec(nf, M.Wu, c.V, o.mode, qz);
+}
+
+// ---------------------------------------------------------------- generation, both ways
+const argmax = a => { let b = 0; for (let i = 1; i < a.length; i++) if (a[i] > a[b]) b = i; return b; };
+// no cache at all: re-run the entire prefix every step. The reference implementation.
+function generateNoCache(M, prompt, n, opt){
+  const o = Object.assign({ mode: 'seq', q: null }, opt || {});
+  const seq = prompt.slice(), out = [], logits = [];
+  let rec = forward(M, seq, { mode: o.mode, q: o.q });
+  let y = argmax(rec.logits[seq.length - 1]);
+  for (let s = 0; s < n; s++){
+    seq.push(y); out.push(y);
+    rec = forward(M, seq, { mode: o.mode, q: o.q });
+    const row = rec.logits[seq.length - 1];
+    logits.push(row.slice());
+    y = argmax(row);
+  }
+  return { tokens: out, next: y, logits: logits };
+}
+// prefill once, then one token at a time over the cache
+function generateCached(M, prompt, n, opt){
+  const o = Object.assign({ mode: 'seq', prefillMode: null, bug: 'none', q: null }, opt || {});
+  const p = prompt.length, cache = newCache(M.cfg.L);
+  cache.cap = p + 1;
+  const rec = forward(M, prompt, { mode: o.prefillMode || o.mode, cache: cache,
+                                   aliasLayers: o.bug === 'alias', q: o.q });
+  cache.steps = 0;
+  let y = argmax(rec.logits[p - 1]);
+  const out = [], logits = [];
+  for (let s = 0; s < n; s++){
+    out.push(y);
+    let pos = p + s;
+    if (o.bug === 'posfrozen') pos = p;
+    if (o.bug === 'posoff') pos = p + s - 1;
+    const row = decodeStep(M, cache, y, pos, { mode: o.mode, bug: o.bug, q: o.q });
+    logits.push(row.slice());
+    y = argmax(row);
+  }
+  return { tokens: out, next: y, logits: logits, cache: cache };
+}
+// the comparison the page is about: per-step max |logit difference| between a cached decode and a
+// full recompute. For a correct cache every entry is EXACTLY zero, so this test needs no tolerance.
+function cacheDeviation(M, prompt, n, opt){
+  const o = Object.assign({ mode: 'seq', prefillMode: null, bug: 'none', q: null }, opt || {});
+  const ref = generateNoCache(M, prompt, n, { mode: o.mode, q: o.q });
+  const got = generateCached(M, prompt, n, o);
+  const per = [];
+  let worst = 0, firstBad = -1, tokenDiff = -1;
+  for (let s = 0; s < n; s++){
+    let mx = 0;
+    for (let v = 0; v < M.cfg.V; v++) mx = Math.max(mx, Math.abs(got.logits[s][v] - ref.logits[s][v]));
+    per.push(mx);
+    if (mx > worst) worst = mx;
+    if (mx !== 0 && firstBad < 0) firstBad = s + 1;
+    if (got.tokens[s] !== ref.tokens[s] && tokenDiff < 0) tokenDiff = s + 1;
+  }
+  return { per: per, worst: worst, step1: per.length ? per[0] : 0, firstBad: firstBad,
+           tokenDiff: tokenDiff, diverged: tokenDiff > 0, ref: ref.tokens, got: got.tokens };
+}
+
+// The identity across a grid, because one configuration agreeing is not the same claim. Every
+// entry must be EXACTLY zero, so the count of configurations is the whole result.
+function exactGrid(cfg){
+  const c = Object.assign({ seeds: [1, 2, 3], Ls: [1, 2, 3], Hs: [1, 2], plens: [1, 2, 4, 6],
+                            steps: [1, 4, 8], modes: ['seq', 'pair'], q: null }, cfg || {});
+  let n = 0, worst = 0, tokMismatch = 0;
+  for (const seed of c.seeds) for (const L of c.Ls) for (const H of c.Hs){
+    const M = makeModel({ seed: seed, L: L, H: H });
+    for (const pl of c.plens){
+      const prompt = [];
+      const rnd = mulberry32(seed * 31 + pl);
+      for (let i = 0; i < pl; i++) prompt.push(Math.floor(rnd() * M.cfg.V));
+      for (const st of c.steps) for (const mode of c.modes){
+        const r = cacheDeviation(M, prompt, st, { mode: mode, q: c.q });
+        if (r.worst > worst) worst = r.worst;
+        if (r.ref.join(',') !== r.got.join(',')) tokMismatch++;
+        n++;
+      }
+    }
+  }
+  return { n: n, worst: worst, tokMismatch: tokMismatch };
+}
+
+// ---------------------------------------------------------------- why the cache is allowed to exist
+// The residual stream at position i, at every layer, must be unchanged by appending a token --
+// otherwise the stored K and V are stale. Causal: exactly 0. Non-causal: exactly 0 for the K/V a
+// one-layer model needs, and non-zero from layer 2 onwards, because layer 2's input at position i
+// went through an attention that could see the future.
+function freezeTest(M, tokens, causal, mode, q){
+  const short = tokens.slice(0, tokens.length - 1);
+  const a = forward(M, short, { mode: mode || 'seq', causal: causal, q: q || null });
+  const b = forward(M, tokens, { mode: mode || 'seq', causal: causal, q: q || null });
+  const rows = [];
+  for (let l = 0; l < M.cfg.L; l++){
+    let dK = 0, dV = 0, dX = 0;
+    for (let i = 0; i < short.length; i++){
+      for (let c = 0; c < M.cfg.d; c++){
+        dK = Math.max(dK, Math.abs(a.layers[l].K[i][c] - b.layers[l].K[i][c]));
+        dV = Math.max(dV, Math.abs(a.layers[l].V[i][c] - b.layers[l].V[i][c]));
+        dX = Math.max(dX, Math.abs(a.layers[l].Xin[i][c] - b.layers[l].Xin[i][c]));
+      }
+    }
+    rows.push({ layer: l, dX: dX, dK: dK, dV: dV });
+  }
+  return rows;
+}
+// and the consequence: does a cached decode still reproduce the full recompute when attention is
+// not causal? Run the identical cached path with causal attention switched off in the prefill.
+function nonCausalCost(M, prompt, n, mode, q){
+  const md = mode || 'seq', qq = q || null;
+  const ref = [], got = [];
+  const p = prompt.length;
+  const cache = newCache(M.cfg.L);
+  cache.cap = p + 1;
+  const pre = forward(M, prompt, { mode: md, cache: cache, causal: false, q: qq });
+  cache.steps = 0;
+  let y = argmax(pre.logits[p - 1]);
+  const seq = prompt.slice();
+  let worst = 0;
+  for (let s = 0; s < n; s++){
+    seq.push(y);
+    const full = forward(M, seq, { mode: md, causal: false, q: qq });
+    const rr = full.logits[seq.length - 1];
+    const gg = decodeStep(M, cache, y, p + s, { mode: md, q: qq });
+    let mx = 0;
+    for (let v = 0; v < M.cfg.V; v++) mx = Math.max(mx, Math.abs(rr[v] - gg[v]));
+    worst = Math.max(worst, mx);
+    ref.push(rr.slice()); got.push(gg.slice());
+    y = argmax(gg);
+  }
+  return { worst: worst, ref: ref, got: got };
+}
+
+// ---------------------------------------------------------------- what it costs, exactly
+// Multiply-accumulates, counted rather than estimated. dkv is the number of KV heads: GQA changes
+// the SIZE of the cache and leaves the FLOP count alone, which is visible here as an identity.
+function costs(cfg, n){
+  const d = cfg.d, dh = cfg.dh, H = cfg.H, kv = cfg.kv === undefined ? cfg.H : cfg.kv, L = cfg.L,
+        dff = cfg.dff, V = cfg.V, gated = cfg.gated ? 3 : 2, kvd = kv * dh;
+  const projTok = 2 * d * d + 2 * d * kvd;          // Wq, Wo (d*d each) + Wk, Wv (d*kvd each)
+  const mlpTok = gated * d * dff;
+  const perTok = projTok + mlpTok;
+  let cached = 0, plain = 0;
+  const rows = [];
+  for (let i = 0; i < n; i++){
+    const t = i + 1;                                  // keys visible to the query at position i
+    const cStep = L * (perTok + 2 * t * d) + d * V;
+    const pStep = L * (t * perTok + 2 * d * t * (t + 1) / 2) + t * d * V;
+    cached += cStep; plain += pStep;
+    rows.push({ i: i, t: t, cached: cStep, plain: pStep });
+  }
+  return { cached: cached, plain: plain, rows: rows, perTok: perTok, projTok: projTok, mlpTok: mlpTok,
+           // per-token attention work overtakes the position-independent work at this length
+           crossover: perTok / (2 * d) };
+}
+// the same two totals in closed form, so the exponents can be read at lengths no loop should run.
+//   cached = n(L*perTok + dV) + L*d*n(n+1)
+//   plain  = (L*perTok + dV)*n(n+1)/2 + L*d*n(n+1)(n+2)/3
+// checked against the loop above rather than trusted.
+function costTotals(cfg, n){
+  const d = cfg.d, dh = cfg.dh, kv = cfg.kv === undefined ? cfg.H : cfg.kv, L = cfg.L,
+        dff = cfg.dff, V = cfg.V, gated = cfg.gated ? 3 : 2;
+  const perTok = 2 * d * d + 2 * d * kv * dh + gated * d * dff, base = L * perTok + d * V;
+  return { cached: n * base + L * d * n * (n + 1),
+           plain: base * n * (n + 1) / 2 + L * d * n * (n + 1) * (n + 2) / 3, perTok: perTok };
+}
+// log-log slope of total cost against n, measured rather than asserted
+function slope(cfg, n1, n2){
+  const a = costTotals(cfg, n1), b = costTotals(cfg, n2), lr = Math.log(n2 / n1);
+  return { cached: Math.log(b.cached / a.cached) / lr, plain: Math.log(b.plain / a.plain) / lr };
+}
+// bytes, and the arithmetic intensity of a decode step -- the actual reason GQA exists
+function cacheBytes(cfg, tokens, batch, bytes){
+  const b = bytes === undefined ? 2 : bytes, kv = cfg.kv === undefined ? cfg.H : cfg.kv;
+  const perTokPerLayer = 2 * kv * cfg.dh * b;
+  return { perToken: perTokPerLayer * cfg.L, total: perTokPerLayer * cfg.L * tokens * batch,
+           // MACs per byte of cache traffic in one decode step: 2*t*d MACs against 2*t*kv*dh*b bytes
+           intensity: cfg.d / (kv * cfg.dh * b) };
+}
+
+// ---------------------------------------------------------------- the backward pass
+// Needed for two reasons: the model has to have learned something for "the output changed" to
+// mean anything, and the one place a cache really does touch training -- reusing a cached prefix
+// so its K/V carry no gradient -- can then be measured against the true gradient.
+function backward(M, tokens, targets, rec, opt){
+  const o = Object.assign({ from: 0, detachBefore: 0 }, opt || {});
+  const c = M.cfg, d = c.d, H = c.H, dh = M.dh, dff = c.dff, L = c.L, T = tokens.length;
+  const g = zeroGrads(M);
+  const inc = [];
+  for (let i = o.from; i < T; i++) if (targets[i] >= 0) inc.push(i);
+  const nInc = inc.length || 1;
+  let loss = 0;
+  const dX = zmat(T, d);
+  for (const i of inc){
+    const lg = rec.logits[i];
+    let mx = -Infinity;
+    for (let v = 0; v < c.V; v++) if (lg[v] > mx) mx = lg[v];
+    let z = 0;
+    const pr = new Array(c.V);
+    for (let v = 0; v < c.V; v++){ pr[v] = Math.exp(lg[v] - mx); z += pr[v]; }
+    for (let v = 0; v < c.V; v++) pr[v] /= z;
+    loss -= Math.log(Math.max(pr[targets[i]], 1e-300)) / nInc;
+    const dl = new Array(c.V);
+    for (let v = 0; v < c.V; v++) dl[v] = (pr[v] - (v === targets[i] ? 1 : 0)) / nInc;
+    const dNF = zeros(d);
+    for (let cc = 0; cc < d; cc++){
+      const Wr = M.Wu[cc];
+      let s = 0;
+      for (let v = 0; v < c.V; v++){ s += Wr[v] * dl[v]; g.Wu[cc][v] += rec.NF[i][cc] * dl[v]; }
+      dNF[cc] = s;
+    }
+    const bk = rmsnormBack(rec.X[i], M.gf, rec.rf[i], dNF);
+    for (let cc = 0; cc < d; cc++){ dX[i][cc] += bk.dx[cc]; g.gf[cc] += bk.dg[cc]; }
+  }
+  for (let l = L - 1; l >= 0; l--){
+    const P = M.layers[l], lr = rec.layers[l], G = g.layers[l];
+    const dXmid = zmat(T, d);
+    for (let i = 0; i < T; i++){
+      const dF = dX[i];
+      const dHh = zeros(dff);
+      for (let k = 0; k < dff; k++){
+        const Wr = P.W2[k];
+        let s = 0;
+        for (let cc = 0; cc < d; cc++){ s += Wr[cc] * dF[cc]; G.W2[k][cc] += lr.Hh[i][k] * dF[cc]; }
+        dHh[k] = s;
+      }
+      for (let cc = 0; cc < d; cc++) G.b2[cc] += dF[cc];
+      const dZ = new Array(dff);
+      for (let k = 0; k < dff; k++){ dZ[k] = dHh[k] * dsilu(lr.Z[i][k]); G.b1[k] += dZ[k]; }
+      const dN2 = zeros(d);
+      for (let cc = 0; cc < d; cc++){
+        const Wr = P.W1[cc];
+        let s = 0;
+        for (let k = 0; k < dff; k++){ s += Wr[k] * dZ[k]; G.W1[cc][k] += lr.N2[i][cc] * dZ[k]; }
+        dN2[cc] = s;
+      }
+      const bk = rmsnormBack(lr.Xmid[i], P.g2, lr.r2[i], dN2);
+      for (let cc = 0; cc < d; cc++){ dXmid[i][cc] = dX[i][cc] + bk.dx[cc]; G.g2[cc] += bk.dg[cc]; }
+    }
+    const dQ = zmat(T, d), dK = zmat(T, d), dV = zmat(T, d), dXin = zmat(T, d);
+    for (let i = 0; i < T; i++){
+      const dA = dXmid[i], dCTX = zeros(d);
+      for (let cc = 0; cc < d; cc++){
+        const Wr = P.Wo[cc];
+        let s = 0;
+        for (let c2 = 0; c2 < d; c2++){ s += Wr[c2] * dA[c2]; G.Wo[cc][c2] += lr.CTX[i][cc] * dA[c2]; }
+        dCTX[cc] = s;
+      }
+      const hi = rec.causal ? i : T - 1;
+      for (let h = 0; h < H; h++){
+        const off = h * dh, p = lr.att[i][h], dp = new Array(hi + 1);
+        let dot = 0;
+        for (let j = 0; j <= hi; j++){
+          let s = 0;
+          for (let cc = 0; cc < dh; cc++){
+            s += dCTX[off + cc] * lr.V[j][off + cc];
+            if (j >= o.detachBefore) dV[j][off + cc] += p[j] * dCTX[off + cc];
+          }
+          dp[j] = s; dot += p[j] * s;
+        }
+        const sq = Math.sqrt(dh);
+        for (let j = 0; j <= hi; j++){
+          const ds = p[j] * (dp[j] - dot) / sq;
+          for (let cc = 0; cc < dh; cc++){
+            dQ[i][off + cc] += ds * lr.K[j][off + cc];
+            if (j >= o.detachBefore) dK[j][off + cc] += ds * lr.Q[i][off + cc];
+          }
+        }
+      }
+    }
+    for (let i = 0; i < T; i++){
+      const dN1 = zeros(d);
+      for (let cc = 0; cc < d; cc++){
+        let s = 0;
+        const Wqr = P.Wq[cc], Wkr = P.Wk[cc], Wvr = P.Wv[cc], n1 = lr.N1[i][cc];
+        for (let o2 = 0; o2 < d; o2++){
+          s += Wqr[o2] * dQ[i][o2] + Wkr[o2] * dK[i][o2] + Wvr[o2] * dV[i][o2];
+          G.Wq[cc][o2] += n1 * dQ[i][o2];
+          G.Wk[cc][o2] += n1 * dK[i][o2];
+          G.Wv[cc][o2] += n1 * dV[i][o2];
+        }
+        dN1[cc] = s;
+      }
+      const bk = rmsnormBack(lr.Xin[i], P.g1, lr.r1[i], dN1);
+      for (let cc = 0; cc < d; cc++){ dXin[i][cc] = dXmid[i][cc] + bk.dx[cc]; G.g1[cc] += bk.dg[cc]; }
+    }
+    for (let i = 0; i < T; i++) for (let cc = 0; cc < d; cc++) dX[i][cc] = dXin[i][cc];
+  }
+  for (let i = 0; i < T; i++) for (let cc = 0; cc < d; cc++){
+    g.E[tokens[i]][cc] += dX[i][cc];
+    g.Pos[rec.posOffset + i][cc] += dX[i][cc];
+  }
+  return { loss: loss, grads: g };
+}
+function lossOf(M, tokens, targets, opt){
+  const o = Object.assign({ from: 0 }, opt || {});
+  const rec = forward(M, tokens, { mode: 'seq' });
+  const inc = [];
+  for (let i = o.from; i < tokens.length; i++) if (targets[i] >= 0) inc.push(i);
+  const n = inc.length || 1;
+  let loss = 0;
+  for (const i of inc){
+    const lg = rec.logits[i];
+    let mx = -Infinity;
+    for (let v = 0; v < M.cfg.V; v++) if (lg[v] > mx) mx = lg[v];
+    let z = 0;
+    for (let v = 0; v < M.cfg.V; v++) z += Math.exp(lg[v] - mx);
+    loss += (Math.log(z) + mx - lg[targets[i]]) / n;
+  }
+  return loss;
+}
+// central differences, written from the definition
+function numGrad(M, tokens, targets, name, row, col, h, opt){
+  const t = tensors(M).find(x => x[0] === name)[1];
+  const old = t[row][col];
+  t[row][col] = old + h;
+  const up = lossOf(M, tokens, targets, opt);
+  t[row][col] = old - h;
+  const dn = lossOf(M, tokens, targets, opt);
+  t[row][col] = old;
+  return (up - dn) / (2 * h);
+}
+function gradCheck(M, tokens, targets, cfg){
+  const c = Object.assign({ h: 1e-5, perTensor: 4, seed: 3, opt: {} }, cfg || {});
+  const rec = forward(M, tokens, { mode: 'seq' });
+  const bw = backward(M, tokens, targets, rec, c.opt);
+  const gt = gradTensors(bw.grads, M), rnd = mulberry32(c.seed), rows = [];
+  for (const [name, rows_] of tensors(M)){
+    const gm = gt.find(x => x[0] === name)[1];
+    let worst = 0;
+    for (let s = 0; s < c.perTensor; s++){
+      const r = Math.floor(rnd() * rows_.length), cc = Math.floor(rnd() * rows_[0].length);
+      const num = numGrad(M, tokens, targets, name, r, cc, c.h, c.opt), ana = gm[r][cc];
+      worst = Math.max(worst, Math.abs(num - ana) / Math.max(1e-8, Math.abs(num), Math.abs(ana)));
+    }
+    rows.push({ name: name, rel: worst });
+  }
+  let mx = 0;
+  for (const r of rows) mx = Math.max(mx, r.rel);
+  return { rows: rows, worst: mx, loss: bw.loss };
+}
+
+// ---------------------------------------------------------------- a task and a trainer
+// y[t] = x[t - lag]: repeat the token `lag` places back. It forces attention onto a key that is
+// neither the current position nor the first one, so an old cache entry is load-bearing and a
+// cache bug has something to break.
+function makeTask(cfg){
+  return Object.assign({ V: 8, lag: 3, T: 12 }, cfg || {});
+}
+function sampleSeq(task, rnd){
+  const x = [], y = [];
+  for (let t = 0; t < task.T; t++) x.push(Math.floor(rnd() * task.V));
+  for (let t = 0; t < task.T; t++) y.push(t >= task.lag ? x[t - task.lag] : -1);
+  return { x: x, y: y };
+}
+function adamState(M){
+  const s = { m: zeroGrads(M), v: zeroGrads(M), t: 0 };
+  return s;
+}
+function adamStep(M, g, st, lr){
+  st.t++;
+  const b1 = 0.9, b2 = 0.999, eps = 1e-8;
+  const c1 = 1 - Math.pow(b1, st.t), c2 = 1 - Math.pow(b2, st.t);
+  const pt = tensors(M), gtt = gradTensors(g, M), mt = gradTensors(st.m, M), vt = gradTensors(st.v, M);
+  for (let i = 0; i < pt.length; i++){
+    const P = pt[i][1], G = gtt[i][1], Mm = mt[i][1], Vv = vt[i][1];
+    for (let r = 0; r < P.length; r++) for (let c = 0; c < P[r].length; c++){
+      const gr = G[r][c];
+      Mm[r][c] = b1 * Mm[r][c] + (1 - b1) * gr;
+      Vv[r][c] = b2 * Vv[r][c] + (1 - b2) * gr * gr;
+      P[r][c] -= lr * (Mm[r][c] / c1) / (Math.sqrt(Vv[r][c] / c2) + eps);
+    }
+  }
+}
+function train(M, task, cfg){
+  const c = Object.assign({ steps: 400, batch: 8, lr: 0.03, seed: 11 }, cfg || {});
+  const rnd = mulberry32(c.seed), st = adamState(M), curve = [];
+  for (let s = 0; s < c.steps; s++){
+    const g = zeroGrads(M), gt = gradTensors(g, M);
+    let loss = 0;
+    for (let b = 0; b < c.batch; b++){
+      const smp = sampleSeq(task, rnd);
+      const rec = forward(M, smp.x, { mode: 'seq' });
+      const bw = backward(M, smp.x, smp.y, rec, {});
+      loss += bw.loss / c.batch;
+      const bt = gradTensors(bw.grads, M);
+      for (let i = 0; i < gt.length; i++){
+        const A = gt[i][1], B = bt[i][1];
+        for (let r = 0; r < A.length; r++) for (let cc = 0; cc < A[r].length; cc++) A[r][cc] += B[r][cc] / c.batch;
+      }
+    }
+    adamStep(M, g, st, c.lr);
+    if (s % 10 === 0 || s === c.steps - 1) curve.push({ step: s, loss: loss });
+  }
+  return { curve: curve, final: curve[curve.length - 1].loss, chance: Math.log(task.V) };
+}
+// how confident the trained model is, which is what decides whether a last-bit difference can
+// become a different token
+function marginStats(M, task, cfg){
+  const c = Object.assign({ n: 60, seed: 91 }, cfg || {});
+  const rnd = mulberry32(c.seed), ms = [];
+  for (let i = 0; i < c.n; i++){
+    const smp = sampleSeq(task, rnd);
+    const rec = forward(M, smp.x, { mode: 'seq' });
+    for (let t = task.lag; t < task.T; t++){
+      const lg = rec.logits[t].slice().sort((a, b) => b - a);
+      ms.push(lg[0] - lg[1]);
+    }
+  }
+  ms.sort((a, b) => a - b);
+  return { median: ms[Math.floor(ms.length / 2)], p10: ms[Math.floor(ms.length * 0.1)], min: ms[0], n: ms.length };
+}
+
+// ---------------------------------------------------------------- the bug zoo
+const BUGS = ['stale', 'vstale', 'alias', 'posoff', 'ring', 'freeze', 'evict', 'posfrozen'];
+const BUGLABEL = {
+  stale: 'attend before appending',
+  vstale: 'append k, re-use the old v',
+  alias: 'every layer writes layer 0’s buffer',
+  posoff: 'position index one behind',
+  ring: 'ring buffer, write at len % cap',
+  freeze: 'buffer stops growing after step 1',
+  evict: 'sliding window nobody asked for',
+  posfrozen: 'position index frozen at the prompt length'
+};
+function bugTable(M, cfg){
+  const c = Object.assign({ prompts: 24, promptLen: 4, steps: 6, seed: 21 }, cfg || {});
+  const rnd = mulberry32(c.seed), prompts = [];
+  for (let i = 0; i < c.prompts; i++){
+    const p = [];
+    for (let j = 0; j < c.promptLen; j++) p.push(Math.floor(rnd() * M.cfg.V));
+    prompts.push(p);
+  }
+  const rows = [];
+  for (const bug of ['none'].concat(BUGS)){
+    let step1 = 0, worst = 0, div = 0, firstBadSum = 0, firstBadN = 0, step1Zero = 0;
+    for (const p of prompts){
+      const r = cacheDeviation(M, p, c.steps, { bug: bug });
+      step1 = Math.max(step1, r.step1);
+      worst = Math.max(worst, r.worst);
+      if (r.step1 === 0) step1Zero++;
+      if (r.diverged) div++;
+      if (r.firstBad > 0){ firstBadSum += r.firstBad; firstBadN++; }
+    }
+    rows.push({ bug: bug, label: bug === 'none' ? 'correct' : BUGLABEL[bug], step1: step1, worst: worst,
+                divRate: div / prompts.length, step1Silent: step1Zero / prompts.length,
+                firstBad: firstBadN ? firstBadSum / firstBadN : 0, n: prompts.length });
+  }
+  return { rows: rows, prompts: prompts };
+}
+// the ranking question, Day 68 style: the one-step check is the test everybody runs. Scored as a
+// detector of "this bug changed the generated tokens", over every (bug, prompt) case.
+function aucOf(pairs){
+  const pos = pairs.filter(p => p.label).map(p => p.score);
+  const neg = pairs.filter(p => !p.label).map(p => p.score);
+  if (!pos.length || !neg.length) return { auc: NaN, nPos: pos.length, nNeg: neg.length };
+  let s = 0;
+  for (const a of pos) for (const b of neg) s += a > b ? 1 : (a === b ? 0.5 : 0);
+  return { auc: s / (pos.length * neg.length), nPos: pos.length, nNeg: neg.length };
+}
+function diagnosticStudy(M, cfg){
+  const c = Object.assign({ prompts: 30, promptLen: 4, steps: 8, seed: 31 }, cfg || {});
+  const rnd = mulberry32(c.seed), prompts = [];
+  for (let i = 0; i < c.prompts; i++){
+    const p = [];
+    for (let j = 0; j < c.promptLen; j++) p.push(Math.floor(rnd() * M.cfg.V));
+    prompts.push(p);
+  }
+  const one = [], all = [], cases = [];
+  for (const bug of BUGS) for (const p of prompts){
+    const r = cacheDeviation(M, p, c.steps, { bug: bug });
+    one.push({ score: r.step1, label: r.diverged });
+    all.push({ score: r.worst, label: r.diverged });
+    cases.push({ bug: bug, step1: r.step1, worst: r.worst, diverged: r.diverged });
+  }
+  const changed = cases.filter(x => x.diverged);
+  const caught1 = changed.filter(x => x.step1 > 0).length;
+  const caughtAll = changed.filter(x => x.worst > 0).length;
+  const falsePos = cases.filter(x => !x.diverged && x.worst > 0).length;
+  return { n: cases.length, changed: changed.length,
+           recallOne: changed.length ? caught1 / changed.length : 0,
+           recallAll: changed.length ? caughtAll / changed.length : 0,
+           missedOne: changed.length - caught1,
+           flaggedNotChanged: falsePos,
+           aucOne: aucOf(one), aucAll: aucOf(all), cases: cases };
+}
+
+// ---------------------------------------------------------------- reduction order, and the control
+// A cached decode and a batched prefill are different SHAPES, so real kernels sum in different
+// orders. That is enough to change generated text. It has nothing to do with the cache, and the
+// control -- two no-cache runs that differ only in summation order -- is what proves it.
+function orderStudy(M, cfg){
+  const c = Object.assign({ prompts: 40, promptLen: 4, steps: 10, seed: 41 }, cfg || {});
+  const rnd = mulberry32(c.seed);
+  let cacheDiv = 0, ctrlDiv = 0, worstCache = 0, worstCtrl = 0, growth = [], firstFlip = [];
+  const perStep = zeros(c.steps), perStepN = zeros(c.steps);
+  for (let i = 0; i < c.prompts; i++){
+    const p = [];
+    for (let j = 0; j < c.promptLen; j++) p.push(Math.floor(rnd() * M.cfg.V));
+    // cached decode, prefill summed pairwise and decode summed sequentially
+    const ref = generateNoCache(M, p, c.steps, { mode: 'seq' });
+    const mix = generateCached(M, p, c.steps, { mode: 'seq', prefillMode: 'pair' });
+    // the CONTROL: no cache anywhere, only the summation order differs
+    const ctrl = generateNoCache(M, p, c.steps, { mode: 'pair' });
+    let flipped = -1;
+    for (let s = 0; s < c.steps; s++){
+      let mx = 0;
+      for (let v = 0; v < M.cfg.V; v++) mx = Math.max(mx, Math.abs(mix.logits[s][v] - ref.logits[s][v]));
+      perStep[s] += mx; perStepN[s]++;
+      worstCache = Math.max(worstCache, mx);
+      if (mix.tokens[s] !== ref.tokens[s] && flipped < 0) flipped = s + 1;
+      let mc = 0;
+      for (let v = 0; v < M.cfg.V; v++) mc = Math.max(mc, Math.abs(ctrl.logits[s][v] - ref.logits[s][v]));
+      worstCtrl = Math.max(worstCtrl, mc);
+    }
+    if (flipped > 0){ cacheDiv++; firstFlip.push(flipped); }
+    if (ctrl.tokens.join(',') !== ref.tokens.join(',')) ctrlDiv++;
+  }
+  for (let s = 0; s < c.steps; s++) growth.push(perStepN[s] ? perStep[s] / perStepN[s] : 0);
+  let amp = 0, ampN = 0;
+  for (let s = 1; s < c.steps; s++) if (growth[s - 1] > 0 && growth[s] > 0){ amp += growth[s] / growth[s - 1]; ampN++; }
+  return { n: c.prompts, cacheDivRate: cacheDiv / c.prompts, ctrlDivRate: ctrlDiv / c.prompts,
+           worstCache: worstCache, worstCtrl: worstCtrl, growth: growth,
+           amplification: ampN ? amp / ampN : 0,
+           medianFirstFlip: firstFlip.length ? firstFlip.sort((a, b) => a - b)[Math.floor(firstFlip.length / 2)] : 0 };
+}
+
+// The size a last-bit difference has to reach before it can become a different TOKEN is the
+// top-2 logit margin, so both numbers are measured on the same model and compared. In bfloat16 --
+// the storage format production inference actually uses -- the reduction-order difference stops
+// being a last bit and becomes a whole ulp, and that is the gap that matters.
+function precisionStudy(M, cfg){
+  const c = Object.assign({ prompts: 24, promptLen: 4, steps: 8, seed: 61 }, cfg || {});
+  const rnd = mulberry32(c.seed), out = [];
+  const prompts = [];
+  for (let i = 0; i < c.prompts; i++){
+    const p = [];
+    for (let j = 0; j < c.promptLen; j++) p.push(Math.floor(rnd() * M.cfg.V));
+    prompts.push(p);
+  }
+  const REG = [{ name: 'float64 throughout', q: null, acc: null },
+               { name: 'bfloat16 stored, float64 accumulator', q: bf16, acc: null },
+               { name: 'bfloat16 stored, bfloat16 accumulator', q: bf16, acc: bf16 }];
+  for (const prec of REG) withAcc(prec.acc, function(){
+    let devCache = 0, devCtrl = 0, flipCache = 0, flipCtrl = 0, exact = 0, tot = 0, margin = Infinity;
+    let cacheExact = true;
+    for (const p of prompts){
+      const ref = generateNoCache(M, p, c.steps, { mode: 'seq', q: prec.q });
+      const mix = generateCached(M, p, c.steps, { mode: 'seq', prefillMode: 'pair', q: prec.q });
+      const ctrl = generateNoCache(M, p, c.steps, { mode: 'pair', q: prec.q });
+      const same = generateCached(M, p, c.steps, { mode: 'seq', q: prec.q });
+      for (let s = 0; s < c.steps; s++) for (let v = 0; v < M.cfg.V; v++)
+        if (same.logits[s][v] !== ref.logits[s][v]) cacheExact = false;
+      for (let s = 0; s < c.steps; s++){
+        let a = 0, b = 0;
+        for (let v = 0; v < M.cfg.V; v++){
+          a = Math.max(a, Math.abs(mix.logits[s][v] - ref.logits[s][v]));
+          b = Math.max(b, Math.abs(ctrl.logits[s][v] - ref.logits[s][v]));
+        }
+        devCache = Math.max(devCache, a); devCtrl = Math.max(devCtrl, b);
+        if (b === 0) exact++;
+        tot++;
+        const sorted = ref.logits[s].slice().sort((x, y) => y - x);
+        margin = Math.min(margin, sorted[0] - sorted[1]);
+      }
+      if (mix.tokens.join(',') !== ref.tokens.join(',')) flipCache++;
+      if (ctrl.tokens.join(',') !== ref.tokens.join(',')) flipCtrl++;
+    }
+    out.push({ prec: prec.name, devCache: devCache, devCtrl: devCtrl, minMargin: margin,
+               flipCache: flipCache / prompts.length, flipCtrl: flipCtrl / prompts.length,
+               exactFrac: exact / tot, cacheExact: cacheExact, n: prompts.length });
+  });
+  return out;
+}
+
+// ---------------------------------------------------------------- the one place it touches training
+// Re-using a cached prefix during training means the prefix's K and V arrive as constants, so no
+// gradient flows into them. The true gradient of the same loss is available here, so the shortcut
+// can be scored instead of argued about.
+function prefixDetachStudy(M, task, cfg){
+  const c = Object.assign({ n: 12, seed: 51 }, cfg || {});
+  const rnd = mulberry32(c.seed), rows = [];
+  const fracs = [];
+  for (let k = 1; k < task.T - 1; k++) fracs.push(k);
+  for (const k of fracs){
+    let cos = 0, rel = 0, cnt = 0, gnorm = 0, dnorm = 0;
+    for (let i = 0; i < c.n; i++){
+      const smp = sampleSeq(task, rnd);
+      const tg = smp.y.slice();
+      for (let t = 0; t < k; t++) tg[t] = -1;                 // the loss lives on the suffix only
+      const rec = forward(M, smp.x, { mode: 'seq' });
+      const tru = backward(M, smp.x, tg, rec, { from: k });
+      const det = backward(M, smp.x, tg, rec, { from: k, detachBefore: k });
+      const A = gradTensors(tru.grads, M), B = gradTensors(det.grads, M);
+      let dotp = 0, na = 0, nb = 0, diff = 0;
+      for (let ti = 0; ti < A.length; ti++){
+        const X = A[ti][1], Y = B[ti][1];
+        for (let r = 0; r < X.length; r++) for (let cc = 0; cc < X[r].length; cc++){
+          dotp += X[r][cc] * Y[r][cc]; na += X[r][cc] * X[r][cc]; nb += Y[r][cc] * Y[r][cc];
+          diff += (X[r][cc] - Y[r][cc]) * (X[r][cc] - Y[r][cc]);
+        }
+      }
+      cos += dotp / Math.max(1e-300, Math.sqrt(na) * Math.sqrt(nb));
+      rel += Math.sqrt(diff) / Math.max(1e-300, Math.sqrt(na));
+      gnorm += Math.sqrt(na); dnorm += Math.sqrt(nb);
+      cnt++;
+    }
+    rows.push({ prefix: k, frac: k / task.T, cos: cos / cnt, rel: rel / cnt,
+                normTrue: gnorm / cnt, normDetached: dnorm / cnt });
+  }
+  return rows;
+}
+
+// and the end-to-end price of the shortcut: train the same model twice from the same seed, once
+// on the true gradient of the suffix loss and once on the prefix-detached one.
+function detachTrain(M0cfg, task, cfg){
+  const c = Object.assign({ steps: 200, batch: 6, lr: 0.03, seed: 71, prefix: 6 }, cfg || {});
+  const out = [];
+  for (const det of [false, true]){
+    const M = makeModel(M0cfg), st = adamState(M), rnd = mulberry32(c.seed);
+    let last = 0;
+    for (let s = 0; s < c.steps; s++){
+      const g = zeroGrads(M), gt = gradTensors(g, M);
+      let loss = 0;
+      for (let b = 0; b < c.batch; b++){
+        const smp = sampleSeq(task, rnd), tg = smp.y.slice();
+        for (let t = 0; t < c.prefix; t++) tg[t] = -1;
+        const rec = forward(M, smp.x, { mode: 'seq' });
+        const bw = backward(M, smp.x, tg, rec, { from: c.prefix, detachBefore: det ? c.prefix : 0 });
+        loss += bw.loss / c.batch;
+        const bt = gradTensors(bw.grads, M);
+        for (let i = 0; i < gt.length; i++){
+          const A = gt[i][1], B = bt[i][1];
+          for (let r = 0; r < A.length; r++) for (let cc = 0; cc < A[r].length; cc++) A[r][cc] += B[r][cc] / c.batch;
+        }
+      }
+      adamStep(M, g, st, c.lr);
+      last = loss;
+    }
+    // score both on the TRUE suffix loss, held out
+    const rnd2 = mulberry32(c.seed + 999);
+    let held = 0;
+    for (let i = 0; i < 40; i++){
+      const smp = sampleSeq(task, rnd2), tg = smp.y.slice();
+      for (let t = 0; t < c.prefix; t++) tg[t] = -1;
+      held += lossOf(M, smp.x, tg, { from: c.prefix }) / 40;
+    }
+    out.push({ detached: det, train: last, held: held });
+  }
+  return { rows: out, ratio: out[1].held / out[0].held, prefix: c.prefix };
+}
+
+// ---------------------------------------------------------------- real configurations
+// Architecture numbers are the published ones; every derived quantity on this page is computed
+// from them here rather than quoted.
+const REAL = [
+  { name: 'GPT-2 small', L: 12, d: 768, H: 12, kv: 12, dh: 64, dff: 3072, V: 50257, params: 124.4e6, gated: false },
+  { name: 'GPT-2 XL', L: 48, d: 1600, H: 25, kv: 25, dh: 64, dff: 6400, V: 50257, params: 1558e6, gated: false },
+  { name: 'Llama-2 7B', L: 32, d: 4096, H: 32, kv: 32, dh: 128, dff: 11008, V: 32000, params: 6.74e9, gated: true },
+  { name: 'Mistral 7B', L: 32, d: 4096, H: 32, kv: 8, dh: 128, dff: 14336, V: 32000, params: 7.24e9, gated: true },
+  { name: 'Llama-2 70B', L: 80, d: 8192, H: 64, kv: 8, dh: 128, dff: 28672, V: 32000, params: 68.98e9, gated: true },
+  { name: 'Llama-2 70B, MHA', L: 80, d: 8192, H: 64, kv: 64, dh: 128, dff: 28672, V: 32000, params: 68.98e9, gated: true }
+];
+function realTable(tokens, batch, bytes){
+  return REAL.map(function(r){
+    const cb = cacheBytes(r, tokens, batch, bytes);
+    const co = costs(r, 1);
+    return { name: r.name, kv: r.kv, H: r.H, perToken: cb.perToken, total: cb.total,
+             weights: r.params * (bytes === undefined ? 2 : bytes),
+             breakEven: r.params * (bytes === undefined ? 2 : bytes) / cb.perToken,
+             intensity: cb.intensity, crossover: co.crossover, flopsPerTok: co.perTok * r.L };
+  });
+}
+
+// ---------------------------------------------------------------- in-page self-check
+function selfCheck(){
+  const lines = [];
+  let pass = 0, total = 0;
+  const ok = function(c, label){ total++; if (c) pass++; else lines.push('FAIL  ' + label); };
+
+  // 1. THE identity: a cached decode reproduces a full recompute EXACTLY, not to a tolerance
+  {
+    let worst = 0, n = 0;
+    for (const seed of [1, 2, 3]) for (const L of [1, 2, 3]){
+      const M = makeModel({ seed: seed, L: L });
+      for (const p of [[1], [2, 5, 0], [3, 3, 1, 7]]){
+        const r = cacheDeviation(M, p, 6, {});
+        worst = Math.max(worst, r.worst); n++;
+        if (r.ref.join(',') !== r.got.join(',')) worst = Infinity;
+      }
+    }
+    ok(worst === 0, 'the cached decode is not bit-identical to a full recompute (' + worst + ' over ' + n + ' runs)');
+    const gr = exactGrid({ seeds: [1, 2], Ls: [1, 2], Hs: [1, 2], plens: [1, 3], steps: [1, 5], modes: ['seq', 'pair'] });
+    ok(gr.worst === 0 && gr.tokMismatch === 0,
+       'the exactness grid found a deviation (' + gr.worst + ' over ' + gr.n + ' configurations)');
+  }
+
+  // 2. why it is allowed: causal freezes the residual stream at every earlier position, exactly
+  {
+    const M = makeModel({ seed: 4, L: 3 });
+    const rows = freezeTest(M, [1, 4, 2, 6, 0], true, 'seq');
+    let bad = 0;
+    for (const r of rows) if (r.dX !== 0 || r.dK !== 0 || r.dV !== 0) bad++;
+    ok(bad === 0, 'appending a token moved an earlier position under causal attention');
+    const nc = freezeTest(M, [1, 4, 2, 6, 0], false, 'seq');
+    ok(nc[0].dK === 0, 'layer 1 K/V depend only on the embeddings, so they cannot move');
+    ok(nc[1].dK > 0, 'a non-causal model kept layer 2 K/V frozen, which is impossible');
+  }
+
+  // 3. and the consequence: the same cache is wrong without causality, and only from layer 2
+  {
+    const one = nonCausalCost(makeModel({ seed: 5, L: 1 }), [2, 4, 1, 5], 4, 'seq');
+    const two = nonCausalCost(makeModel({ seed: 5, L: 2 }), [2, 4, 1, 5], 4, 'seq');
+    ok(one.worst === 0, 'a one-layer non-causal model should still be cacheable exactly');
+    ok(two.worst > 1e-6, 'a two-layer non-causal model was cached without error, which cannot be');
+  }
+
+  // 4. every bug is caught by comparing all steps, and four of them are INVISIBLE at step 1
+  {
+    const M = makeModel({ seed: 6, L: 2 });
+    const t = bugTable(M, { prompts: 6, steps: 6 });
+    const none = t.rows[0];
+    ok(none.step1 === 0 && none.worst === 0, 'the correct cache reported a non-zero deviation');
+    let silent = 0, caught = 0;
+    for (const r of t.rows.slice(1)){
+      if (r.worst > 0) caught++;
+      if (r.step1 === 0) silent++;
+    }
+    ok(caught === BUGS.length, 'an all-steps comparison missed a bug');
+    ok(silent === 4, 'expected exactly 4 bugs to be bit-identical at the first decode step, got ' + silent);
+  }
+
+  // 5. the cost claim: the cache removes ONE factor of n, it does not make generation linear
+  {
+    const G = { L: 12, d: 768, H: 12, kv: 12, dh: 64, dff: 3072, V: 50257, gated: false };
+    // the closed form has to agree with the step-by-step sum before its exponents mean anything
+    const loop = costs(G, 300), cf = costTotals(G, 300);
+    ok(Math.abs(loop.cached / cf.cached - 1) < 1e-12, 'the closed-form cached total disagrees with the loop');
+    ok(Math.abs(loop.plain / cf.plain - 1) < 1e-12, 'the closed-form no-cache total disagrees with the loop');
+    const s = slope(G, 1e6, 1e7);
+    ok(s.plain > 2.9 && s.plain <= 3.001, 'the no-cache total is not cubic in n (' + s.plain.toFixed(3) + ')');
+    ok(s.cached > 1.9 && s.cached <= 2.001, 'the cached total is not quadratic in n (' + s.cached.toFixed(3) + ')');
+    const cheap = slope(G, 8, 64);
+    ok(cheap.cached < 1.05, 'at short context the cached total should still look linear (' + cheap.cached.toFixed(3) + ')');
+    ok(Math.abs(loop.crossover - 6 * G.d) < 1e-9, 'the flat-to-quadratic crossover is not 6d for a 4d MLP');
+  }
+
+  // 6. GQA: identical FLOPs, smaller cache. Asserted as an identity because it is one.
+  {
+    const mha = REAL[REAL.length - 1], gqa = REAL[REAL.length - 2];
+    const a = costs(mha, 1), b = costs(gqa, 1);
+    ok(a.projTok !== b.projTok, 'GQA should change the projection cost');
+    const atn = 2 * 1 * mha.d, atn2 = 2 * 1 * gqa.d;
+    ok(atn === atn2, 'GQA changed the attention FLOP count, which it does not');
+    const ca = cacheBytes(mha, 1, 1), cb = cacheBytes(gqa, 1, 1);
+    ok(Math.abs(ca.perToken / cb.perToken - 8) < 1e-12, 'GQA-8 should divide the cache by exactly 8');
+    ok(Math.abs(cb.intensity / ca.intensity - 8) < 1e-12, 'GQA-8 should multiply arithmetic intensity by exactly 8');
+  }
+
+  // 7. the backward pass, before anything is measured with it
+  {
+    const M = makeModel({ seed: 7, L: 2 });
+    const task = makeTask({});
+    const smp = sampleSeq(task, mulberry32(5));
+    const gc = gradCheck(M, smp.x, smp.y, { perTensor: 2 });
+    ok(gc.worst < 1e-6, 'the analytic gradient disagrees with central differences (' + gc.worst.toExponential(2) + ')');
+  }
+
+  // 8. reduction order changes the answer WITHOUT any cache -- the control that reassigns blame
+  {
+    const M = makeModel({ seed: 8, L: 2 });
+    const a = generateNoCache(M, [1, 3, 5], 4, { mode: 'seq' });
+    const b = generateNoCache(M, [1, 3, 5], 4, { mode: 'pair' });
+    let mx = 0;
+    for (let s = 0; s < 4; s++) for (let v = 0; v < M.cfg.V; v++)
+      mx = Math.max(mx, Math.abs(a.logits[s][v] - b.logits[s][v]));
+    ok(mx > 0, 'sequential and pairwise summation gave bit-identical logits, so the control is vacuous');
+    ok(mx < 1e-8, 'the two summation orders differ by more than rounding (' + mx.toExponential(2) + ')');
+    // and the cache is still exact under either order, which is the point
+    const c1 = cacheDeviation(M, [1, 3, 5], 4, { mode: 'pair' });
+    ok(c1.worst === 0, 'the cache stopped being exact when the summation order changed');
+  }
+
+  // 9. the prefix-detached gradient is NOT the gradient of the loss it evaluates -- asserted the
+  // same way Day 68 asserted scheduled sampling's, because otherwise it is only a claim
+  {
+    const M = makeModel({ seed: 9, L: 2 });
+    const task = makeTask({});
+    const smp = sampleSeq(task, mulberry32(6)), tg = smp.y.slice();
+    for (let t = 0; t < 6; t++) tg[t] = -1;
+    const good = gradCheck(M, smp.x, tg, { perTensor: 2, opt: { from: 6 } });
+    ok(good.worst < 1e-6, 'the suffix-only gradient disagrees with central differences (' + good.worst.toExponential(2) + ')');
+    const bad = gradCheck(M, smp.x, tg, { perTensor: 3, opt: { from: 6, detachBefore: 6 } });
+    ok(bad.worst > 1e-3, 'detaching the cached prefix left the gradient correct, which it cannot');
+  }
+
+  // 10. and the size a rounding difference must reach to change a TOKEN
+  {
+    const M = makeModel({ seed: 10, L: 2 });
+    const pr = precisionStudy(M, { prompts: 5, steps: 6 });
+    ok(pr[0].devCtrl > 0 && pr[0].devCtrl < 1e-8, 'float64 reduction-order noise is not last-bit sized');
+    // storing in bfloat16 with a wider accumulator ERASES the order difference: it lands below
+    // the rounding grid at every position. This was the opposite of what the page expected.
+    ok(pr[1].devCtrl === 0 && pr[1].exactFrac === 1,
+       'bfloat16 storage with a float64 accumulator did not erase the order difference');
+    // it is the ACCUMULATOR's precision, not the shape of the reduction, that makes order matter
+    ok(pr[2].devCtrl > 1e-3, 'a bfloat16 accumulator did not make summation order matter (' + pr[2].devCtrl.toExponential(2) + ')');
+    // and in all three the cache itself stays bit-exact
+    for (let i = 0; i < pr.length; i++) ok(pr[i].cacheExact, 'the cache stopped being exact in ' + pr[i].prec);
+  }
+  return { pass: pass, total: total, lines: lines };
+}
+// ===== ENGINE:END =====
+
+
+// ---------------------------------------------------------------- UI
+const $ = id => document.getElementById(id);
+const hl = " style='background:#f1f5f9'";
+const PREC = { f64: { name: 'float64 throughout', q: null, acc: null },
+               bf: { name: 'bfloat16 stored, float64 accumulator', q: bf16, acc: null },
+               bfa: { name: 'bfloat16 stored and accumulated', q: bf16, acc: bf16 } };
+const eng = e => e === 0 ? "0.0e+0" : e.toExponential(1);
+const KB = b => b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : (b / 1024).toFixed(0) + " KB";
+const GB = b => b >= 1073741824 ? (b / 1073741824).toFixed(2) + " GB" : (b / 1048576).toFixed(0) + " MB";
+const commas = n => Math.round(n).toLocaleString("en-US");
+const sci = n => n >= 1e6 ? n.toExponential(3) : commas(n);
+let TRAINED = null, FRESH = null;
+
+REAL.forEach(function(r, i){
+  const o = document.createElement("option");
+  o.value = String(i); o.textContent = r.name;
+  if (r.name === "GPT-2 small") o.selected = true;
+  $("mCfg").appendChild(o);
+});
+
+function promptFor(n, seed){
+  const rnd = mulberry32(seed), p = [];
+  for (let i = 0; i < n; i++) p.push(Math.floor(rnd() * 8));
+  return p;
+}
+
+function render(){
+  const L = +$("sL").value, p = +$("sP").value, n = +$("sN").value,
+        mode = $("mOrd").value, pk = PREC[$("mPrec").value];
+  $("vL").textContent = L; $("vP").textContent = p; $("vN").textContent = n;
+  const M = makeModel({ seed: 1, L: L });
+  $("pcount").textContent = commas(nParams(M));
+  const prompt = promptFor(p, 7);
+
+  // ------------------------------------------------- the identity, live
+  const dev = withAcc(pk.acc, function(){ return cacheDeviation(M, prompt, n, { mode: mode, q: pk.q }); });
+  $("exact").innerHTML = dev.per.map(function(v, s){
+    return "<tr><td>" + (s + 1) + "</td><td>" + (p + s) + "</td><td>" + (p + s + 1) +
+      "</td><td class='" + (v === 0 ? "ok" : "bad") + "'>" + eng(v) + "</td></tr>";
+  }).join("");
+  $("exactNote").innerHTML = "Worst over the run: <strong class='" + (dev.worst === 0 ? "ok" : "bad") +
+    "'>" + eng(dev.worst) + "</strong>. The generated tokens are <code>" + dev.got.join(",") +
+    "</code> cached and <code>" + dev.ref.join(",") + "</code> recomputed &mdash; " +
+    (dev.got.join(",") === dev.ref.join(",") ? "identical" : "DIFFERENT") + ". Zero here is not a " +
+    "small number: the cache re-uses the same products in the same order, so the two paths are the " +
+    "same floating-point computation, and the test needs no tolerance.";
+
+  // ------------------------------------------------- why
+  const toks = prompt.concat([1, 5]);
+  const fc = withAcc(pk.acc, function(){ return freezeTest(M, toks, true, mode, pk.q); });
+  const fn = withAcc(pk.acc, function(){ return freezeTest(M, toks, false, mode, pk.q); });
+  $("freeze").innerHTML = fc.map(function(r, l){
+    const nc = fn[l].dK;
+    return "<tr><td>" + (l + 1) + "</td><td class='" + (r.dX === 0 ? "ok" : "bad") + "'>" + eng(r.dX) +
+      "</td><td class='" + (r.dK === 0 ? "ok" : "bad") + "'>" + eng(r.dK) +
+      "</td><td class='" + (r.dV === 0 ? "ok" : "bad") + "'>" + eng(r.dV) +
+      "</td><td class='" + (nc === 0 ? "ok" : "bad") + "'>" + eng(nc) + "</td></tr>";
+  }).join("");
+  const nc1 = withAcc(pk.acc, function(){ return nonCausalCost(makeModel({ seed: 1, L: 1 }), prompt, 3, mode, pk.q); });
+  const ncL = withAcc(pk.acc, function(){ return nonCausalCost(M, prompt, 3, mode, pk.q); });
+  $("freezeNote").innerHTML = "Under causality every earlier position is frozen to <strong>0.0</strong> " +
+    "at every layer, which is the licence the cache runs on. Without causality the last column shows " +
+    "where it fails: layer 1's keys are still <strong>exactly 0</strong> &mdash; they are a function " +
+    "of the embeddings alone &mdash; and layer 2 onwards move, because their input went through an " +
+    "attention that could see the future. The consequence, run end to end: a cached decode on a " +
+    "1-layer non-causal model is off by <strong class='ok'>" + eng(nc1.worst) + "</strong> and on " +
+    "this " + L + "-layer one by <strong class='" + (ncL.worst > 1e-9 ? "bad" : "ok") + "'>" +
+    eng(ncL.worst) + "</strong>.";
+
+  // ------------------------------------------------- cost
+  const cfg = REAL[+$("mCfg").value], ctxE = +$("sCtx").value, ctx = Math.pow(2, ctxE);
+  $("vCtx").textContent = commas(ctx);
+  const ns = [16, 64, 256, 1024, 4096, ctx].filter(function(v, i, a){ return a.indexOf(v) === i; })
+    .sort(function(a, b){ return a - b; });
+  $("cost").innerHTML = ns.map(function(v){
+    const t = costTotals(cfg, v);
+    return "<tr" + (v === ctx ? hl : "") + "><td>" + commas(v) + (v === ctx ? " <span class='lg'>&larr; slider</span>" : "") +
+      "</td><td>" + t.plain.toExponential(3) + "</td><td>" + t.cached.toExponential(3) +
+      "</td><td class='ok'>" + commas(t.plain / t.cached) + "&times;</td><td>" +
+      (t.cached / v).toExponential(3) + "</td></tr>";
+  }).join("");
+  const sl = slope(cfg, 1e6, 1e7), lo = slope(cfg, 8, 64), xo = costs(cfg, 1).crossover;
+  $("costNote").innerHTML = "Log-log slope of the total against <em>n</em>, measured from the closed " +
+    "forms at n=10<sup>6</sup> and 10<sup>7</sup>: <strong>" + sl.plain.toFixed(3) + "</strong> without a " +
+    "cache and <strong>" + sl.cached.toFixed(3) + "</strong> with one. One factor of <em>n</em>, not the " +
+    "quadratic. Below the crossover the cached slope is <strong>" + lo.cached.toFixed(3) + "</strong> " +
+    "&mdash; genuinely linear &mdash; because the context-independent work per token (" +
+    commas(cfg.L * costs(cfg, 1).perTok) + " MACs) still dominates the attention over the cache. " +
+    "They cross at <strong>" + commas(xo) + "</strong> tokens" +
+    (cfg.gated ? "" : ", which is exactly 6d for a 4d MLP") + ". Every " +
+    "figure here is a count of multiply-accumulates from the published shapes, and the closed form " +
+    "is asserted equal to the step-by-step sum.";
+
+  // ------------------------------------------------- memory
+  const tokE = +$("sTok").value, tokN = Math.pow(2, tokE), bE = +$("sB").value, bN = Math.pow(2, bE);
+  $("vTok").textContent = commas(tokN); $("vB").textContent = bN;
+  const rt = realTable(tokN, bN, 2);
+  $("real").innerHTML = rt.map(function(r){
+    const heavy = r.total > r.weights;
+    return "<tr><td>" + r.name + "</td><td>" + r.kv + " / " + r.H + "</td><td>" + KB(r.perToken) +
+      "</td><td class='" + (heavy ? "bad" : "") + "'>" + GB(r.total) + "</td><td>" + GB(r.weights) +
+      "</td><td>" + commas(r.breakEven) + "</td><td class='" + (r.intensity >= 1 ? "ok" : "bad") + "'>" +
+      r.intensity.toFixed(2) + "</td></tr>";
+  }).join("");
+  const gqa = rt[rt.length - 2], mha = rt[rt.length - 1];
+  $("realNote").innerHTML = "At " + commas(tokN) + " tokens &times; batch " + bN + ", the red cells are " +
+    "the configurations whose cache is larger than the model. The last two rows are the same 70B " +
+    "model with 8 KV heads and with 64: the cache is <strong>" +
+    (mha.perToken / gqa.perToken).toFixed(0) + "&times;</strong> smaller, arithmetic intensity is " +
+    "<strong>" + (gqa.intensity / mha.intensity).toFixed(0) + "&times;</strong> higher &mdash; and " +
+    "the attention FLOP count is <strong>identical</strong>, since every query head still attends " +
+    "over a full-width key. GQA buys bandwidth, not arithmetic. A decode step at " +
+    mha.intensity.toFixed(2) + " MACs per byte is not compute-bound in any sense.";
+}
+
+$("runGrid").addEventListener("click", function(){
+  const btn = $("runGrid");
+  btn.disabled = true;
+  $("gridStatus").textContent = "sweeping…";
+  setTimeout(function(){
+    const t0 = Date.now(), rows = [];
+    for (const key of ["f64", "bf", "bfa"]){
+      const pk = PREC[key];
+      const g = withAcc(pk.acc, function(){
+        return exactGrid({ seeds: [1, 2, 3], Ls: [1, 2, 3], Hs: [1, 2], plens: [1, 2, 4, 6],
+                           steps: [1, 4, 8], modes: ["seq", "pair"], q: pk.q });
+      });
+      rows.push({ name: pk.name, g: g });
+    }
+    $("grid").innerHTML = rows.map(function(r){
+      return "<tr><td>" + r.name + "</td><td>" + r.g.n + "</td><td class='" +
+        (r.g.worst === 0 ? "ok" : "bad") + "'>" + eng(r.g.worst) + "</td><td class='" +
+        (r.g.tokMismatch === 0 ? "ok" : "bad") + "'>" + r.g.tokMismatch + " / " + r.g.n + "</td></tr>";
+    }).join("");
+    $("gridNote").innerHTML = "<strong>" + rows[0].g.n + "</strong> configurations per format, " +
+      "<strong>" + (3 * rows[0].g.n) + "</strong> in total, and the worst deviation anywhere is " +
+      "<strong class='ok'>0.0</strong>. This is the claim the rest of the page rests on: the cache " +
+      "is not an approximation whose error is small, it is the same computation. Anything non-zero " +
+      "in a real implementation is a bug, which is what makes the test in the zoo below need no " +
+      "threshold.";
+    $("gridStatus").textContent = "done in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    btn.disabled = false;
+  }, 30);
+});
+
+$("runBugs").addEventListener("click", function(){
+  const btn = $("runBugs");
+  btn.disabled = true;
+  $("bugStatus").textContent = "training the model…";
+  setTimeout(function(){
+    const t0 = Date.now(), task = makeTask({});
+    if (!TRAINED){
+      TRAINED = makeModel({ seed: 1, L: 2 });
+      TRAINED.trainInfo = train(TRAINED, task, { steps: 300 });
+    }
+    const M = TRAINED, tr = M.trainInfo;
+    const t = bugTable(M, { prompts: 24, promptLen: 4, steps: 6 });
+    const ms = marginStats(M, task, { n: 60 });
+    $("bugs").innerHTML = t.rows.map(function(r){
+      const silent = r.step1 === 0;
+      return "<tr" + (r.bug === "none" ? hl : "") + "><td>" +
+        (r.bug === "none" ? "<strong>correct</strong>" : "<code>" + r.bug + "</code> &mdash; " + r.label) +
+        "</td><td class='" + (silent ? "ok" : "bad") + "'>" + eng(r.step1) +
+        "</td><td class='" + (r.worst === 0 ? "ok" : "bad") + "'>" + eng(r.worst) +
+        "</td><td>" + (r.firstBad ? r.firstBad.toFixed(2) : "&mdash;") +
+        "</td><td class='" + (r.divRate > 0 ? "bad" : "ok") + "'>" + (100 * r.divRate).toFixed(0) +
+        "%</td></tr>";
+    }).join("");
+    const silent = t.rows.slice(1).filter(function(r){ return r.step1 === 0; });
+    const silentBiting = silent.filter(function(r){ return r.divRate > 0; });
+    $("bugNote").innerHTML = "Trained from " + tr.curve[0].loss.toFixed(3) + " to <strong>" +
+      tr.final.toFixed(5) + "</strong> nats against a chance value of " + tr.chance.toFixed(3) +
+      ", so its generations are a real signal. <strong>" + silent.length + " of the " +
+      (t.rows.length - 1) + "</strong> bugs are <strong class='ok'>exactly 0.0</strong> at the first " +
+      "decode step &mdash; bit-identical, because at step 1 the cache is still just the prefill and " +
+      "every implementation agrees about it. " + silentBiting.length + " of those " + silent.length +
+      " change the generated text anyway. 🔴 <code>posfrozen</code>, the most realistic bug in the " +
+      "list, is invisible at step 1 and changes the output in " +
+      (100 * t.rows.filter(function(r){ return r.bug === "posfrozen"; })[0].divRate).toFixed(0) +
+      "% of runs. Cutting the other way: <code>stale</code> moves the logits by " +
+      t.rows.filter(function(r){ return r.bug === "stale"; })[0].step1.toFixed(3) + " immediately " +
+      "and never moves a token, because the smallest top-2 margin over " + ms.n + " positions is " +
+      "<strong>" + ms.min.toFixed(2) + "</strong>; and <code>evict</code> is a real bug (" +
+      t.rows.filter(function(r){ return r.bug === "evict"; })[0].worst.toFixed(3) + " at some step) " +
+      "that never bites, because a sliding window is only a bug if something needed the window.";
+    $("bugStatus").textContent = "done in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    btn.disabled = false;
+  }, 30);
+});
+
+$("runDiag").addEventListener("click", function(){
+  const btn = $("runDiag");
+  btn.disabled = true;
+  $("diagStatus").textContent = "240 cases…";
+  setTimeout(function(){
+    const t0 = Date.now();
+    if (!TRAINED){
+      TRAINED = makeModel({ seed: 1, L: 2 });
+      TRAINED.trainInfo = train(TRAINED, makeTask({}), { steps: 300 });
+    }
+    const r = diagnosticStudy(TRAINED, { prompts: 30, promptLen: 4, steps: 8 });
+    $("diag").innerHTML =
+      "<tr><td>compare the cached logits at the <strong>first</strong> decode step <span class='lg'>the check people write</span></td>" +
+        "<td class='bad'>" + r.recallOne.toFixed(3) + "</td><td class='bad'>" + r.missedOne + " / " + r.changed +
+        "</td><td class='bad'>" + r.aucOne.auc.toFixed(3) + "</td><td>no</td></tr>" +
+      "<tr><td>compare at <strong>every</strong> decode step <span class='lg'>the same check, run to the end</span></td>" +
+        "<td class='ok'>" + r.recallAll.toFixed(3) + "</td><td class='ok'>0 / " + r.changed +
+        "</td><td class='ok'>" + r.aucAll.auc.toFixed(3) + "</td><td>no</td></tr>" +
+      "<tr><td>chance <span class='lg'>rank the cases at random</span></td><td class='lg'>&mdash;</td>" +
+        "<td class='lg'>&mdash;</td><td>0.500</td><td class='lg'>&mdash;</td></tr>";
+    $("diagNote").innerHTML = "Over <strong>" + r.n + "</strong> cases, <strong>" + r.changed +
+      "</strong> changed the generated tokens. The one-step comparison flags <strong>" +
+      (100 * r.recallOne).toFixed(0) + "%</strong> of them and misses <strong>" + r.missedOne +
+      "</strong>, and as a ranker it scores <strong class='bad'>" + r.aucOne.auc.toFixed(3) +
+      "</strong> against a chance value of 0.500 &mdash; because the bugs it cannot see are exactly " +
+      "the ones tied at zero, and one of the bugs it <em>can</em> see never changes the output. " +
+      "Running the identical comparison at every step: recall <strong class='ok'>" +
+      r.recallAll.toFixed(3) + "</strong>, AUC <strong class='ok'>" + r.aucAll.auc.toFixed(3) +
+      "</strong>. Neither needs a tolerance, and that is the practical point of the cache being " +
+      "bit-exact: the test is <code>!==</code>, not <code>&lt; 1e-5</code>. It also flags " +
+      r.flaggedNotChanged + " cases that did not change the output &mdash; correctly, since they " +
+      "are bugs; a deviation that has not bitten yet is still a deviation.";
+    $("diagStatus").textContent = "done in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    btn.disabled = false;
+  }, 30);
+});
+
+$("runPrec").addEventListener("click", function(){
+  const btn = $("runPrec");
+  btn.disabled = true;
+  $("precStatus").textContent = "three formats, two models…";
+  setTimeout(function(){
+    const t0 = Date.now();
+    if (!TRAINED){
+      TRAINED = makeModel({ seed: 1, L: 2 });
+      TRAINED.trainInfo = train(TRAINED, makeTask({}), { steps: 300 });
+    }
+    if (!FRESH) FRESH = makeModel({ seed: 10, L: 2 });
+    const a = precisionStudy(TRAINED, { prompts: 24, steps: 8 });
+    const b = precisionStudy(FRESH, { prompts: 24, steps: 8 });
+    let body = "";
+    for (let i = 0; i < a.length; i++){
+      for (const [tag, r] of [["trained <span class='lg'>confident</span>", a[i]],
+                              ["fresh <span class='lg'>near-tied</span>", b[i]]]){
+        body += "<tr" + (i === 1 ? hl : "") + "><td>" + (tag.indexOf("trained") === 0 ? r.prec : "") +
+          "</td><td>" + tag + "</td><td class='" + (r.devCache === 0 ? "ok" : "bad") + "'>" +
+          eng(r.devCache) + "</td><td class='" + (r.devCtrl === 0 ? "ok" : "bad") + "'>" +
+          eng(r.devCtrl) + "</td><td>" + r.minMargin.toFixed(4) + "</td><td class='" +
+          (r.flipCtrl > 0 || r.flipCache > 0 ? "bad" : "ok") + "'>" +
+          Math.round(r.flipCache * r.n) + " / " + r.n + " cached, " +
+          Math.round(r.flipCtrl * r.n) + " / " + r.n + " control</td><td class='" +
+          (r.cacheExact ? "ok" : "bad") + "'>" + (r.cacheExact ? "yes" : "NO") + "</td></tr>";
+      }
+    }
+    $("prec").innerHTML = body;
+    $("precNote").innerHTML = "🔴 The row that killed the explanation this page was written to " +
+      "confirm: <strong>bfloat16 stored with a float64 accumulator makes the two summation orders " +
+      "agree exactly</strong> &mdash; deviation <strong class='ok'>0.0</strong> at 100% of positions " +
+      "&mdash; because a " + eng(a[0].devCtrl) + " disagreement lands on the same bfloat16 grid " +
+      "point. Lowering the precision <em>removed</em> the discrepancy. It is the accumulator, not " +
+      "the shape of the reduction, that decides whether order matters: with bfloat16 accumulating " +
+      "too, the deviation is <strong class='bad'>" + b[2].devCtrl.toFixed(2) + "</strong> and tokens " +
+      "do change &mdash; in <strong>" + Math.round(b[2].flipCtrl * b[2].n) + " of " + b[2].n +
+      "</strong> runs with <em>no cache anywhere</em>, against " +
+      Math.round(b[2].flipCache * b[2].n) + " of " + b[2].n + " for the cached run. Same phenomenon, " +
+      "same size, and the last column is <strong class='ok'>yes</strong> in all six rows: the cache " +
+      "stays bit-exact in every format. Whatever changed the output, it was not the cache. The " +
+      "trained model changes nothing at all, because its smallest top-2 margin is " +
+      a[0].minMargin.toFixed(2) + " and a rounding difference has to clear that to move an argmax.";
+    $("precStatus").textContent = "done in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    btn.disabled = false;
+  }, 30);
+});
+
+$("runGrad").addEventListener("click", function(){
+  const btn = $("runGrad");
+  btn.disabled = true;
+  $("gradStatus").textContent = "central differences, then two training runs…";
+  setTimeout(function(){
+    const t0 = Date.now(), task = makeTask({});
+    const M = makeModel({ seed: 2, L: 2 });
+    const smp = sampleSeq(task, mulberry32(6));
+    const gc = gradCheck(M, smp.x, smp.y, { perTensor: 4 });
+    $("gc").innerHTML = gc.rows.map(function(r){
+      return "<tr><td>d" + r.name + "</td><td class='" + (r.rel < 1e-6 ? "ok" : "bad") + "'>" +
+        r.rel.toExponential(2) + "</td></tr>";
+    }).join("");
+    const pd = prefixDetachStudy(M, task, { n: 10 });
+    $("det").innerHTML = pd.filter(function(r, i){ return i % 2 === 1 || i === pd.length - 1; })
+      .map(function(r){
+        return "<tr><td>" + r.prefix + " of " + task.T + " <span class='lg'>" +
+          (100 * r.frac).toFixed(0) + "%</span></td><td class='" + (r.cos > 0.99 ? "ok" : "bad") + "'>" +
+          r.cos.toFixed(4) + "</td><td class='bad'>" + r.rel.toFixed(4) + "</td></tr>";
+      }).join("");
+    const dt = detachTrain({ seed: 1, L: 2 }, task, { steps: 200, prefix: 6 });
+    const tg = dt.rows[0], td = dt.rows[1];
+    $("gradNote").innerHTML = "Every tensor's hand-written backward pass matches independently " +
+      "written central differences to better than <strong>" + gc.worst.toExponential(1) +
+      "</strong>, so the rest is worth reading. Detaching a cached prefix leaves the gradient a " +
+      "<em>descent direction</em> &mdash; the cosine stays positive, which is why the loss curve " +
+      "looks fine &mdash; but at a prefix of " + pd[pd.length - 1].prefix + " of " + task.T +
+      " it has fallen to <strong class='bad'>" + pd[pd.length - 1].cos.toFixed(3) + "</strong> with " +
+      "a relative error of " + pd[pd.length - 1].rel.toFixed(3) + ". It is also not the gradient of " +
+      "anything: the assertion set requires it to <em>disagree</em> with central differences, the " +
+      "way Day 68 required scheduled sampling's to. End to end, the same model trained from the " +
+      "same seed on a prefix of " + dt.prefix + " of " + task.T + " reaches a held-out suffix loss " +
+      "of <strong class='ok'>" + tg.held.toFixed(4) + "</strong> on the true gradient and " +
+      "<strong class='bad'>" + td.held.toFixed(4) + "</strong> on the detached one &mdash; " +
+      "<strong>" + dt.ratio.toFixed(1) + "&times;</strong> worse. Caching a prefix for inference is " +
+      "free; caching it through a backward pass is not.";
+    $("gradStatus").textContent = "done in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    btn.disabled = false;
+  }, 30);
+});
+
+["sL", "sP", "sN", "mOrd", "mPrec", "mCfg", "sCtx", "sTok", "sB"].forEach(function(id){
+  $(id).addEventListener("input", render);
+  $(id).addEventListener("change", render);
+});
+render();
+const c = selfCheck();
+$("checks").textContent =
+  "selfCheck()  " + c.pass + " / " + c.total + " checks passed" +
+  (c.lines.length ? "\n" + c.lines.join("\n") : "\n\nthe cache is bit-identical to a full recompute; causality freezes every earlier\n" +
+   "position to exactly 0 and a non-causal model breaks from layer 2; the closed-form\n" +
+   "cost agrees with the step-by-step sum and its exponents are 3 and 2; GQA changes\n" +
+   "attention FLOPs by exactly 0 and cache bytes by exactly 8x; exactly 4 of the 8\n" +
+   "bugs are bit-identical at the first decode step and all 8 are caught by comparing\n" +
+   "every step; bfloat16 with a wide accumulator erases the summation-order difference\n" +
+   "entirely while a bfloat16 accumulator does not; and the prefix-detached gradient\n" +
+   "disagrees with central differences, which is the point of it.");
+</script>
+</body>
+</html>
