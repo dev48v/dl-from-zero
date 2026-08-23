@@ -1,0 +1,2060 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero &middot; Day 70 &mdash; Confidence calibration &amp; temperature scaling</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin:0; background:#f8fafc; color:#0f172a; line-height:1.55;
+         font-family:-apple-system, "Segoe UI", "Inter", Roboto, Helvetica, Arial, sans-serif; }
+  header { background:#fff; }
+  /* the tab bar sticks, not the header: a header taller than the viewport would pin forever */
+  .tabbar { background:#fff; border-bottom:1px solid #e2e8f0; position:sticky; top:0; z-index:20; }
+  .tabbar .wrap { padding-top:10px; padding-bottom:10px; }
+  .wrap { max-width:1120px; margin:0 auto; padding:16px; }
+  .narrow { max-width:780px; margin:0 auto; padding:16px; }
+  @media (min-width:768px){ .wrap, .narrow { padding:26px; } }
+  .kicker { font-size:11px; font-weight:800; letter-spacing:.18em; color:#be123c; margin:0 0 10px; }
+  h1 { font-size:17px; font-weight:800; line-height:1.55; margin:0; }
+  @media (min-width:768px){ h1 { font-size:19px; } }
+  h2 { font-size:23px; font-weight:800; margin:34px 0 10px; line-height:1.25; }
+  h3 { font-size:17px; font-weight:700; margin:26px 0 8px; }
+  p { margin:0 0 12px; }
+  em { font-style:italic; }
+  code { font-family:"SF Mono", Consolas, "Liberation Mono", monospace; font-size:12.5px;
+         background:#eef2f7; padding:1px 4px; border-radius:4px; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px 14px; border-radius:8px; font-size:12px;
+        overflow-x:auto; line-height:1.5;
+        font-family:"SF Mono", Consolas, "Liberation Mono", monospace; }
+  pre code { background:none; padding:0; color:inherit; font-size:inherit; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; }
+  .tabs button { border:0; background:#f1f5f9; color:#0f172a; padding:9px 18px; border-radius:9px;
+                 font-size:13.5px; font-weight:650; cursor:pointer; font-family:inherit; }
+  .tabs button.tab-active { background:#0f172a; color:#fff; }
+  .panel { background:#f1f5f9; }
+  .panel.light { background:#f8fafc; }
+  .hidden { display:none; }
+  .stack > * + * { margin-top:20px; }
+  .card { background:#fff; border-radius:16px; padding:18px;
+          box-shadow:0 1px 3px rgba(15,23,42,.10), 0 1px 2px rgba(15,23,42,.06); }
+  .cap { font-size:11px; font-weight:800; letter-spacing:.12em; color:#64748b; margin:0 0 10px; }
+  .lede { font-size:13.5px; color:#475569; margin:0 0 12px; }
+  .note { font-size:12px; color:#64748b; margin:10px 0 0; }
+  .grid2 { display:grid; gap:20px; }
+  @media (min-width:1000px){ .grid2 { grid-template-columns:1fr 1fr; } }
+  .ctrls { display:grid; gap:12px 22px; grid-template-columns:1fr; }
+  @media (min-width:640px){ .ctrls { grid-template-columns:1fr 1fr; } }
+  @media (min-width:1000px){ .ctrls { grid-template-columns:repeat(3,1fr); } }
+  label.ctl { font-size:13px; display:block; }
+  label.ctl b { float:right; font-variant-numeric:tabular-nums; }
+  input[type=range] { width:100%; margin:4px 0 0; }
+  select { width:100%; border:1px solid #cbd5e1; border-radius:8px; padding:6px 8px;
+           font-size:13px; font-family:inherit; background:#fff; }
+  .scroll { overflow-x:auto; }
+  table.num { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
+  table.num th, table.num td { padding:4px 9px; text-align:right; white-space:nowrap; }
+  table.num th { font-size:10.5px; letter-spacing:.05em; color:#64748b; font-weight:800; }
+  table.num td { font-size:12.5px; border-top:1px solid #e2e8f0; }
+  table.num th:first-child, table.num td:first-child { text-align:left; white-space:normal;
+    min-width:112px; }
+  table.num tr.hl td { background:#f1f5f9; }
+  .ok { color:#15803d; font-weight:800; }
+  .bad { color:#b91c1c; font-weight:800; }
+  .lg { font-size:10px; color:#64748b; font-weight:400; letter-spacing:0; }
+  button.run { border:0; background:#0f172a; color:#fff; padding:9px 17px; border-radius:9px;
+               font-size:13px; font-weight:650; cursor:pointer; font-family:inherit; }
+  button.run:disabled { opacity:.5; cursor:default; }
+  .runbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  .status { font-size:12px; color:#64748b; }
+  svg { max-width:100%; height:auto; display:block; }
+  ul { margin:0 0 12px; padding-left:22px; }
+  li { margin:0 0 6px; }
+  .red { color:#b91c1c; font-weight:800; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="kicker">DEEPLEARNINGFROMZERO &middot; DAY 70</p>
+    <h1>
+      &#127777;&#65039; Confidence calibration &mdash; a network's 0.83 ought to mean 0.83, and the
+      number everyone reports to check it is a <em>lower bound</em> whose tightness you choose. So
+      this page builds a data process whose true conditional distribution is known and computes the
+      calibration error instead of estimating it: 300 discrete inputs, a 3-class teacher network,
+      every expectation an exact finite sum. A 163-parameter model trained on 600 hard labels lands
+      at <strong>73.5%</strong> accuracy against a Bayes rate of 77.1%, and calls it
+      <strong>83.1%</strong>. Two identities set the scale. The true p*(y|x) scores exactly
+      <strong>0.0</strong> at every grouping &mdash; and so does a predictor that
+      <strong>ignores its input</strong> and returns the class marginal: 48.3% confident, 48.3%
+      right, perfectly calibrated, and 0.46 nats worse than the oracle. Then the ladder. Read the
+      one definition at 1 bin, 15 bins, 200 bins and one group per distinct confidence and it says
+      <strong>0.0961, 0.0961, 0.1194, 0.1380</strong> &mdash; 15 bins agrees with <em>one</em> bin
+      to better than <strong>3e-16</strong>, i.e. to summation-order rounding, because all nine
+      occupied bins are overconfident and nothing
+      cancels, so the standard apparatus adds literally no information to
+      <code>conf &minus; acc</code>. Fit one temperature on held-out data (T = <strong>1.597</strong>,
+      Newton on a provably convex objective, accuracy bit-identical by construction) and the same
+      ladder reads <strong>0.0033, 0.0576, 0.0877, 0.1161</strong>: the reported number fell
+      <strong>40.1%</strong> and the finest rung fell <strong>15.9%</strong>, because the residual
+      now changes sign &mdash; 6 bins over, 4 under, half the population weight each &mdash; and
+      coarse bins cancel <strong>17.6&times;</strong> of it away. Over 27 configurations the
+      reported drop beats the real drop <strong>27 times out of 27</strong>, and in 3 of them the
+      finest rung got <em>worse</em> while the reported one improved. The estimator also has a floor
+      nobody quotes: on the exactly calibrated true distribution, 15 bins and 500 samples report
+      <strong>0.045</strong> &mdash; larger than the entire <strong>0.026</strong> improvement this
+      page's own held-out set would have claimed. And scored as a ranker over 108 trained models,
+      ECE-15 orders probability quality at <strong>AUC 0.712</strong>: below the plain error rate at
+      0.791, far below held-out NLL at <strong>0.951</strong>, against a chance value of 0.500.
+      A hand-written forward <em>and</em> backward pass throughout, every gradient checked against
+      independently written central differences on an independently written second forward pass to
+      <strong>2.4e-9</strong>, 65 in-page assertions and 134 in Node.
+      Pure vanilla JavaScript, one file, no build step.
+    </h1>
+  </div>
+</header>
+
+<div class="tabbar">
+  <div class="wrap">
+    <div class="tabs" id="tabs">
+      <button data-tab="look" class="tab-active">&#128300; MEASURE</button>
+      <button data-tab="understand">&#129504; UNDERSTAND</button>
+      <button data-tab="build">&#128296; BUILD</button>
+    </div>
+  </div>
+</div>
+
+<section id="look" class="panel">
+  <div class="wrap stack">
+
+    <div class="card">
+      <div class="ctrls">
+        <label class="ctl">training labels n <b id="vN">600</b>
+          <input id="sN" type="range" min="100" max="1200" step="50" value="600"></label>
+        <label class="ctl">Adam steps <b id="vS">200</b>
+          <input id="sS" type="range" min="25" max="1200" step="25" value="200"></label>
+        <label class="ctl">hidden units H <b id="vH">16</b>
+          <input id="sH" type="range" min="2" max="48" step="2" value="16"></label>
+        <label class="ctl">bins B <b id="vB">15</b>
+          <input id="sB" type="range" min="1" max="60" step="1" value="15"></label>
+        <label class="ctl">binning
+          <select id="mSch">
+            <option value="width" selected>equal width</option>
+            <option value="mass">equal mass, ties kept together</option>
+            <option value="massSplit">equal mass, ties split (naive)</option>
+          </select></label>
+        <label class="ctl">temperature
+          <select id="mT">
+            <option value="1" selected>T = 1 (as trained)</option>
+            <option value="val">T fitted on a held-out set</option>
+            <option value="train">T fitted on the TRAINING set</option>
+            <option value="pop">T fitted on the whole population</option>
+            <option value="man">manual</option>
+          </select></label>
+        <label class="ctl">manual T <b id="vTm">1.60</b>
+          <input id="sTm" type="range" min="0.3" max="6" step="0.01" value="1.6"></label>
+      </div>
+      <p class="note">
+        A finite data process: <strong>300</strong> discrete inputs, weights w(x) summing to 1, and
+        a true conditional p*(y|x) over <strong>3</strong> classes produced by a small tanh teacher.
+        Because the input space is finite and p* is known, accuracy, NLL, confidence and every
+        reading of the calibration error below are <em>exact weighted sums</em> rather than
+        estimates &mdash; and that is the only reason this page can say how good the estimator is.
+        The student is a real 2-layer network (<span id="pcount">163</span> parameters, tanh hidden,
+        softmax output) with a hand-written forward and backward pass, trained by Adam on
+        <span id="nlab">600</span> hard labels drawn from the process.
+      </p>
+    </div>
+
+    <div class="card">
+      <p class="cap">FIVE PREDICTORS, AND THE TWO THAT SCORE A PERFECT CALIBRATION ERROR</p>
+      <p class="lede">
+        Every column is exact. The last three are the readings of one definition &mdash;
+        &sum; W<sub>g</sub>&thinsp;|mean accuracy &minus; mean confidence| &mdash; at one bin, at B
+        bins, and at one group per distinct confidence value. Note which rows are zero.
+      </p>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>predictor</th><th>accuracy</th><th>confidence</th><th>NLL</th>
+            <th>1 bin</th><th>B bins</th><th>finest</th><th>&frac12;&sum;|q&minus;p*|</th></tr></thead>
+          <tbody id="refs"></tbody>
+        </table>
+      </div>
+      <p class="note" id="refsNote"></p>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <p class="cap">THE RELIABILITY DIAGRAM, WITH THE PART YOU NEVER GET TO SEE</p>
+        <p class="lede">
+          Bars are the usual binned diagram. The small dots are the <em>exact</em> pairs
+          (confidence, true probability of being right) for all 300 inputs &mdash; the thing the
+          bins are averaging away, and the thing no real dataset can show you.
+        </p>
+        <div id="rel"></div>
+        <p class="note" id="relNote"></p>
+      </div>
+
+      <div class="card">
+        <p class="cap">WHY THE RUNGS DISAGREE &mdash; SIGNS, COUNTED</p>
+        <p class="lede">
+          One bin can only ever see the <em>net</em> signed error, which is
+          <code>conf &minus; acc</code> and does not depend on the bins at all. Everything a finer
+          grouping adds is error that the coarser one cancelled. So count the signs.
+        </p>
+        <div class="scroll">
+          <table class="num">
+            <thead><tr><th>predictor</th><th>occupied bins</th><th>over-confident</th>
+              <th>under-confident</th><th>net</th><th>&sum;|&middot;|</th><th>hidden</th></tr></thead>
+            <tbody id="signs"></tbody>
+          </table>
+        </div>
+        <p class="note" id="signsNote"></p>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE LADDER &mdash; ONE DEFINITION, EVERY GROUPING, BEFORE AND AFTER ONE TEMPERATURE</p>
+      <p class="lede">
+        Coarsening can only cancel, so every rung is a lower bound on the rung above it whenever the
+        bins nest, and the standard reporting choice sits near the bottom. The last column is the
+        ratio the literature never prints.
+      </p>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>grouping</th><th>bins used</th><th>T = 1, equal width</th>
+            <th>T = 1, equal mass</th><th>scaled, equal width</th><th>scaled, equal mass</th>
+            <th>finest / this rung</th></tr></thead>
+          <tbody id="ladder"></tbody>
+        </table>
+      </div>
+      <p class="note" id="ladderNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">ONE TEMPERATURE, SWEPT &mdash; AND THE THREE THINGS IT CANNOT MOVE</p>
+      <p class="lede">
+        q<sub>k</sub> &prop; exp(z<sub>k</sub>/T). The ordering of the logits is untouched, so the
+        prediction at every input and therefore the accuracy are <em>bit-identical</em> at every T,
+        which is why this is the only recalibration method nobody has to argue about.
+      </p>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>T</th><th>accuracy</th><th>confidence</th><th>NLL</th><th>1 bin</th>
+            <th>B bins</th><th>finest</th><th>&frac12;&sum;|q&minus;p*|</th></tr></thead>
+          <tbody id="temps"></tbody>
+        </table>
+      </div>
+      <p class="note" id="tempsNote"></p>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <p class="cap">THE FIT ITSELF &mdash; CONVEX, AND CHECKED</p>
+        <p class="lede">
+          In &beta; = 1/T the objective is &minus;&beta;z<sub>y</sub> + logsumexp(&beta;z), whose
+          second derivative is the <em>variance</em> of the logits under the tempered distribution
+          &mdash; a sum of squares, so it cannot be negative and Newton converges from anywhere.
+          Both derivatives are checked against central differences.
+        </p>
+        <div class="scroll">
+          <table class="num">
+            <thead><tr><th>&beta;</th><th>NLL</th><th>dNLL/d&beta;</th><th>abs error vs central diff</th>
+              <th>d&sup2;NLL/d&beta;&sup2;</th><th>abs error vs central diff</th></tr></thead>
+            <tbody id="conv"></tbody>
+          </table>
+        </div>
+        <p class="note" id="convNote"></p>
+      </div>
+
+      <div class="card">
+        <p class="cap">FIT IT ON THE TRAINING SET AND IT DOES NOTHING &mdash; AS AN IDENTITY</p>
+        <p class="lede">
+          Scaling the logits by &beta; <em>is</em> scaling the last layer by &beta;, a direction that
+          already lives in the parameter space. So dNLL/d&beta; at &beta;=1 on the training set is
+          exactly the directional derivative &lang;&nabla;L, (W&#8322;, b&#8322;)&rang; &mdash; a
+          quantity training has spent every step flattening.
+        </p>
+        <div class="scroll">
+          <table class="num">
+            <thead><tr><th>fitted on</th><th>examples</th><th>T</th><th>dNLL/d&beta; at &beta;=1</th>
+              <th>&lang;&nabla;L, &theta;<sub>out</sub>&rang;</th><th>difference</th></tr></thead>
+            <tbody id="which"></tbody>
+          </table>
+        </div>
+        <p class="note" id="whichNote"></p>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE ESTIMATOR'S NOISE FLOOR, MEASURED ON A PREDICTOR WHOSE ERROR IS EXACTLY ZERO</p>
+      <p class="lede">
+        Hand the estimator the true conditional distribution p*(y|x) &mdash; calibration error
+        exactly 0.0 at every grouping &mdash; and draw n labelled examples. Whatever it reports is
+        pure estimation noise, and it is the number every published ECE has to clear before it
+        means anything.
+      </p>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>held-out examples n</th><th>10 bins</th><th>15 bins</th><th>30 bins</th>
+            <th>worst of 8 draws, 15 bins</th><th>&radic;(B/2&pi;n)</th></tr></thead>
+          <tbody id="floor"></tbody>
+        </table>
+      </div>
+      <p class="note" id="floorNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">ONE CONFIGURATION AGREEING IS NOT A CLAIM &mdash; 27 OF THEM</p>
+      <p class="lede">
+        Sample size &times; training length &times; width, each trained from scratch, each given its
+        own held-out temperature fit. The question is whether the reported drop always flatters the
+        real one, and whether the training-set fit is always useless.
+      </p>
+      <div class="runbar">
+        <button class="run" id="runGrid">run the grid (27 models, ~20 s)</button>
+        <span class="status" id="gridStatus"></span>
+      </div>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>quantity</th><th>min</th><th>median</th><th>max</th><th>count</th></tr></thead>
+          <tbody id="grid"></tbody>
+        </table>
+      </div>
+      <p class="note" id="gridNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">WHERE THE OVERCONFIDENCE COMES FROM &mdash; AND THE CONTROL THAT SAYS SO</p>
+      <p class="lede">
+        Two runs of the same network from the same seed. One minimises NLL against
+        <em>hard labels drawn from</em> the process; the other minimises the exact population NLL
+        against p* itself. If overconfidence were about depth, width or modern architecture, both
+        would show it.
+      </p>
+      <div class="runbar">
+        <button class="run" id="runCurve">train past the optimum (~6 s)</button>
+        <span class="status" id="curveStatus"></span>
+      </div>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>step</th><th>train loss</th><th>accuracy</th><th>true NLL</th>
+            <th>confidence</th><th>conf &minus; acc</th><th>finest</th><th>B bins</th>
+            <th>T on held-out</th><th>T on train</th></tr></thead>
+          <tbody id="curve"></tbody>
+        </table>
+      </div>
+      <p class="note" id="curveNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE DIAGNOSTIC, SCORED AS A RANKER INSTEAD OF TRUSTED</p>
+      <p class="lede">
+        108 real trained models &mdash; sample size, training length, width, label smoothing,
+        temperature &mdash; and one held-out set of 500 examples each. Ground truth is the exact
+        population NLL against p*, which no practitioner can compute and this page can. The question
+        is not whether ECE is defined correctly. It is whether a lower ECE means better
+        probabilities.
+      </p>
+      <div class="runbar">
+        <button class="run" id="runDiag">score the diagnostics (~12 s)</button>
+        <span class="status" id="diagStatus"></span>
+      </div>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>number you would report</th><th>ranks true NLL</th>
+            <th>ranks the finest calibration error</th><th>pairs</th></tr></thead>
+          <tbody id="diag"></tbody>
+        </table>
+      </div>
+      <p class="note" id="diagNote"></p>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <p class="cap">THE BACKWARD PASS, AGAINST CENTRAL DIFFERENCES</p>
+        <p class="lede">
+          Every measurement above rests on a trained model, so the gradient is checked before
+          anything else: analytic against
+          (L(&theta;+h) &minus; L(&theta;&minus;h)) / 2h, which is O(h&sup2;) and therefore tight
+          enough to catch a real bug.
+        </p>
+        <div class="scroll">
+          <table class="num">
+            <thead><tr><th>tensor</th><th>at initialisation</th><th>at the trained point</th></tr></thead>
+            <tbody id="gc"></tbody>
+          </table>
+        </div>
+        <p class="note" id="gcNote"></p>
+      </div>
+
+      <div class="card">
+        <p class="cap">IN-PAGE ASSERTIONS</p>
+        <pre id="checks">running&hellip;</pre>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<section id="understand" class="panel light hidden">
+  <div class="narrow">
+
+    <h2>What the number is supposed to mean</h2>
+
+    <p>A classifier that outputs 0.83 for its top class is making a claim about frequencies: among
+    all the inputs where it says 0.83, it should be right about 83% of the time. That is
+    <em>calibration</em>, and it is a property of the pairing between confidence and outcome, not of
+    either alone. Written out, the calibration error is</p>
+
+    <pre>CE = E<sub>c</sub> | P(correct | confidence = c) &minus; c |</pre>
+
+    <p>and the first thing to notice is the conditioning. It is not
+    <code>|E[correct] &minus; E[conf]|</code>, which would let a batch of overconfident predictions
+    be paid for by a batch of underconfident ones. It is per confidence <em>level</em>, and a real
+    network emits a different confidence for every input, so the conditioning event has probability
+    zero and the quantity is not estimable without a decision about what counts as &ldquo;the same
+    confidence&rdquo;.</p>
+
+    <p>That decision is the bin count. Every practical calibration number &mdash; ECE, MCE,
+    reliability diagrams, adaptive ECE &mdash; is the same formula evaluated after grouping the
+    inputs, and grouping can only ever <em>cancel</em>:</p>
+
+    <pre>a bin holding one input  at conf 0.9, true 0.5   contributes 0.4
+a bin holding two inputs at conf 0.9, true 0.5 and 0.9 &rarr; |0.7 &minus; 0.9| = 0.2</pre>
+
+    <p>Coarsen and the number falls; refine (into nested bins) and it rises. So the reported ECE is a
+    <em>lower bound</em> on the calibration error at any finer grouping, and how much lower is a
+    reporting choice. On this page the whole ladder is visible at once because p* is known: one bin,
+    fifteen bins, two hundred bins, and one group per distinct confidence value.</p>
+
+    <p>The top rung deserves a warning. With 300 distinct confidences, conditioning on the
+    confidence <em>is</em> conditioning on the input, so the finest rung equals
+    E<sub>x</sub>|c(x) &minus; p*(&#375;|x)| &mdash; the per-input probability error. That is the
+    strictest thing the definition can mean and it is no longer only about calibration; it includes
+    the part of the error a global rescaling was never going to fix. The point is not that this rung
+    is the &ldquo;true&rdquo; value. The point is that the definition does not name a rung, the
+    reader assumes the strict one, and the writer reports the loose one.</p>
+
+    <h2>Where the overconfidence comes from</h2>
+
+    <p>Nothing about a softmax makes it overconfident. Fit the same network to the <em>exact</em>
+    conditional distribution and it lands on p* and is calibrated to three decimal places &mdash;
+    the control on the MEASURE tab. What produces overconfidence is minimising NLL against
+    <strong>hard labels on a finite sample</strong>. The empirical conditional distribution of a
+    label you observed once is a point mass, so every gradient step pushes the probability of the
+    observed class towards 1, and the only thing stopping it is capacity and the other examples that
+    share the same region. Train longer and the model keeps buying training NLL with confidence it
+    has not earned: on this page, accuracy peaks early and then drifts down 7.7% while the true NLL
+    <em>triples</em> and the temperature that would fix it climbs from 1.05 to 6.78.</p>
+
+    <p>This is why the classic figure (Guo et al. 2017) has two curves going opposite ways, and why
+    early stopping on accuracy and early stopping on NLL do not stop at the same place.</p>
+
+    <h2>One parameter, and why it is the good one</h2>
+
+    <p>Temperature scaling divides the logits by a single positive scalar before the softmax:</p>
+
+    <pre>q<sub>k</sub>(x) = exp(z<sub>k</sub>(x)/T) / &sum;<sub>j</sub> exp(z<sub>j</sub>(x)/T)</pre>
+
+    <p>Dividing by a positive number cannot reorder the logits, so <code>argmax</code> is untouched
+    at every input and the accuracy is unchanged &mdash; not approximately, bit-identically. T is
+    fitted by minimising NLL on <em>held-out</em> data, and the objective is best written in
+    &beta; = 1/T:</p>
+
+    <pre>L(&beta;) = mean over held-out of  [ logsumexp(&beta;z) &minus; &beta;z<sub>y</sub> ]
+dL/d&beta;   = mean of  [ E<sub>q(&beta;)</sub>[z] &minus; z<sub>y</sub> ]
+d&sup2;L/d&beta;&sup2; = mean of  Var<sub>q(&beta;)</sub>[z]   &ge; 0, always</pre>
+
+    <p>The second derivative is a variance, so it is a sum of squares: the objective is convex in
+    &beta;, there is exactly one optimum, and Newton reaches it in a handful of steps from any start.
+    (Convex in &beta;, not in T &mdash; a detail worth keeping, since a bisection over T will still
+    work but a Newton step in T can walk off.)</p>
+
+    <p>The stationarity condition <code>dL/d&beta; = 0</code> says something readable:
+    <strong>the mean logit of the observed class must equal the mean logit the model expects</strong>.
+    Overconfidence means the model's expected logit sits above what happens, so &beta; drops below 1
+    and T rises above it.</p>
+
+    <h3>And why you may not fit it on the training set</h3>
+
+    <p>Everyone knows you need a validation split. The reason is sharper than
+    &ldquo;overfitting&rdquo;. Scaling every logit by &beta; is exactly scaling the last layer's
+    weights and bias by &beta;, which is a direction the optimiser already had. So on the training
+    set</p>
+
+    <pre>dL<sub>train</sub>/d&beta; at &beta;=1  =  &lang;&nabla;<sub>W&#8322;</sub>L, W&#8322;&rang; + &lang;&nabla;<sub>b&#8322;</sub>L, b&#8322;&rang;</pre>
+
+    <p>&mdash; a directional derivative that training has been driving towards zero for every step it
+    ran. Verified on this page to <strong>1e-17</strong>. The training set has no information about
+    the temperature left, because it was all spent. Measured, the training-set fit returns
+    T &asymp; 0.91 while the held-out fit on the same logits asks for 1.60, and in 26 of 27
+    configurations the training-set fit comes back at T &le; 1 &mdash; it wants to make an
+    overconfident model <em>more</em> confident.</p>
+
+    <h2>Four things wrong with the number that scores it</h2>
+
+    <p><strong>1. A useless model can score a perfect zero.</strong> Take the class marginal p(y),
+    ignore the input entirely, and emit it for everything. Confidence is the largest marginal
+    probability; accuracy is the frequency of that class; those are the same number by definition, so
+    the calibration error is exactly 0 at <em>every</em> grouping &mdash; while the NLL is 0.46 nats
+    worse than the oracle and the distance from p* is 0.400. Calibration is a constraint that the
+    trivial predictor satisfies perfectly, which is why it can never be a quality score.</p>
+
+    <p><strong>2. The apparatus often adds nothing.</strong> Before any recalibration, all nine
+    occupied bins point the same way, so 15 bins reports the same value as one bin &mdash; here they
+    agree to 1.9e-16. Every reliability diagram of an uncalibrated network is showing you
+    <code>conf &minus; acc</code> with extra steps.</p>
+
+    <p><strong>3. It goes blind exactly when you fix it.</strong> After a temperature fit the net
+    signed error is pushed to ~0 by construction, and what remains changes sign across the
+    confidence range &mdash; on this page 6 bins overconfident and 4 underconfident, half the
+    population weight each. Coarse bins cancel that; the 15-bin reading is 17.6&times; smaller than
+    the sum of the per-bin magnitudes. So the reported error falls 40% while the finest rung falls
+    16%, and over 27 configurations the reported drop flattered the real one 27 times out of 27, with
+    three where the finest rung actually got <em>worse</em>.</p>
+
+    <p><strong>4. It has a floor nobody quotes.</strong> Run the estimator on p* itself, whose error
+    is exactly zero, and it reports 0.093 at n=100, 0.045 at n=500 and 0.010 at n=5000 with 15 bins.
+    Binned ECE is biased upward on finite samples because each bin's accuracy is a noisy average and
+    the absolute value keeps the noise. Any improvement smaller than that floor is not measurable
+    with that much data &mdash; and the improvement this page's own 500-example held-out set would
+    have reported for temperature scaling, 0.026, is smaller than the 0.045 floor.</p>
+
+    <h2>So what should be reported</h2>
+
+    <p>A <em>proper scoring rule</em> &mdash; NLL or Brier &mdash; has none of these problems. It
+    needs no bins, it is minimised uniquely by p*, and it cannot be gamed by a predictor that
+    ignores its input. Scored as rankers over 108 trained models against the exact population NLL,
+    held-out NLL orders the pairs at <strong>AUC 0.951</strong> and Brier at 0.909, while ECE-15
+    manages <strong>0.712</strong> &mdash; worse than the <em>plain error rate</em> at 0.791. ECE
+    improves to 0.875 on the one comparison it was designed for (the same model at different
+    temperatures, accuracy held fixed) and reverses 6.5% of its own rankings when the bin count moves
+    from 15 to 10, and 8.6% when the bins go from equal-width to equal-mass.</p>
+
+    <p>None of which makes temperature scaling a bad method. It halves the excess NLL here
+    (0.1905 &rarr; 0.0955 nats above the irreducible floor) for one parameter and no accuracy cost,
+    and that is a real result measured against the truth. The unreliable part is the instrument, not
+    the fix: report the proper score, report which grouping you used, and report what your estimator
+    reads on a perfectly calibrated reference at your sample size.</p>
+
+    <h2>The setup, so the numbers can be checked</h2>
+
+    <ul>
+      <li><strong>Process.</strong> 300 discrete inputs with weights w(x) summing to 1; features in
+      R&#8310;; p*(y|x) from a 3-hidden-unit tanh teacher over 3 classes with logits divided by
+      &tau;=0.6. Bayes accuracy <strong>0.7706</strong>, conditional entropy
+      <strong>0.5949</strong> nats &mdash; the floor no model can beat.</li>
+      <li><strong>Model.</strong> 6 &rarr; 16 tanh &rarr; 3 softmax, 163 parameters, hand-written
+      backward pass, Adam at 0.03. Because the teacher has 3 hidden units and the student has 16,
+      the student <em>can</em> represent p* &mdash; so the population-trained control is a fair
+      control and not a straw man.</li>
+      <li><strong>Everything exact.</strong> Accuracy is &sum; w(x) p*(&#375;(x)|x), not a count.
+      NLL is &sum; w(x) &sum; p* log(1/q), not an average over draws. The only place sampling
+      appears is where it belongs: the training labels, the held-out sets used to fit T, and the
+      estimator noise floor.</li>
+    </ul>
+
+  </div>
+</section>
+
+<section id="build" class="panel light hidden">
+  <div class="narrow">
+
+    <h2>&#128296; How it is built</h2>
+
+    <h3>1. A finite input space, so &ldquo;the calibration error&rdquo; exists</h3>
+    <pre>makeProcess()  &rarr; { X[300], W[300] summing to 1, P[300][3] = p*(y|x) }</pre>
+    <p>This is the decision the whole page rests on. If x were continuous, every expectation would
+    be a Monte-Carlo estimate and a claim like &ldquo;the estimator reports 0.045 for something whose
+    true value is 0&rdquo; would be an estimate about an estimate. With a finite, weighted input
+    space every population quantity is a <code>for</code> loop, and the calibration error at any
+    grouping is exactly computable. The teacher is a network rather than a linear map so that
+    misspecification is a choice (shrink H) rather than a permanent feature.</p>
+
+    <h3>2. One function for every calibration metric on the page</h3>
+    <pre>groupCE(conf, acc, w, gid)   // sum_g | sum_g w&middot;acc &minus; sum_g w&middot;conf |
+// gid = () =&gt; 0                    &rarr; the confidence gap
+// gid = i =&gt; binIndex(conf[i], B)   &rarr; ECE-B, equal width
+// gid = i =&gt; quantileBin[i]         &rarr; ECE-B, equal mass
+// gid = i =&gt; conf[i]                &rarr; the finest grouping</pre>
+    <p>Writing them as one function with a grouping argument is what turns &ldquo;ECE depends on the
+    binning&rdquo; from a caveat into a table. It also makes the lower-bound property obvious rather
+    than surprising: coarser <code>gid</code>, fewer absolute values, smaller sum.</p>
+
+    <h3>3. The two zero rows, which are identities and not experiments</h3>
+    <pre>metrics(pr, pr.P).ce === 0                    // exactly, at every grouping
+metrics(pr, constProbs(pr, pr.marg)).ce &lt; 1e-15  // one group: conf === P(argmax marginal)</pre>
+    <p>The oracle's zero is bit-exact because <code>acc[i]</code> and <code>conf[i]</code> are
+    literally the same number, so the two sums are the same floating-point computation. The marginal
+    predictor's is 1e-16 rather than 0 for one honest reason: its single group's confidence is summed
+    as &sum; w<sub>i</sub>&middot;c while the marginal was summed as &sum; w<sub>i</sub>&middot;p*,
+    and those are the same value by algebra but not the same rounding. Asserting
+    <code>&lt; 1e-15</code> rather than <code>=== 0</code> is the difference between a test and a
+    wish.</p>
+
+    <h3>4. Tie handling, which is a real bug in real code</h3>
+    <pre>// equal-mass bins: fill until the quota, then close the bin
+if (k &lt; B-1 &amp;&amp; cum &gt;= tot*(k+1)/B &amp;&amp; (splitTies || conf[next] !== conf[i])) k++;</pre>
+    <p>The naive version splits a run of identical confidences across bins to hit its quota. Do that
+    to the marginal predictor &mdash; whose confidences are all the same number &mdash; and the
+    metric reports <strong>0.066</strong> for a predictor whose calibration error is provably zero,
+    because each arbitrary slice has a different accuracy. Both versions are on the page behind a
+    dropdown, because a metric that depends on your sort order is worth seeing once.</p>
+
+    <h3>5. Newton in &beta;, with the second derivative written as a variance</h3>
+    <pre>d1 += w * (E_q[z] &minus; z_target)
+d2 += w * sum_k q[k] * (z[k] &minus; E_q[z])^2      // NOT E[z&sup2;] &minus; E[z]&sup2;</pre>
+    <p>Both forms are algebraically the variance; only the second is a sum of squares in floating
+    point. That is what lets the page assert <code>d2 &ge; 0</code> at every &beta; with no tolerance
+    at all, which is the numerical statement of &ldquo;this objective is convex&rdquo;. The fitted
+    &beta; is then confirmed against a 0.001-step grid over the whole range, because Day 67 and
+    Day 68 were both nearly wrong from trusting a coarse search.</p>
+
+    <h3>6. The training-set identity, so the warning is a measurement</h3>
+    <pre>scaleDirDeriv(M, items) = &lang;&nabla;<sub>W&#8322;</sub>L, W&#8322;&rang; + &lang;&nabla;<sub>b&#8322;</sub>L, b&#8322;&rang;
+assert |tempDerivs(trainItems, 1).d1 &minus; scaleDirDeriv(M, trainItems)| &lt; 1e-9   // 1e-17</pre>
+    <p>&ldquo;Don't fit the temperature on the training set&rdquo; is usually asserted. Here it is
+    derived: the two quantities are the same directional derivative, computed by two different code
+    paths, and they agree to 1e-17. That is why the training-set fit returns ~0.91 no matter how the
+    model is trained, and why it is <em>below</em> 1 in 26 of 27 configurations.</p>
+
+    <h3>7. Sign counts, because the mechanism has to be visible</h3>
+    <pre>signCounts(pr, Q, B) &rarr; { over, under, wOver, wUnder, net, abs }
+assert signCounts(before).under === 0             // one sign, so 15 bins === 1 bin
+assert signCounts(after).abs / signCounts(after).net &gt; 10
+for (B of [1,2,15,50,200]) assert signCounts(&middot;, B).net === |conf &minus; acc|</pre>
+    <p>The last line is the one that makes the page's argument airtight: the <em>net</em> reading is
+    independent of the bin count, so everything the bin count changes is cancellation. Without it,
+    &ldquo;binning hides sign-varying error&rdquo; is a story; with it, it is arithmetic.</p>
+
+    <h3>8. What the tests pin</h3>
+    <pre>// the two perfect scores, as identities
+assert(metrics(pr, pr.P).ce === 0 at every B and both schemes);
+assert(margPredictor.ce &lt; 1e-15 &amp;&amp; margPredictor.nll === entropy(marginal));
+assert(tieSplittingQuantileBins(margPredictor) &gt; 0.05);   // 0.066
+
+// the ladder, as inequalities that cannot be reverted
+assert(ECE(B) &le; finest for every B and both schemes);
+assert(ECE(2B) &ge; ECE(B) for the nesting chain 1,2,4,&hellip;,512);
+assert(distinctConf === 300 &amp;&amp; finest === per-input deviation);
+
+// temperature, as invariants
+assert(accuracy identical at T in [0.05 &hellip; 100]);       // and every argmax
+assert(all confidences === 1 exactly at T = 1e-9);
+assert(oneBin(T&rarr;&infin;) === |acc &minus; 1/K| &amp;&amp; finest &gt; oneBin);
+assert(d2 &ge; 0 at every &beta;; d1, d2 vs central differences &lt; 1e-6, 1e-5);
+assert(newton &asymp; a 0.001-step grid; |d1| at the optimum &lt; 1e-9);
+
+// the page's actual finding, so it cannot drift back
+assert(before: 15-bin === 1-bin to 1e-12 &amp;&amp; no bin under-confident);
+assert(after: &ge;3 bins each way &amp;&amp; abs/net &gt; 10);
+assert(after: reported falls &gt; 30% while the finest rung falls &lt; 30%);
+assert(after: finest / 15-bin &gt; 1.7);
+
+// the honest controls
+assert(population-trained control: |conf &minus; acc| &lt; 0.02);
+assert(the noise floor is &gt; 0.02 at n=200 and falls with n);
+assert(heldout NLL ranks true NLL at AUC &gt; 0.93, ECE at least 0.08 lower);
+assert(ECE does BETTER on same-model-different-T pairs);</pre>
+    <p>The last group is the one to steal. Three days running, this series has found that the
+    diagnostic named after the problem is a poor ranker of the problem &mdash; Day 68's exposure gap
+    at AUC 0.529, Day 69's one-step cache check at recall 0.500, and now ECE at 0.712 against an
+    error rate that manages 0.791. The pattern is not that the metrics are wrong. It is that a metric
+    built to be <em>interpretable</em> gets quoted as though it were <em>decisive</em>, and nobody
+    scores it, because scoring it requires a ground truth that only a synthetic process has.</p>
+
+    <h3>&#127881; DeepLearningFromZero Day 70 shipped.</h3>
+    <p>The model's 0.83 meant 0.73. One parameter fixed most of that and halved the excess NLL. The
+    number you would have used to check it fell twice as far as the error did, has a floor bigger
+    than the improvement, and can be driven to exactly zero by a model that never looks at its
+    input.</p>
+
+  </div>
+</section>
+
+<script>
+var tabs = document.querySelectorAll("#tabs button");
+var panels = document.querySelectorAll(".panel");
+tabs.forEach(function(t){
+  t.addEventListener("click", function(){
+    tabs.forEach(function(x){ x.classList.remove("tab-active"); });
+    t.classList.add("tab-active");
+    panels.forEach(function(p){ p.classList.add("hidden"); });
+    document.getElementById(t.dataset.tab).classList.remove("hidden");
+    window.scrollTo(0, 0);
+  });
+});
+
+// ===== ENGINE:BEGIN =====
+// Confidence calibration, the ECE estimator, and temperature scaling (Guo et al. 2017).
+//
+// Everything here is exact. The input space is FINITE -- nx discrete inputs, each with a known
+// weight w(x) and a known true conditional distribution p*(.|x) produced by a small teacher
+// network -- so every expectation on this page is a finite weighted sum, not a Monte-Carlo
+// estimate. That matters because the whole subject is an ESTIMATOR: you cannot judge how well
+// ECE measures the calibration error unless you can compute the calibration error.
+//
+// The model is a real 2-layer network (tanh hidden, softmax output) with a hand-written forward
+// AND backward pass, trained by Adam. Nothing is fitted in closed form.
+
+function mulberry32(a){
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function gauss(rnd){
+  let u = 0, v = 0;
+  while (u === 0) u = rnd();
+  while (v === 0) v = rnd();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+function softmaxOf(z, beta){
+  const b = beta === undefined ? 1 : beta, n = z.length, e = new Array(n);
+  let mx = -Infinity, s = 0;
+  for (let k = 0; k < n; k++) if (b * z[k] > mx) mx = b * z[k];
+  for (let k = 0; k < n; k++){ e[k] = Math.exp(b * z[k] - mx); s += e[k]; }
+  for (let k = 0; k < n; k++) e[k] /= s;
+  return e;
+}
+function argmaxOf(v){ let b = 0; for (let i = 1; i < v.length; i++) if (v[i] > v[b]) b = i; return b; }
+function entropyOf(p){ let h = 0; for (const v of p) if (v > 0) h -= v * Math.log(v); return h; }
+
+// ---------------------------------------------------------------- the data process
+// A finite input space with a KNOWN conditional distribution. The teacher is itself a small tanh
+// network, so a student with at least as many hidden units can represent p* exactly -- which is
+// what makes the well-specified control on this page honest rather than rigged.
+function makeProcess(o){
+  o = o || {};
+  const nx = o.nx || 300, K = o.K || 3, dx = o.dx || 6, Ht = o.Ht || 3,
+        tau = o.tau === undefined ? 0.6 : o.tau, rnd = mulberry32((o.seed || 1) * 7919 + 13);
+  const U1 = [], U2 = [], c1 = [], c2 = [];
+  for (let j = 0; j < dx; j++){ const r = []; for (let h = 0; h < Ht; h++) r.push(gauss(rnd)); U1.push(r); }
+  for (let h = 0; h < Ht; h++) c1.push(0.3 * gauss(rnd));
+  for (let h = 0; h < Ht; h++){ const r = []; for (let k = 0; k < K; k++) r.push(1.4 * gauss(rnd)); U2.push(r); }
+  for (let k = 0; k < K; k++) c2.push(0.3 * gauss(rnd));
+  const X = [], W = [], P = [];
+  let tot = 0;
+  for (let i = 0; i < nx; i++){
+    const f = [];
+    for (let j = 0; j < dx; j++) f.push(gauss(rnd));
+    X.push(f);
+    const w = Math.exp(0.6 * gauss(rnd)); W.push(w); tot += w;
+  }
+  for (let i = 0; i < nx; i++) W[i] /= tot;
+  for (let i = 0; i < nx; i++){
+    const hh = [];
+    for (let h = 0; h < Ht; h++){
+      let s = c1[h];
+      for (let j = 0; j < dx; j++) s += X[i][j] * U1[j][h];
+      hh.push(Math.tanh(s));
+    }
+    const z = [];
+    for (let k = 0; k < K; k++){
+      let s = c2[k];
+      for (let h = 0; h < Ht; h++) s += hh[h] * U2[h][k];
+      z.push(s / tau);
+    }
+    P.push(softmaxOf(z));
+  }
+  const marg = new Array(K).fill(0);
+  let bayesAcc = 0, ent = 0;
+  for (let i = 0; i < nx; i++){
+    for (let k = 0; k < K; k++) marg[k] += W[i] * P[i][k];
+    bayesAcc += W[i] * P[i][argmaxOf(P[i])];
+    ent += W[i] * entropyOf(P[i]);
+  }
+  return { nx: nx, K: K, dx: dx, Ht: Ht, tau: tau, X: X, W: W, P: P, marg: marg,
+           bayesAcc: bayesAcc, ent: ent, margEnt: entropyOf(marg),
+           teacher: { U1: U1, c1: c1, U2: U2, c2: c2 } };
+}
+
+// draw n labelled examples: x ~ w, y ~ p*(.|x)
+function sampleSet(pr, n, seed){
+  const rnd = mulberry32(seed * 104729 + 7), cum = [];
+  let s = 0;
+  for (let i = 0; i < pr.nx; i++){ s += pr.W[i]; cum.push(s); }
+  const idx = [], y = [];
+  for (let t = 0; t < n; t++){
+    const u = rnd() * cum[pr.nx - 1];
+    let lo = 0, hi = pr.nx - 1;
+    while (lo < hi){ const mid = (lo + hi) >> 1; if (cum[mid] < u) lo = mid + 1; else hi = mid; }
+    idx.push(lo);
+    const v = rnd();
+    let acc = 0, k = pr.K - 1;
+    for (let j = 0; j < pr.K; j++){ acc += pr.P[lo][j]; if (v < acc){ k = j; break; } }
+    y.push(k);
+  }
+  return { idx: idx, y: y, n: n };
+}
+
+// ---------------------------------------------------------------- the model
+function makeModel(o){
+  o = o || {};
+  const dx = o.dx || 6, H = o.H || 16, K = o.K || 3,
+        sc = o.scale === undefined ? 1 : o.scale, rnd = mulberry32((o.seed || 1) * 40503 + 11);
+  const W1 = [], W2 = [], b1 = new Array(H).fill(0), b2 = new Array(K).fill(0);
+  for (let j = 0; j < dx; j++){ const r = []; for (let h = 0; h < H; h++) r.push(sc * gauss(rnd) / Math.sqrt(dx)); W1.push(r); }
+  for (let h = 0; h < H; h++){ const r = []; for (let k = 0; k < K; k++) r.push(sc * gauss(rnd) / Math.sqrt(H)); W2.push(r); }
+  return { dx: dx, H: H, K: K, W1: W1, b1: b1, W2: W2, b2: b2 };
+}
+function tensors(M){ return [['W1', M.W1], ['b1', [M.b1]], ['W2', M.W2], ['b2', [M.b2]]]; }
+function nParams(M){ return M.dx * M.H + M.H + M.H * M.K + M.K; }
+function fwd(M, x){
+  const a = new Array(M.H), z = new Array(M.K);
+  for (let h = 0; h < M.H; h++){
+    let s = M.b1[h];
+    for (let j = 0; j < M.dx; j++) s += x[j] * M.W1[j][h];
+    a[h] = Math.tanh(s);
+  }
+  for (let k = 0; k < M.K; k++){
+    let s = M.b2[k];
+    for (let h = 0; h < M.H; h++) s += a[h] * M.W2[h][k];
+    z[k] = s;
+  }
+  return { a: a, z: z };
+}
+function zerosLike(M){
+  return { W1: M.W1.map(function(r){ return r.map(function(){ return 0; }); }),
+           b1: M.b1.map(function(){ return 0; }),
+           W2: M.W2.map(function(r){ return r.map(function(){ return 0; }); }),
+           b2: M.b2.map(function(){ return 0; }) };
+}
+// items: [{x: features, t: target distribution over K, w: weight}]. Soft targets cover both the
+// population objective (t = p*, w = w(x)) and a finite sample of hard labels (t = one-hot, w = 1/n).
+function lossGrad(M, items){
+  const g = zerosLike(M);
+  let loss = 0;
+  for (const it of items){
+    const f = fwd(M, it.x), q = softmaxOf(f.z);
+    for (let k = 0; k < M.K; k++) if (it.t[k] > 0) loss -= it.w * it.t[k] * Math.log(Math.max(q[k], 1e-300));
+    const dz = new Array(M.K), da = new Array(M.H);
+    for (let k = 0; k < M.K; k++){ dz[k] = it.w * (q[k] - it.t[k]); g.b2[k] += dz[k]; }
+    for (let h = 0; h < M.H; h++){
+      let s = 0;
+      for (let k = 0; k < M.K; k++){ g.W2[h][k] += f.a[h] * dz[k]; s += M.W2[h][k] * dz[k]; }
+      da[h] = s * (1 - f.a[h] * f.a[h]);
+      g.b1[h] += da[h];
+      for (let j = 0; j < M.dx; j++) g.W1[j][h] += it.x[j] * da[h];
+    }
+  }
+  return { loss: loss, g: g };
+}
+function popItems(pr){
+  const out = [];
+  for (let i = 0; i < pr.nx; i++) out.push({ x: pr.X[i], t: pr.P[i], w: pr.W[i] });
+  return out;
+}
+function sampleItems(pr, S, smooth){
+  const eps = smooth || 0, out = [];
+  for (let t = 0; t < S.n; t++){
+    const row = new Array(pr.K).fill(eps / pr.K);
+    row[S.y[t]] += 1 - eps;
+    out.push({ x: pr.X[S.idx[t]], t: row, w: 1 / S.n });
+  }
+  return out;
+}
+function train(M, items, o){
+  o = o || {};
+  const steps = o.steps === undefined ? 200 : o.steps, lr = o.lr === undefined ? 0.03 : o.lr,
+        B1 = 0.9, B2 = 0.999, EPS = 1e-8, m = zerosLike(M), v = zerosLike(M), hist = [];
+  const upd = function(P, G, Mm, Vv, c1, c2){
+    for (let i = 0; i < P.length; i++) for (let j = 0; j < P[i].length; j++){
+      Mm[i][j] = B1 * Mm[i][j] + (1 - B1) * G[i][j];
+      Vv[i][j] = B2 * Vv[i][j] + (1 - B2) * G[i][j] * G[i][j];
+      P[i][j] -= lr * (Mm[i][j] / c1) / (Math.sqrt(Vv[i][j] / c2) + EPS);
+    }
+  };
+  let first = null;
+  for (let s = 1; s <= steps; s++){
+    const r = lossGrad(M, items);
+    if (first === null) first = r.loss;
+    if (o.keepHist) hist.push(r.loss);
+    const c1 = 1 - Math.pow(B1, s), c2 = 1 - Math.pow(B2, s);
+    upd(M.W1, r.g.W1, m.W1, v.W1, c1, c2);
+    upd([M.b1], [r.g.b1], [m.b1], [v.b1], c1, c2);
+    upd(M.W2, r.g.W2, m.W2, v.W2, c1, c2);
+    upd([M.b2], [r.g.b2], [m.b2], [v.b2], c1, c2);
+    if (o.probe && s % (o.probeEvery || 25) === 0) o.probe(M, s);
+  }
+  const fin = lossGrad(M, items);
+  let gn = 0;
+  for (const T of [fin.g.W1, [fin.g.b1], fin.g.W2, [fin.g.b2]])
+    for (const r of T) for (const val of r) gn += val * val;
+  return { first: first, final: fin.loss, hist: hist, gradNorm: Math.sqrt(gn), steps: steps };
+}
+// central differences, so the error is O(h^2) and the tolerance can be tight enough to catch a bug
+function gradCheck(M, items, o){
+  o = o || {};
+  const per = o.perTensor || 3, h = o.h || 1e-5, rnd = mulberry32(o.seed || 99), rows = [];
+  const an = lossGrad(M, items).g;
+  let worst = 0;
+  for (const [name, T] of tensors(M)){
+    const G = name === 'b1' ? [an.b1] : name === 'b2' ? [an.b2] : an[name];
+    let worstT = 0;
+    for (let c = 0; c < per; c++){
+      const i = Math.floor(rnd() * T.length), j = Math.floor(rnd() * T[0].length), keep = T[i][j];
+      T[i][j] = keep + h; const up = lossGrad(M, items).loss;
+      T[i][j] = keep - h; const dn = lossGrad(M, items).loss;
+      T[i][j] = keep;
+      const num = (up - dn) / (2 * h),
+            rel = Math.abs(num - G[i][j]) / Math.max(1e-12, Math.abs(num) + Math.abs(G[i][j]));
+      if (rel > worstT) worstT = rel;
+    }
+    rows.push({ name: name, rel: worstT });
+    if (worstT > worst) worst = worstT;
+  }
+  return { rows: rows, worst: worst };
+}
+
+// ---------------------------------------------------------------- predictions
+function logitsAll(M, pr){ return pr.X.map(function(x){ return fwd(M, x).z; }); }
+function probsFromLogits(Z, T){
+  const b = 1 / T;
+  return Z.map(function(z){ return softmaxOf(z, b); });
+}
+function constProbs(pr, row){
+  const out = [];
+  for (let i = 0; i < pr.nx; i++) out.push(row.slice());
+  return out;
+}
+
+// ---------------------------------------------------------------- calibration, measured exactly
+// For every input, the model's confidence c(x) = max_k q(k|x) and the EXACT probability that its
+// prediction is right, a(x) = p*(yhat(x)|x). Both are numbers here, not estimates.
+function confAcc(pr, Q){
+  const cf = [], ac = [], yh = [];
+  for (let i = 0; i < pr.nx; i++){
+    const j = argmaxOf(Q[i]);
+    yh.push(j); cf.push(Q[i][j]); ac.push(pr.P[i][j]);
+  }
+  return { cf: cf, ac: ac, yh: yh };
+}
+// Calibration error over ANY grouping of the inputs: sum_g W_g |mean accuracy - mean confidence|.
+// Every calibration number on this page is this one function with a different grouping, which is
+// the point: "the calibration error" is not a quantity, it is a family indexed by the grouping.
+function groupCE(cf, ac, w, gid){
+  const M = new Map();
+  for (let i = 0; i < cf.length; i++){
+    const k = gid(i);
+    let e = M.get(k);
+    if (!e){ e = { w: 0, c: 0, a: 0 }; M.set(k, e); }
+    e.w += w[i]; e.c += w[i] * cf[i]; e.a += w[i] * ac[i];
+  }
+  let ece = 0, bins = 0;
+  const rows = [];
+  for (const e of M.values()) if (e.w > 0){
+    ece += Math.abs(e.a - e.c); bins++;
+    rows.push({ w: e.w, conf: e.c / e.w, acc: e.a / e.w });
+  }
+  rows.sort(function(a, b){ return a.conf - b.conf; });
+  return { ece: ece, bins: bins, rows: rows };
+}
+function binIndex(c, B){
+  let i = Math.floor(c * B);
+  if (i < 0) i = 0;
+  if (i >= B) i = B - 1;
+  return i;
+}
+// Equal-mass ("quantile") bins. splitTies = true is the naive implementation, which cuts a run of
+// identical confidences in half to hit the quota -- and that single detail makes the metric report
+// a non-zero calibration error for a predictor that is provably perfectly calibrated.
+function massAssign(cf, w, B, splitTies){
+  const n = cf.length, ord = [];
+  for (let i = 0; i < n; i++) ord.push(i);
+  ord.sort(function(a, b){ return cf[a] - cf[b] || a - b; });
+  const g = new Array(n).fill(0);
+  let tot = 0;
+  for (let i = 0; i < n; i++) tot += w[i];
+  let cum = 0, k = 0;
+  for (let p = 0; p < n; p++){
+    const i = ord[p];
+    g[i] = k;
+    cum += w[i];
+    const nextTied = p + 1 < n && cf[ord[p + 1]] === cf[i];
+    if (k < B - 1 && cum >= tot * (k + 1) / B - 1e-15 && (splitTies || !nextTied)) k++;
+  }
+  return g;
+}
+// the finest possible grouping of the confidence variable: one group per distinct confidence value
+function ceFinest(pr, Q){
+  const s = confAcc(pr, Q);
+  const r = groupCE(s.cf, s.ac, pr.W, function(i){ return s.cf[i]; });
+  return r.ece;
+}
+function distinctConf(pr, Q){
+  const s = confAcc(pr, Q), st = new Set();
+  for (const c of s.cf) st.add(c);
+  return st.size;
+}
+function ecePop(pr, Q, B, scheme, splitTies){
+  const s = confAcc(pr, Q);
+  if (scheme === 'mass'){
+    const g = massAssign(s.cf, pr.W, B, splitTies);
+    return groupCE(s.cf, s.ac, pr.W, function(i){ return g[i]; });
+  }
+  return groupCE(s.cf, s.ac, pr.W, function(i){ return binIndex(s.cf[i], B); });
+}
+// the estimator as it is actually computed: on a finite sample, against 0/1 correctness
+function eceSample(pr, Q, S, B, scheme, splitTies){
+  const cf = [], co = [], w = [];
+  for (let t = 0; t < S.n; t++){
+    const i = S.idx[t], j = argmaxOf(Q[i]);
+    cf.push(Q[i][j]); co.push(S.y[t] === j ? 1 : 0); w.push(1 / S.n);
+  }
+  if (scheme === 'mass'){
+    const g = massAssign(cf, w, B, splitTies);
+    return groupCE(cf, co, w, function(i){ return g[i]; });
+  }
+  return groupCE(cf, co, w, function(i){ return binIndex(cf[i], B); });
+}
+// every population quantity, exactly
+function metrics(pr, Q, o){
+  o = o || {};
+  const s = confAcc(pr, Q);
+  let acc = 0, conf = 0, nll = 0, brier = 0, tv = 0, sharp = 0;
+  for (let i = 0; i < pr.nx; i++){
+    const w = pr.W[i], q = Q[i], p = pr.P[i];
+    acc += w * s.ac[i];
+    conf += w * s.cf[i];
+    let s2 = 0, cross = 0, l = 0, t1 = 0;
+    for (let k = 0; k < pr.K; k++){
+      s2 += q[k] * q[k];
+      cross += p[k] * q[k];
+      l -= p[k] * Math.log(Math.max(q[k], 1e-300));
+      t1 += Math.abs(q[k] - p[k]);
+    }
+    nll += w * l;
+    brier += w * (s2 - 2 * cross + 1);
+    tv += w * 0.5 * t1;
+    sharp += w * Math.abs(s.cf[i] - s.ac[i]);
+  }
+  const B = o.B || 15;
+  return { acc: acc, conf: conf, gap: conf - acc, nll: nll, brier: brier, tv: tv, sharp: sharp,
+           ce: ceFinest(pr, Q), ece: ecePop(pr, Q, B, o.scheme || 'width').ece,
+           excess: nll - pr.ent };
+}
+// the numbers a practitioner actually has: one held-out sample, and no access to p*
+function sampleStats(pr, Q, S, o){
+  o = o || {};
+  const B = o.B || 15;
+  let nll = 0, err = 0, brier = 0;
+  for (let t = 0; t < S.n; t++){
+    const i = S.idx[t], y = S.y[t], q = Q[i], j = argmaxOf(q);
+    nll -= Math.log(Math.max(q[y], 1e-300));
+    if (j !== y) err++;
+    for (let k = 0; k < pr.K; k++){ const d = q[k] - (k === y ? 1 : 0); brier += d * d; }
+  }
+  return { nll: nll / S.n, err: err / S.n, brier: brier / S.n,
+           ece: eceSample(pr, Q, S, B, o.scheme || 'width').ece };
+}
+// WHY the rungs disagree: one bin can only see the NET signed error, and every bin whose sign
+// differs from its neighbours' is error that the coarser reading cancelled away. This function
+// counts the signs, which is the whole mechanism in two integers.
+function signCounts(pr, Q, B){
+  const s = confAcc(pr, Q), M = new Map();
+  for (let i = 0; i < pr.nx; i++){
+    const k = binIndex(s.cf[i], B);
+    let e = M.get(k);
+    if (!e){ e = { w: 0, c: 0, a: 0 }; M.set(k, e); }
+    e.w += pr.W[i]; e.c += pr.W[i] * s.cf[i]; e.a += pr.W[i] * s.ac[i];
+  }
+  let over = 0, under = 0, wOver = 0, wUnder = 0, net = 0, abs = 0;
+  for (const e of M.values()){
+    const d = e.a - e.c;
+    net += d; abs += Math.abs(d);
+    if (d < 0){ over++; wOver += e.w; } else { under++; wUnder += e.w; }
+  }
+  return { bins: M.size, over: over, under: under, wOver: wOver, wUnder: wUnder,
+           net: Math.abs(net), abs: abs };
+}
+// The LADDER: the same definition read at every grouping coarseness, from one bin (the confidence
+// gap) to one group per distinct confidence. Every rung is a legitimate reading of "the calibration
+// error" and they do not agree.
+function ladder(pr, Q, Bs){
+  const out = [];
+  for (const B of (Bs || [1, 2, 5, 10, 15, 20, 50, 100, 200])){
+    const w = ecePop(pr, Q, B, 'width'), m = ecePop(pr, Q, B, 'mass');
+    out.push({ B: B, width: w.ece, widthBins: w.bins, mass: m.ece, massBins: m.bins });
+  }
+  return { rows: out, finest: ceFinest(pr, Q), distinct: distinctConf(pr, Q) };
+}
+
+// ---------------------------------------------------------------- temperature scaling
+// One parameter. Fitted by minimising NLL in beta = 1/T, where the objective is CONVEX: the second
+// derivative is a sum of variances of the logits under the tempered distribution, so it cannot be
+// negative and Newton converges from anywhere.
+function tempItems(pr, Z, S, smooth){
+  if (!S){
+    const out = [];
+    for (let i = 0; i < pr.nx; i++) out.push({ z: Z[i], t: pr.P[i], w: pr.W[i] });
+    return out;
+  }
+  const eps = smooth || 0, out = [];
+  for (let t = 0; t < S.n; t++){
+    const row = new Array(pr.K).fill(eps / pr.K);
+    row[S.y[t]] += 1 - eps;
+    out.push({ z: Z[S.idx[t]], t: row, w: 1 / S.n });
+  }
+  return out;
+}
+function tempNLL(items, beta){
+  let L = 0;
+  for (const it of items){
+    const n = it.z.length;
+    let mx = -Infinity, s = 0, zt = 0;
+    for (let k = 0; k < n; k++) if (beta * it.z[k] > mx) mx = beta * it.z[k];
+    for (let k = 0; k < n; k++) s += Math.exp(beta * it.z[k] - mx);
+    for (let k = 0; k < n; k++) zt += it.t[k] * it.z[k];
+    L += it.w * (mx + Math.log(s) - beta * zt);
+  }
+  return L;
+}
+function tempDerivs(items, beta){
+  let d1 = 0, d2 = 0;
+  for (const it of items){
+    const q = softmaxOf(it.z, beta), n = it.z.length;
+    let Ez = 0, zt = 0, va = 0;
+    for (let k = 0; k < n; k++){ Ez += q[k] * it.z[k]; zt += it.t[k] * it.z[k]; }
+    for (let k = 0; k < n; k++){ const d = it.z[k] - Ez; va += q[k] * d * d; }
+    d1 += it.w * (Ez - zt);
+    d2 += it.w * va;
+  }
+  return { nll: tempNLL(items, beta), d1: d1, d2: d2 };
+}
+function fitTemp(items, o){
+  o = o || {};
+  let beta = o.beta0 === undefined ? 1 : o.beta0, it = 0;
+  const iters = o.iters || 80;
+  for (; it < iters; it++){
+    const d = tempDerivs(items, beta);
+    if (!(d.d2 > 1e-300)) break;
+    let nb = beta - d.d1 / d.d2;
+    if (!(nb > 1e-4)) nb = 1e-4;
+    if (nb > 1e4) nb = 1e4;
+    const done = Math.abs(nb - beta) < 1e-13;
+    beta = nb;
+    if (done) break;
+  }
+  const d = tempDerivs(items, beta);
+  return { beta: beta, T: 1 / beta, iters: it + 1, d1: d.d1, d2: d.d2, nll: d.nll };
+}
+// a coarse grid is not a proof: this is the fine one, used to confirm Newton found the minimum
+function tempGrid(items, lo, hi, step){
+  let best = null;
+  for (let b = lo; b <= hi + 1e-12; b += step){
+    const v = tempNLL(items, b);
+    if (!best || v < best.nll) best = { beta: b, T: 1 / b, nll: v };
+  }
+  return best;
+}
+// The identity behind "fitting T on the training set does nothing": scaling the logits by beta IS
+// scaling (W2, b2) by beta, a direction that already lives in the parameter space, so the
+// derivative of the training loss in beta at beta = 1 is the directional derivative along it --
+// and training has already been driving that towards zero.
+function scaleDirDeriv(M, items){
+  const g = lossGrad(M, items).g;
+  let s = 0;
+  for (let h = 0; h < M.H; h++) for (let k = 0; k < M.K; k++) s += g.W2[h][k] * M.W2[h][k];
+  for (let k = 0; k < M.K; k++) s += g.b2[k] * M.b2[k];
+  return s;
+}
+
+// ---------------------------------------------------------------- the standard setup, in one call
+function fitAll(pr, o){
+  o = o || {};
+  const n = o.n || 600, steps = o.steps === undefined ? 200 : o.steps, H = o.H || 16,
+        S = sampleSet(pr, n, o.seed || 3), V = sampleSet(pr, o.nVal || 400, (o.seed || 3) + 500),
+        E = sampleSet(pr, o.nEval || 500, (o.seed || 3) + 900),
+        M = makeModel({ seed: o.mseed || 1, dx: pr.dx, H: H, K: pr.K }),
+        items = sampleItems(pr, S, o.smooth || 0),
+        tr = train(M, items, { steps: steps, lr: o.lr === undefined ? 0.03 : o.lr }),
+        Z = logitsAll(M, pr),
+        fv = fitTemp(tempItems(pr, Z, V, 0)),
+        ft = fitTemp(tempItems(pr, Z, S, o.smooth || 0)),
+        fp = fitTemp(tempItems(pr, Z, null));
+  return { pr: pr, M: M, S: S, V: V, E: E, items: items, tr: tr, Z: Z, n: n, steps: steps, H: H,
+           Tval: fv.T, Ttrain: ft.T, Tpop: fp.T, fitVal: fv, fitTrain: ft, fitPop: fp,
+           base: metrics(pr, probsFromLogits(Z, 1)),
+           scaled: metrics(pr, probsFromLogits(Z, fv.T)),
+           ideal: metrics(pr, probsFromLogits(Z, fp.T)) };
+}
+
+// ---------------------------------------------------------------- studies
+// the classic figure (Guo et al. fig. 2): accuracy plateaus, NLL turns round and climbs
+function overconfidenceCurve(pr, o){
+  o = o || {};
+  const S = sampleSet(pr, o.n || 600, o.seed || 3), V = sampleSet(pr, o.nVal || 400, (o.seed || 3) + 500),
+        M = makeModel({ seed: o.mseed || 1, dx: pr.dx, H: o.H || 16, K: pr.K }),
+        items = sampleItems(pr, S, o.smooth || 0), rows = [];
+  train(M, items, {
+    steps: o.steps || 1500, lr: o.lr === undefined ? 0.03 : o.lr, probeEvery: o.probeEvery || 50,
+    probe: function(Mm, s){
+      const Z = logitsAll(Mm, pr), mt = metrics(pr, probsFromLogits(Z, 1), { B: o.B || 15 });
+      rows.push({ step: s, trainLoss: lossGrad(Mm, items).loss, acc: mt.acc, nll: mt.nll,
+                  conf: mt.conf, gap: mt.gap, ce: mt.ce, ece: mt.ece, tv: mt.tv,
+                  Ttrain: fitTemp(tempItems(pr, Z, S, o.smooth || 0)).T,
+                  Tval: fitTemp(tempItems(pr, Z, V, 0)).T });
+    }
+  });
+  let bestAcc = -1, bestAccStep = 0, bestNll = Infinity, bestNllStep = 0;
+  for (const r of rows){
+    if (r.acc > bestAcc + 1e-12){ bestAcc = r.acc; bestAccStep = r.step; }
+    if (r.nll < bestNll - 1e-12){ bestNll = r.nll; bestNllStep = r.step; }
+  }
+  return { rows: rows, bestAcc: bestAcc, bestAccStep: bestAccStep,
+           bestNll: bestNll, bestNllStep: bestNllStep, S: S, V: V, M: M };
+}
+// the estimator's noise floor: run it on the TRUE conditional distribution, whose calibration
+// error is exactly zero at every grouping, and see what it reports
+function noiseFloor(pr, o){
+  o = o || {};
+  const ns = o.ns || [100, 250, 500, 1000, 2000, 5000, 10000], reps = o.reps || 8,
+        Bs = o.Bs || [10, 15, 30], rows = [];
+  for (const n of ns){
+    const row = { n: n, per: {} };
+    for (const B of Bs){
+      let s = 0, mx = 0;
+      for (let r = 0; r < reps; r++){
+        const S = sampleSet(pr, n, 20000 + r * 37 + n * 3);
+        const e = eceSample(pr, pr.P, S, B, 'width').ece;
+        s += e; if (e > mx) mx = e;
+      }
+      row.per[B] = { mean: s / reps, worst: mx };
+    }
+    rows.push(row);
+  }
+  return { rows: rows, exact: ceFinest(pr, pr.P), Bs: Bs, reps: reps };
+}
+// what temperature does, and what it does not
+function tempStudy(pr, Z, o){
+  o = o || {};
+  const Ts = o.Ts || [0.5, 0.75, 1, 1.5, 2, 3, 5, 10], rows = [];
+  for (const T of Ts){
+    const Q = probsFromLogits(Z, T), m = metrics(pr, Q, { B: o.B || 15 });
+    rows.push({ T: T, acc: m.acc, conf: m.conf, nll: m.nll, ce: m.ce, ece: m.ece, tv: m.tv,
+                gap: m.gap, one: ecePop(pr, Q, 1, 'width').ece });
+  }
+  return rows;
+}
+// One configuration agreeing is not a claim: the ladder gap after temperature scaling, over a grid
+// of sample sizes, training lengths and widths.
+function robustGrid(pr, o){
+  o = o || {};
+  const ns = o.ns || [150, 300, 600], steps = o.steps || [100, 300, 800], Hs = o.Hs || [4, 16, 32],
+        rows = [];
+  for (const n of ns) for (const st of steps) for (const H of Hs){
+    const r = fitAll(pr, { n: n, steps: st, H: H });
+    rows.push({ n: n, steps: st, H: H, T: r.Tval, Ttrain: r.Ttrain, Tpop: r.Tpop,
+                ceBefore: r.base.ce, eceBefore: r.base.ece, gapBefore: Math.abs(r.base.gap),
+                ceAfter: r.scaled.ce, eceAfter: r.scaled.ece, gapAfter: Math.abs(r.scaled.gap),
+                ratioBefore: r.base.ce / Math.max(r.base.ece, 1e-12),
+                ratioAfter: r.scaled.ce / Math.max(r.scaled.ece, 1e-12),
+                dropReported: 1 - r.scaled.ece / Math.max(r.base.ece, 1e-12),
+                dropReal: 1 - r.scaled.ce / Math.max(r.base.ce, 1e-12) });
+  }
+  const q = function(k){
+    const v = rows.map(function(r){ return r[k]; }).sort(function(a, b){ return a - b; });
+    return { min: v[0], med: v[Math.floor(v.length / 2)], max: v[v.length - 1] };
+  };
+  let reportedBeatsReal = 0, trainLE1 = 0, valGE1 = 0, realNegative = 0;
+  for (const r of rows){
+    if (r.dropReported > r.dropReal) reportedBeatsReal++;
+    if (r.Ttrain <= 1) trainLE1++;
+    if (r.T >= 1) valGE1++;
+    if (r.dropReal < 0) realNegative++;
+  }
+  return { rows: rows, n: rows.length, ratioBefore: q('ratioBefore'), ratioAfter: q('ratioAfter'),
+           dropReported: q('dropReported'), dropReal: q('dropReal'), T: q('T'),
+           Ttrain: q('Ttrain'), reportedBeatsReal: reportedBeatsReal, trainLE1: trainLE1,
+           valGE1: valGE1, realNegative: realNegative };
+}
+// a pool of REAL trained models of varying quality -- the population the diagnostics are scored on
+function modelPool(pr, o){
+  o = o || {};
+  const ns = o.ns || [150, 300, 600], steps = o.steps || [50, 200, 600], Hs = o.Hs || [4, 16],
+        sm = o.smooth || [0, 0.1], Tset = o.Ts || [1, 2, 'fit'], out = [];
+  let id = 0, base = 0;
+  for (let a = 0; a < ns.length; a++) for (let b = 0; b < steps.length; b++)
+    for (let c = 0; c < Hs.length; c++) for (let d = 0; d < sm.length; d++){
+      const S = sampleSet(pr, ns[a], 11 + a * 13 + b * 5 + c * 3 + d),
+            M = makeModel({ seed: 3 + base, dx: pr.dx, H: Hs[c], K: pr.K });
+      train(M, sampleItems(pr, S, sm[d]), { steps: steps[b], lr: 0.03 });
+      const Z = logitsAll(M, pr),
+            V = o.valSet || sampleSet(pr, o.nVal || 400, 777 + base);
+      for (const Tk of Tset){
+        const T = Tk === 'fit' ? fitTemp(tempItems(pr, Z, V, 0)).T : Tk;
+        out.push({ id: id++, base: base, n: ns[a], steps: steps[b], H: Hs[c], smooth: sm[d],
+                   T: T, tag: Tk === 'fit' ? 'fitted' : String(Tk), Z: Z });
+      }
+      base++;
+    }
+  return out;
+}
+function aucPairs(diag, truth, o){
+  o = o || {};
+  const n = diag.length, tol = o.tol || 0, minDiag = o.minDiag || 0, only = o.only;
+  let good = 0, pairs = 0, ties = 0;
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++){
+    if (only && !only(i, j)) continue;
+    const dt = truth[j] - truth[i];
+    if (Math.abs(dt) <= tol) continue;
+    const dd = diag[j] - diag[i];
+    if (Math.abs(dd) < minDiag) continue;
+    pairs++;
+    if (dd === 0){ good += 0.5; ties++; }
+    else if ((dd > 0) === (dt > 0)) good++;
+  }
+  return { auc: pairs ? good / pairs : 0.5, pairs: pairs, ties: ties };
+}
+// Score the number everyone reports AS A RANKER. Two models, the same held-out sample: does the
+// lower ECE mean the better probabilities? Ground truth is the exact population NLL against p*,
+// which no practitioner can compute and this page can.
+function diagStudy(pr, o){
+  o = o || {};
+  const B = o.B || 15,
+        E = sampleSet(pr, o.evalN || 500, o.evalSeed || 4242),
+        V = sampleSet(pr, o.valN || 400, (o.evalSeed || 4242) + 1),
+        pool = o.pool || modelPool(pr, { valSet: V }), rows = [];
+  for (const m of pool){
+    const Q = probsFromLogits(m.Z, m.T),
+          ex = metrics(pr, Q, { B: B }), st = sampleStats(pr, Q, E, { B: B });
+    rows.push({ id: m.id, base: m.base, n: m.n, steps: m.steps, H: m.H, smooth: m.smooth,
+                T: m.T, tag: m.tag,
+                trueNll: ex.nll, trueCe: ex.ce, trueTv: ex.tv, trueAcc: ex.acc, gap: ex.gap,
+                ece: st.ece, ece10: eceSample(pr, Q, E, 10, 'width').ece,
+                eceMass: eceSample(pr, Q, E, B, 'mass').ece,
+                sNll: st.nll, sErr: st.err, sBrier: st.brier });
+  }
+  const col = function(k){ return rows.map(function(r){ return r[k]; }); };
+  const tol = o.tol === undefined ? 0.002 : o.tol;
+  const sameBase = function(i, j){ return rows[i].base === rows[j].base; };
+  const res = {
+    n: rows.length, rows: rows, floor: o.floor === undefined ? 0.03 : o.floor,
+    eceVsNll: aucPairs(col('ece'), col('trueNll'), { tol: tol }),
+    nllVsNll: aucPairs(col('sNll'), col('trueNll'), { tol: tol }),
+    brierVsNll: aucPairs(col('sBrier'), col('trueNll'), { tol: tol }),
+    errVsNll: aucPairs(col('sErr'), col('trueNll'), { tol: tol }),
+    eceVsNllBig: aucPairs(col('ece'), col('trueNll'), { tol: tol, minDiag: o.floor === undefined ? 0.03 : o.floor }),
+    eceVsNllSame: aucPairs(col('ece'), col('trueNll'), { tol: tol, only: sameBase }),
+    nllVsNllSame: aucPairs(col('sNll'), col('trueNll'), { tol: tol, only: sameBase }),
+    eceVsCe: aucPairs(col('ece'), col('trueCe'), { tol: tol }),
+    nllVsCe: aucPairs(col('sNll'), col('trueCe'), { tol: tol }),
+    gapVsCe: aucPairs(rows.map(function(r){ return Math.abs(r.gap); }), col('trueCe'), { tol: tol })
+  };
+  let flip = 0, cmp = 0, flipM = 0;
+  for (let i = 0; i < rows.length; i++) for (let j = i + 1; j < rows.length; j++){
+    const a = rows[i], b = rows[j];
+    if (Math.abs(a.ece - b.ece) < 1e-12) continue;
+    cmp++;
+    if ((a.ece - b.ece > 0) !== (a.ece10 - b.ece10 > 0)) flip++;
+    if ((a.ece - b.ece > 0) !== (a.eceMass - b.eceMass > 0)) flipM++;
+  }
+  res.binFlip = cmp ? flip / cmp : 0;
+  res.massFlip = cmp ? flipM / cmp : 0;
+  res.cmp = cmp;
+  return res;
+}
+// the four predictors whose scores make the point on their own
+function referenceRows(pr, r){
+  const rows = [];
+  const push = function(name, Q, note){
+    const m = metrics(pr, Q);
+    rows.push({ name: name, note: note, acc: m.acc, conf: m.conf, nll: m.nll, ce: m.ce,
+                ece: m.ece, one: ecePop(pr, Q, 1, 'width').ece, tv: m.tv,
+                massSplit: ecePop(pr, Q, 15, 'mass', true).ece });
+  };
+  push('the true p*(y|x)', pr.P, 'the best any predictor can be');
+  push('marginal p(y), input ignored', constProbs(pr, pr.marg), 'perfectly calibrated, useless');
+  push('uniform 1/K', constProbs(pr, new Array(pr.K).fill(1 / pr.K)), 'maximally uncertain');
+  if (r){
+    push('trained, T = 1', probsFromLogits(r.Z, 1), 'overconfident');
+    push('trained, T fitted on val', probsFromLogits(r.Z, r.Tval), 'temperature scaled');
+  }
+  return rows;
+}
+
+// ---------------------------------------------------------------- in-page assertions
+function selfCheck(){
+  const lines = [];
+  let pass = 0, total = 0;
+  const ok = function(c, label){ total++; if (c) pass++; else lines.push('FAIL  ' + label); };
+  const pr = makeProcess({ seed: 1 });
+
+  // 1. the process itself, before anything is measured on it
+  {
+    let sw = 0, worstRow = 0;
+    for (let i = 0; i < pr.nx; i++){
+      sw += pr.W[i];
+      let s = 0;
+      for (let k = 0; k < pr.K; k++) s += pr.P[i][k];
+      worstRow = Math.max(worstRow, Math.abs(s - 1));
+    }
+    ok(Math.abs(sw - 1) < 1e-14, 'the input weights do not sum to 1 (' + (sw - 1).toExponential(1) + ')');
+    ok(worstRow < 1e-15, 'a true conditional distribution does not sum to 1');
+    ok(pr.bayesAcc > 1 / pr.K && pr.bayesAcc < 1, 'the process is degenerate (Bayes accuracy ' + pr.bayesAcc.toFixed(3) + ')');
+    ok(pr.ent > 0.2, 'the process has almost no aleatoric uncertainty, so calibration is vacuous');
+  }
+
+  // 2. the backward pass, before anything is trained with it
+  {
+    const M = makeModel({ seed: 5, dx: pr.dx, H: 8, K: pr.K });
+    ok(gradCheck(M, popItems(pr).slice(0, 40), { perTensor: 3 }).worst < 1e-7,
+       'the analytic gradient disagrees with central differences on soft targets');
+    ok(gradCheck(M, sampleItems(pr, sampleSet(pr, 30, 8), 0.1), { perTensor: 3, seed: 12 }).worst < 1e-7,
+       'the analytic gradient disagrees with central differences on smoothed hard labels');
+  }
+
+  // 3. the two predictors whose calibration error is ZERO by construction, and which are as far
+  //    apart in usefulness as two predictors can be. This is the argument against reading ECE as
+  //    a quality score, and it is an identity rather than an experiment.
+  {
+    const oracle = metrics(pr, pr.P);
+    ok(oracle.ce === 0, 'the true conditional distribution must have exactly zero calibration error, got ' + oracle.ce);
+    ok(oracle.sharp === 0, 'the true conditional distribution must have zero per-input deviation');
+    let worst = 0;
+    for (const B of [1, 2, 5, 10, 15, 20, 50, 100]) for (const sc of ['width', 'mass'])
+      worst = Math.max(worst, ecePop(pr, pr.P, B, sc).ece);
+    ok(worst === 0, 'the true conditional distribution scored a non-zero ECE at some grouping (' + worst + ')');
+
+    const Qm = constProbs(pr, pr.marg), marg = metrics(pr, Qm), mx = Math.max.apply(null, pr.marg);
+    ok(marg.ce < 1e-15, 'the input-ignoring marginal predictor is not perfectly calibrated (' + marg.ce.toExponential(1) + ')');
+    let mworst = 0;
+    for (const B of [1, 2, 5, 10, 15, 20, 50, 100]) for (const sc of ['width', 'mass'])
+      mworst = Math.max(mworst, ecePop(pr, Qm, B, sc).ece);
+    ok(mworst < 1e-15, 'the marginal predictor scored a non-zero ECE at some grouping (' + mworst.toExponential(1) + ')');
+    ok(Math.abs(marg.acc - mx) < 1e-15, 'the marginal predictor accuracy must equal the largest marginal probability');
+    ok(Math.abs(marg.nll - pr.margEnt) < 1e-14, 'the marginal predictor NLL must be the marginal entropy');
+    ok(marg.sharp > 0.05, 'the marginal predictor should be badly wrong per input');
+    ok(marg.nll - oracle.nll > 0.1, 'the marginal predictor should be much worse than the oracle');
+    // and the naive quantile-bin implementation reports a large error for it, by splitting ties
+    ok(ecePop(pr, Qm, 15, 'mass', true).ece > 0.05,
+       'tie-splitting quantile bins should misreport the constant predictor');
+    ok(ecePop(pr, Qm, 15, 'mass', false).ece < 1e-15, 'tie-aware quantile bins should report zero');
+  }
+
+  // 4. binned ECE is a LOWER BOUND on the calibration error at the finest grouping, always, and
+  //    refining the bins can only increase it
+  {
+    const r = fitAll(pr, {});
+    const Q = probsFromLogits(r.Z, 1), ce = ceFinest(pr, Q);
+    let bad = 0, mono = 0, prev = -1;
+    for (const B of [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]){
+      const e = ecePop(pr, Q, B, 'width').ece;
+      if (e > ce + 1e-15) bad++;
+      if (e < prev - 1e-15) mono++;
+      prev = e;
+    }
+    ok(bad === 0, 'a binned ECE exceeded the calibration error at the finest grouping, which is impossible');
+    ok(mono === 0, 'doubling the bin count decreased the ECE, which refinement forbids');
+    for (const B of [1, 2, 5, 10, 15, 20, 50]) for (const sc of ['width', 'mass'])
+      if (ecePop(pr, Q, B, sc).ece > ce + 1e-15) bad++;
+    ok(bad === 0, 'a legitimate grouping broke the lower-bound property');
+    ok(distinctConf(pr, Q) === pr.nx, 'the trained model should give every input a distinct confidence');
+    ok(Math.abs(ceFinest(pr, Q) - metrics(pr, Q).sharp) < 1e-15,
+       'with distinct confidences the finest grouping IS the per-input deviation');
+  }
+
+  // 5. overconfidence comes from fitting hard labels on a finite sample -- with the control that
+  //    says so: the SAME network trained on the population objective is calibrated
+  {
+    const S = sampleSet(pr, 600, 3);
+    const hard = makeModel({ seed: 1, dx: pr.dx, H: 16, K: pr.K });
+    train(hard, sampleItems(pr, S), { steps: 200 });
+    const soft = makeModel({ seed: 1, dx: pr.dx, H: 16, K: pr.K });
+    train(soft, popItems(pr), { steps: 200 });
+    const mh = metrics(pr, probsFromLogits(logitsAll(hard, pr), 1)),
+          ms = metrics(pr, probsFromLogits(logitsAll(soft, pr), 1));
+    ok(mh.gap > 0.05, 'the hard-label model is not overconfident (' + mh.gap.toFixed(3) + ')');
+    ok(Math.abs(ms.gap) < 0.02, 'the population-trained control is not calibrated (' + ms.gap.toFixed(3) + ')');
+    ok(ms.ce < 0.3 * mh.ce, 'the well-specified control should have a much smaller calibration error');
+    ok(ms.nll < mh.nll, 'the population-trained model should have the lower NLL');
+  }
+
+  // 6. temperature scaling: what it cannot change, exactly
+  {
+    const r = fitAll(pr, {}), Z = r.Z, base = metrics(pr, probsFromLogits(Z, 1));
+    const yh0 = confAcc(pr, probsFromLogits(Z, 1)).yh.join(',');
+    let accBad = 0, predBad = 0;
+    for (const T of [0.05, 0.2, 0.5, 1, 2, 5, 20, 100]){
+      if (metrics(pr, probsFromLogits(Z, T)).acc !== base.acc) accBad++;
+      if (confAcc(pr, probsFromLogits(Z, T)).yh.join(',') !== yh0) predBad++;
+    }
+    ok(accBad === 0, 'temperature changed the accuracy, which it cannot');
+    ok(predBad === 0, 'temperature changed a prediction, which it cannot');
+    const Qh = probsFromLogits(Z, 1e12), hot = metrics(pr, Qh);
+    ok(Math.abs(hot.conf - 1 / pr.K) < 1e-9, 'T -> infinity must give uniform predictions');
+    ok(Math.abs(ecePop(pr, Qh, 1, 'width').ece - Math.abs(hot.acc - 1 / pr.K)) < 1e-9,
+       'at T -> infinity the one-bin reading must be |acc - 1/K|');
+    // and the rungs do NOT agree even in the limit: the finest grouping cannot cancel, so it
+    // reports E|1/K - a(x)| instead of |1/K - E a(x)|
+    ok(hot.ce > 1.02 * Math.abs(hot.acc - 1 / pr.K), 'the finest grouping should exceed the one-bin reading at T -> infinity');
+    const Qc = probsFromLogits(Z, 1e-9), cold = metrics(pr, Qc), cc = confAcc(pr, Qc);
+    let notOne = 0;
+    for (const c of cc.cf) if (c !== 1) notOne++;
+    ok(notOne === 0, 'T -> 0 must give exactly one-hot predictions, ' + notOne + ' were not');
+    ok(Math.abs(cold.ce - (1 - cold.acc)) < 1e-14, 'at T -> 0 the calibration error must be 1 - accuracy');
+  }
+
+  // 7. the fit itself: convex in beta, Newton == a fine grid, derivatives == central differences
+  {
+    const r = fitAll(pr, {}), iv = tempItems(pr, r.Z, r.V, 0);
+    let negCurv = 0, worst1 = 0, worst2 = 0;
+    for (let b = 0.1; b <= 4.0001; b += 0.1){
+      const d = tempDerivs(iv, b), h = 1e-5;
+      if (d.d2 < 0) negCurv++;
+      const n1 = (tempNLL(iv, b + h) - tempNLL(iv, b - h)) / (2 * h);
+      const n2 = (tempDerivs(iv, b + h).d1 - tempDerivs(iv, b - h).d1) / (2 * h);
+      worst1 = Math.max(worst1, Math.abs(n1 - d.d1) / (Math.abs(n1) + Math.abs(d.d1) + 1e-12));
+      worst2 = Math.max(worst2, Math.abs(n2 - d.d2) / (Math.abs(n2) + Math.abs(d.d2) + 1e-12));
+    }
+    ok(negCurv === 0, 'the NLL is not convex in beta, which contradicts the variance identity');
+    ok(worst1 < 1e-6, 'dNLL/dbeta disagrees with central differences (' + worst1.toExponential(2) + ')');
+    ok(worst2 < 1e-5, 'the second derivative is not the variance of the logits (' + worst2.toExponential(2) + ')');
+    const g = tempGrid(iv, 0.05, 4, 0.001);
+    ok(Math.abs(r.fitVal.beta - g.beta) < 2e-3, 'Newton and a fine grid disagree about the optimal temperature');
+    ok(Math.abs(r.fitVal.d1) < 1e-9, 'the fitted temperature is not a stationary point (' + r.fitVal.d1.toExponential(2) + ')');
+    ok(r.Tval > 1.2, 'the fitted validation temperature should be well above 1 (' + r.Tval.toFixed(3) + ')');
+
+    // fitting on the TRAINING set is a directional derivative training has already flattened
+    const it = tempItems(pr, r.Z, r.S, 0), d1 = tempDerivs(it, 1).d1, dir = scaleDirDeriv(r.M, r.items);
+    ok(Math.abs(d1 - dir) < 1e-9, 'the beta derivative is not the logit-scaling directional derivative');
+    ok(Math.abs(r.Ttrain - 1) < 0.12, 'temperature fitted on the training set should be near 1 (' + r.Ttrain.toFixed(4) + ')');
+    ok(r.Ttrain < r.Tval, 'the training-set temperature should be smaller than the validation one');
+    ok(r.Ttrain < 1, 'on this model the training-set fit sharpens rather than softens');
+    ok(Math.abs(tempDerivs(it, 1).d1) < 0.05, 'the training-set derivative at T=1 should be small');
+  }
+
+  // 8. the reported number falls much further than the calibration error does -- the page's point
+  {
+    const r = fitAll(pr, {}), b = r.base, a = r.scaled;
+    ok(a.ce < b.ce, 'temperature scaling should reduce the calibration error');
+    ok(a.ece < 0.7 * b.ece, 'the reported 15-bin ECE should fall a lot');
+    ok(a.ce > 0.7 * b.ce, 'the finest-grouping calibration error should barely move');
+    ok(a.ce / a.ece > 1.7, 'after scaling the reported number should understate by well over 1.5x (' + (a.ce / a.ece).toFixed(2) + ')');
+    ok(Math.abs(b.ece - Math.abs(b.gap)) < 0.02, '15 bins should add almost nothing over 1 bin BEFORE scaling');
+    ok(a.ece > 4 * Math.abs(a.gap), 'after scaling the one-bin reading should collapse while 15 bins does not');
+    ok(a.acc === b.acc, 'temperature scaling changed the accuracy');
+
+    // the mechanism, as counts: before scaling every occupied bin is overconfident, so 15 bins and
+    // 1 bin are the SAME number; after scaling the residual changes sign inside the range, and the
+    // coarse reading cancels it away
+    const sb = signCounts(pr, probsFromLogits(r.Z, 1), 15),
+          sa = signCounts(pr, probsFromLogits(r.Z, r.Tval), 15);
+    ok(sb.under === 0, 'before scaling no bin should be under-confident, ' + sb.under + ' were');
+    ok(Math.abs(sb.abs - sb.net) < 1e-12, 'with one sign the 15-bin and 1-bin readings must be identical');
+    ok(sa.under >= 3 && sa.over >= 3, 'after scaling the residual should change sign across bins');
+    ok(sa.abs / sa.net > 10, 'after scaling the coarse reading should cancel most of the error away');
+    // and the net signed error is the same at EVERY grouping -- it is just conf - acc
+    for (const B of [1, 2, 15, 50, 200])
+      if (Math.abs(signCounts(pr, probsFromLogits(r.Z, r.Tval), B).net - Math.abs(a.gap)) > 1e-12)
+        ok(false, 'the net signed error changed with the bin count, which it cannot');
+  }
+
+  // 9. the estimator has a noise floor: run it on the exactly-calibrated true distribution
+  {
+    const nf = noiseFloor(pr, { ns: [200, 5000], reps: 4, Bs: [15] });
+    ok(nf.exact === 0, 'the reference predictor must be exactly calibrated');
+    ok(nf.rows[0].per[15].mean > 0.02, 'the 15-bin estimator reported nothing on a perfectly calibrated model at n=200');
+    ok(nf.rows[1].per[15].mean < nf.rows[0].per[15].mean, 'the noise floor should fall with more data');
+  }
+
+  // 10. the diagnostic, scored as a ranker rather than trusted
+  {
+    const d = diagStudy(pr, { evalN: 400,
+      pool: modelPool(pr, { ns: [150, 600], steps: [50, 400], Hs: [4, 16], smooth: [0], Ts: [1, 2, 'fit'] }) });
+    ok(d.n >= 24, 'the model pool is too small to score a ranker on');
+    ok(d.nllVsNll.auc > 0.93, 'held-out NLL should rank true NLL almost perfectly (' + d.nllVsNll.auc.toFixed(3) + ')');
+    ok(d.eceVsNll.auc < d.nllVsNll.auc - 0.08, 'ECE should be a clearly worse ranker of probability quality than held-out NLL');
+    ok(d.eceVsNllSame.auc > d.eceVsNll.auc, 'ECE should do better on pairs that differ only in temperature');
+    ok(d.binFlip > 0, 'changing the bin count from 15 to 10 reversed no ranking at all, which is suspicious');
+  }
+
+  // 11. determinism
+  {
+    const a = makeProcess({ seed: 2 }), b = makeProcess({ seed: 2 });
+    ok(a.P[7][0] === b.P[7][0] && a.bayesAcc === b.bayesAcc, 'the process is not deterministic');
+    const M1 = makeModel({ seed: 4, dx: a.dx, H: 8, K: a.K }), M2 = makeModel({ seed: 4, dx: a.dx, H: 8, K: a.K });
+    ok(train(M1, popItems(a), { steps: 40 }).final === train(M2, popItems(a), { steps: 40 }).final,
+       'training is not deterministic');
+  }
+  return { pass: pass, total: total, lines: lines };
+}
+// ===== ENGINE:END =====
+
+// ---------------------------------------------------------------- UI
+var $ = function(id){ return document.getElementById(id); };
+var PR = makeProcess({ seed: 1 });
+var CACHE = {}, KEY = null;
+var f2 = function(x){ return x.toFixed(2); };
+var f3 = function(x){ return x.toFixed(3); };
+var f4 = function(x){ return x.toFixed(4); };
+var eng = function(x){ return x === 0 ? "0.0e+0" : x.toExponential(1); };
+var eng2 = function(x){ return x === 0 ? "0.0e+0" : x.toExponential(2); };
+var pct = function(x){ return (100 * x).toFixed(1) + "%"; };
+var cls = function(good){ return good ? "ok" : "bad"; };
+
+function fit(){
+  var n = +$("sN").value, steps = +$("sS").value, H = +$("sH").value;
+  var key = n + "/" + steps + "/" + H;
+  if (key !== KEY){
+    if (!CACHE[key]) CACHE[key] = fitAll(PR, { n: n, steps: steps, H: H });
+    KEY = key;
+  }
+  return CACHE[KEY];
+}
+function schemeName(){ return $("mSch").value; }
+function currentT(r){
+  var m = $("mT").value;
+  if (m === "val") return r.Tval;
+  if (m === "train") return r.Ttrain;
+  if (m === "pop") return r.Tpop;
+  if (m === "man") return +$("sTm").value;
+  return 1;
+}
+function eceUI(Q, B){
+  var s = schemeName();
+  if (s === "mass") return ecePop(PR, Q, B, "mass", false);
+  if (s === "massSplit") return ecePop(PR, Q, B, "mass", true);
+  return ecePop(PR, Q, B, "width");
+}
+
+// ---------------------------------------------------------------- the reliability diagram
+function relSVG(Q, B){
+  var W = 470, Hh = 330, mL = 46, mR = 10, mT = 12, mB = 34;
+  var pw = W - mL - mR, ph = Hh - mT - mB;
+  var lo = 1 / PR.K - 0.06, hi = 1.005;
+  var sx = function(v){ return mL + pw * (v - lo) / (hi - lo); };
+  var sy = function(v){ return mT + ph * (1 - v); };
+  var s = confAcc(PR, Q), rows = eceUI(Q, B).rows, out = [];
+  out.push('<svg viewBox="0 0 ' + W + ' ' + Hh + '" role="img" aria-label="reliability diagram">');
+  out.push('<rect x="' + mL + '" y="' + mT + '" width="' + pw + '" height="' + ph +
+           '" fill="#f8fafc" stroke="#e2e8f0"/>');
+  for (var g = 0; g <= 4; g++){
+    var v = g / 4;
+    out.push('<line x1="' + mL + '" y1="' + sy(v) + '" x2="' + (mL + pw) + '" y2="' + sy(v) +
+             '" stroke="#e2e8f0"/>');
+    out.push('<text x="' + (mL - 6) + '" y="' + (sy(v) + 3.5) + '" font-size="9" fill="#64748b" ' +
+             'text-anchor="end">' + v.toFixed(2) + '</text>');
+  }
+  for (var t = 0; t <= 4; t++){
+    var xv = lo + (hi - lo) * t / 4;
+    out.push('<text x="' + sx(xv) + '" y="' + (Hh - 18) + '" font-size="9" fill="#64748b" ' +
+             'text-anchor="middle">' + xv.toFixed(2) + '</text>');
+  }
+  out.push('<line x1="' + sx(Math.max(lo, 0)) + '" y1="' + sy(Math.max(lo, 0)) + '" x2="' + sx(1) +
+           '" y2="' + sy(1) + '" stroke="#94a3b8" stroke-dasharray="4 3"/>');
+  // per-bin: a bar from the diagonal to the measured accuracy
+  rows.forEach(function(b){
+    var x = sx(b.conf), y0 = sy(b.conf), y1 = sy(b.acc);
+    var wBar = Math.max(3, 26 * Math.sqrt(b.w));
+    out.push('<rect x="' + (x - wBar / 2) + '" y="' + Math.min(y0, y1) + '" width="' + wBar +
+             '" height="' + Math.max(1, Math.abs(y1 - y0)) + '" fill="' +
+             (b.acc < b.conf ? "#fca5a5" : "#93c5fd") + '" opacity="0.85"/>');
+    out.push('<circle cx="' + x + '" cy="' + y1 + '" r="3" fill="#0f172a"/>');
+  });
+  // the exact per-input pairs -- what the bins average away
+  for (var i = 0; i < PR.nx; i++)
+    out.push('<circle cx="' + sx(s.cf[i]).toFixed(1) + '" cy="' + sy(s.ac[i]).toFixed(1) +
+             '" r="1.5" fill="#0f172a" opacity="0.30"/>');
+  out.push('<text x="' + (mL + pw / 2) + '" y="' + (Hh - 4) + '" font-size="10" fill="#475569" ' +
+           'text-anchor="middle">confidence &#8594;</text>');
+  out.push('<text x="12" y="' + (mT + ph / 2) + '" font-size="10" fill="#475569" ' +
+           'text-anchor="middle" transform="rotate(-90 12 ' + (mT + ph / 2) + ')">' +
+           'probability of being right &#8594;</text>');
+  out.push('</svg>');
+  return out.join("");
+}
+
+// ---------------------------------------------------------------- render
+var NF = null, GC = null;
+function render(){
+  var n = +$("sN").value, steps = +$("sS").value, H = +$("sH").value, B = +$("sB").value;
+  $("vN").textContent = n; $("vS").textContent = steps; $("vH").textContent = H;
+  $("vB").textContent = B; $("vTm").textContent = (+$("sTm").value).toFixed(2);
+  var r = fit(), T = currentT(r), sch = schemeName();
+  $("pcount").textContent = nParams(r.M);
+  $("nlab").textContent = n;
+  var Q1 = probsFromLogits(r.Z, 1), QT = probsFromLogits(r.Z, T);
+  var m1 = metrics(PR, Q1), mT = metrics(PR, QT);
+  // the before/after comparisons always contrast T = 1 with a SCALED model, so selecting
+  // "T = 1" in the dropdown (which drives the diagram) must not collapse them into one column
+  var isOne = Math.abs(T - 1) < 1e-12;
+  var T5 = isOne ? r.Tval : T;
+  var lab5 = isOne ? "fitted on a held-out set" : $("mT").options[$("mT").selectedIndex].text;
+  var Q5 = isOne ? probsFromLogits(r.Z, T5) : QT, m5 = metrics(PR, Q5);
+
+  // ---- five predictors
+  var refs = [
+    ["the true p*(y|x) <span class='lg'>the best anything can be</span>", PR.P],
+    ["marginal p(y), input ignored <span class='lg'>perfectly calibrated, useless</span>", constProbs(PR, PR.marg)],
+    ["uniform 1/K <span class='lg'>maximally unsure</span>", constProbs(PR, new Array(PR.K).fill(1 / PR.K))],
+    ["the trained model, T = 1", Q1],
+    ["the trained model, T = " + f3(T5) + " <span class='lg'>" + lab5 + "</span>", Q5]
+  ];
+  $("refs").innerHTML = refs.map(function(row, i){
+    var Q = row[1], m = metrics(PR, Q), one = eceUI(Q, 1).ece, eb = eceUI(Q, B).ece, fin = m.ce;
+    return "<tr" + (i >= 3 ? " class='hl'" : "") + "><td>" + row[0] +
+      "</td><td>" + f3(m.acc) + "</td><td>" + f3(m.conf) + "</td><td>" + f4(m.nll) +
+      "</td><td class='" + cls(one < 1e-15) + "'>" + (one < 1e-15 ? eng(one) : f4(one)) +
+      "</td><td class='" + cls(eb < 1e-15) + "'>" + (eb < 1e-15 ? eng(eb) : f4(eb)) +
+      "</td><td class='" + cls(fin < 1e-15) + "'>" + (fin < 1e-15 ? eng(fin) : f4(fin)) +
+      "</td><td>" + f3(m.tv) + "</td></tr>";
+  }).join("");
+  var mg = metrics(PR, constProbs(PR, PR.marg));
+  $("refsNote").innerHTML = "The first two rows are the page in one table. The oracle scores " +
+    "<strong class='ok'>0.0e+0</strong> because a(x) and c(x) are the same number, so the two sums " +
+    "are the same floating-point computation. The marginal predictor scores <strong class='ok'>" +
+    eng(mg.ce) + "</strong> &mdash; zero by algebra, since its one confidence level is the " +
+    "marginal probability of the class it always predicts, which is exactly how often that class " +
+    "occurs &mdash; while its NLL is <strong>" + f4(mg.nll) + "</strong> against the oracle's " +
+    f4(PR.ent) + " and it sits <strong>" + f3(mg.tv) + "</strong> away from p*. A perfect " +
+    "calibration score is available to a model that never looks at its input, so the score cannot " +
+    "be a measure of quality. " + (sch === "massSplit" ? "<strong class='bad'>Equal-mass bins " +
+    "that split ties</strong> break even that: they report " + f4(eceUI(constProbs(PR, PR.marg), B).ece) +
+    " for the marginal predictor, because the run of identical confidences is cut into " + B +
+    " arbitrary slices with different accuracies." : "") ;
+
+  // ---- reliability diagram
+  $("rel").innerHTML = relSVG(QT, B);
+  var rowsT = eceUI(QT, B).rows;
+  $("relNote").innerHTML = "Dark dots joined by bars: the " + rowsT.length + " occupied bins, " +
+    "bar area proportional to population weight, red where the bin is overconfident and blue where " +
+    "it is not. Faint dots: all " + PR.nx + " inputs at their exact (confidence, true probability " +
+    "of being right). The bins are a 1-dimensional summary of that cloud, and the summary is the " +
+    "only thing a real dataset lets you compute. At T = " + f3(T) + " the reported " + B +
+    "-bin error is <strong>" + f4(eceUI(QT, B).ece) + "</strong> and the cloud's own average " +
+    "deviation is <strong>" + f4(mT.ce) + "</strong>.";
+
+  // ---- sign counts
+  var sgn = [["the trained model, T = 1", Q1], ["the trained model, T = " + f3(T5), Q5]];
+  $("signs").innerHTML = sgn.map(function(row, i){
+    var s = signCounts(PR, row[1], B);
+    return "<tr" + (i === 1 ? " class='hl'" : "") + "><td>" + row[0] + "</td><td>" + s.bins +
+      "</td><td>" + s.over + " <span class='lg'>w " + f3(s.wOver) + "</span></td><td>" + s.under +
+      " <span class='lg'>w " + f3(s.wUnder) + "</span></td><td>" + f4(s.net) + "</td><td>" +
+      f4(s.abs) + "</td><td class='" + (s.abs / Math.max(s.net, 1e-12) > 3 ? "bad" : "") + "'>" +
+      f2(s.abs / Math.max(s.net, 1e-12)) + "&times;</td></tr>";
+  }).join("");
+  var s0 = signCounts(PR, Q1, B), s1 = signCounts(PR, Q5, B);
+  var one0 = ecePop(PR, Q1, 1, "width").ece, many0 = ecePop(PR, Q1, B, "width").ece;
+  $("signsNote").innerHTML = "Before scaling <strong>" + s0.under + "</strong> of " + s0.bins +
+    " occupied bins are under-confident, so nothing cancels and the " + B + "-bin reading IS the " +
+    "one-bin reading &mdash; " + many0.toFixed(6) + " against " + one0.toFixed(6) + ", two " +
+    "different summations of the same quantity agreeing to " + eng2(Math.abs(many0 - one0)) + ". After scaling the fit has driven the net to <strong>" +
+    f4(s1.net) + "</strong> by construction and what is left changes sign: <strong>" + s1.over +
+    "</strong> bins over and <strong>" + s1.under + "</strong> under, carrying " + pct(s1.wOver) +
+    " and " + pct(s1.wUnder) + " of the population. The coarse reading cancels <strong class='bad'>" +
+    f2(s1.abs / Math.max(s1.net, 1e-12)) + "&times;</strong> of it away. The net column is the same " +
+    "number at every bin count, because it is just conf &minus; acc &mdash; so everything the bin " +
+    "count buys is cancellation, and post-hoc calibration is what creates the thing being " +
+    "cancelled.";
+
+  // ---- the ladder
+  var Bs = [1, 2, 5, 10, 15, 20, 50, 100, 200], lb = [], la = [];
+  Bs.forEach(function(b){
+    lb.push({ B: b, w: ecePop(PR, Q1, b, "width"), m: ecePop(PR, Q1, b, "mass", false) });
+    la.push({ B: b, w: ecePop(PR, Q5, b, "width"), m: ecePop(PR, Q5, b, "mass", false) });
+  });
+  var body = lb.map(function(row, i){
+    return "<tr" + (row.B === 15 ? " class='hl'" : "") + "><td>" + row.B + " bin" +
+      (row.B > 1 ? "s" : "") + (row.B === 1 ? " <span class='lg'>= conf &minus; acc</span>" :
+      row.B === 15 ? " <span class='lg'>what papers report</span>" : "") + "</td><td>" +
+      row.w.bins + "</td><td>" + f4(row.w.ece) + "</td><td>" + f4(row.m.ece) + "</td><td>" +
+      f4(la[i].w.ece) + "</td><td>" + f4(la[i].m.ece) + "</td><td>" +
+      f2(m5.ce / Math.max(la[i].w.ece, 1e-12)) + "&times;</td></tr>";
+  }).join("");
+  body += "<tr class='hl'><td>one group per distinct confidence <span class='lg'>the strictest " +
+    "reading</span></td><td>" + distinctConf(PR, Q5) + "</td><td>" + f4(m1.ce) + "</td><td>" +
+    f4(m1.ce) + "</td><td>" + f4(m5.ce) + "</td><td>" + f4(m5.ce) + "</td><td>1.00&times;</td></tr>";
+  $("ladder").innerHTML = body;
+  var e15b = ecePop(PR, Q1, 15, "width").ece, e15a = ecePop(PR, Q5, 15, "width").ece;
+  $("ladderNote").innerHTML = "Before scaling the ladder runs " + f4(lb[0].w.ece) + " &rarr; " +
+    f4(e15b) + " &rarr; " + f4(lb[8].w.ece) + " &rarr; <strong>" + f4(m1.ce) + "</strong>; after " +
+    "one temperature it runs " + f4(la[0].w.ece) + " &rarr; " + f4(e15a) + " &rarr; " +
+    f4(la[8].w.ece) + " &rarr; <strong>" + f4(m5.ce) + "</strong>. The reported 15-bin number fell " +
+    "<strong class='bad'>" + pct(1 - e15a / e15b) + "</strong> and the strictest reading fell " +
+    "<strong>" + pct(1 - m5.ce / m1.ce) + "</strong>. Two details worth keeping: refinement only " +
+    "has to increase the number when the bins <em>nest</em>, so 20 equal-width bins can report less " +
+    "than 15 (they do here), and the assertions therefore check monotonicity only along the " +
+    "doubling chain 1, 2, 4 &hellip; 512, where it holds exactly. The finest rung is not a rival " +
+    "metric: with " + distinctConf(PR, Q5) + " distinct confidences it equals the per-input " +
+    "deviation E|c(x) &minus; p*(&#375;|x)|, which is the strictest thing the definition can mean " +
+    "and includes error no single T could remove.";
+
+  // ---- temperature sweep
+  var Ts = [0.5, 0.75, 1, r.Tval, 2, 3, 5];
+  Ts.sort(function(a, b){ return a - b; });
+  $("temps").innerHTML = Ts.map(function(t){
+    var Q = probsFromLogits(r.Z, t), m = metrics(PR, Q);
+    return "<tr" + (Math.abs(t - r.Tval) < 1e-12 ? " class='hl'" : "") + "><td>" + f3(t) +
+      (Math.abs(t - r.Tval) < 1e-12 ? " <span class='lg'>&larr; fitted on held-out</span>" : "") +
+      "</td><td>" + f4(m.acc) + "</td><td>" + f4(m.conf) + "</td><td>" + f4(m.nll) + "</td><td>" +
+      f4(eceUI(Q, 1).ece) + "</td><td>" + f4(eceUI(Q, B).ece) + "</td><td>" + f4(m.ce) +
+      "</td><td>" + f4(m.tv) + "</td></tr>";
+  }).join("");
+  var accs = Ts.map(function(t){ return metrics(PR, probsFromLogits(r.Z, t)).acc; });
+  var same = accs.every(function(a){ return a === accs[0]; });
+  $("tempsNote").innerHTML = "The accuracy column is <strong class='" + cls(same) + "'>" +
+    (same ? "the same number in every row, to the last bit" : "NOT invariant, which is a bug") +
+    "</strong> &mdash; T &gt; 0 cannot reorder logits, so it cannot change a prediction. What it " +
+    "does buy is real: NLL falls from " + f4(m1.nll) + " to " + f4(metrics(PR, probsFromLogits(r.Z, r.Tval)).nll) +
+    " against an irreducible floor of " + f4(PR.ent) + ", so the <em>excess</em> NLL goes " +
+    f4(m1.nll - PR.ent) + " &rarr; " + f4(metrics(PR, probsFromLogits(r.Z, r.Tval)).nll - PR.ent) +
+    " &mdash; roughly halved, for one parameter and no accuracy cost. The three things it never " +
+    "moves: the accuracy, the ordering of the inputs by confidence, and the part of the distance to " +
+    "p* that is not a global sharpness error (" + f3(m1.tv) + " &rarr; " +
+    f3(metrics(PR, probsFromLogits(r.Z, r.Tval)).tv) + ").";
+
+  // ---- convexity and the derivative checks
+  var iv = tempItems(PR, r.Z, r.V, 0), h = 1e-5, betas = [0.3, 0.5, 1 / r.Tval, 0.8, 1, 1.4, 2];
+  betas.sort(function(a, b){ return a - b; });
+  var w1 = 0, w2 = 0, neg = 0;
+  $("conv").innerHTML = betas.map(function(b){
+    var d = tempDerivs(iv, b);
+    var n1 = (tempNLL(iv, b + h) - tempNLL(iv, b - h)) / (2 * h);
+    var n2 = (tempDerivs(iv, b + h).d1 - tempDerivs(iv, b - h).d1) / (2 * h);
+    var r1 = Math.abs(n1 - d.d1), r2 = Math.abs(n2 - d.d2);
+    if (r1 > w1) w1 = r1;
+    if (r2 > w2) w2 = r2;
+    if (d.d2 < 0) neg++;
+    return "<tr" + (Math.abs(b - 1 / r.Tval) < 1e-12 ? " class='hl'" : "") + "><td>" + f3(b) +
+      (Math.abs(b - 1 / r.Tval) < 1e-12 ? " <span class='lg'>&larr; the optimum</span>" : "") +
+      "</td><td>" + f4(d.nll) + "</td><td>" + d.d1.toFixed(6) + "</td><td class='" +
+      cls(r1 < 1e-6) + "'>" + eng(r1) + "</td><td>" + f4(d.d2) + "</td><td class='" +
+      cls(r2 < 1e-5) + "'>" + eng(r2) + "</td></tr>";
+  }).join("");
+  $("convNote").innerHTML = "Worst absolute disagreement with central differences: <strong>" +
+    eng2(w1) + "</strong> on the first derivative and <strong>" + eng2(w2) + "</strong> on the " +
+    "second &mdash; absolute rather than relative on purpose, because at the optimum the analytic " +
+    "derivative is 6.7e-17 and the finite difference is rounding noise, so a ratio of the two is " +
+    "meaningless there. The second derivative is computed as &sum;q(z &minus; E[z])&sup2;, a sum of squares, " +
+    "so <strong class='" + cls(neg === 0) + "'>" + (neg === 0 ? "it is non-negative at every " +
+    "&beta; with no tolerance at all" : "it went negative, which is a bug") + "</strong> &mdash; " +
+    "that is the numerical content of &ldquo;convex in &beta;&rdquo;. Newton needed <strong>" +
+    r.fitVal.iters + "</strong> iterations and stopped with |dNLL/d&beta;| = " + eng2(Math.abs(r.fitVal.d1)) +
+    "; a 0.001-step grid over the whole range agrees to " +
+    eng2(Math.abs(r.fitVal.beta - tempGrid(iv, 0.05, 4, 0.001).beta)) + ".";
+
+  // ---- which set you fit on
+  var itTrain = tempItems(PR, r.Z, r.S, 0), dTrain = tempDerivs(itTrain, 1).d1,
+      dir = scaleDirDeriv(r.M, r.items);
+  var rowsW = [
+    ["the TRAINING set", r.S.n, r.Ttrain, dTrain, dir],
+    ["a held-out set", r.V.n, r.Tval, tempDerivs(iv, 1).d1, null],
+    ["the whole population <span class='lg'>not available in reality</span>", PR.nx, r.Tpop,
+      tempDerivs(tempItems(PR, r.Z, null), 1).d1, null]
+  ];
+  $("which").innerHTML = rowsW.map(function(row, i){
+    return "<tr" + (i === 0 ? " class='hl'" : "") + "><td>" + row[0] + "</td><td>" + row[1] +
+      "</td><td class='" + (row[2] < 1.02 ? "bad" : "") + "'>" + f4(row[2]) + "</td><td>" +
+      row[3].toExponential(3) + "</td><td>" + (row[4] === null ? "<span class='lg'>&mdash;</span>" :
+      row[4].toExponential(3)) + "</td><td>" + (row[4] === null ? "<span class='lg'>&mdash;</span>" :
+      "<span class='ok'>" + eng2(Math.abs(row[3] - row[4])) + "</span>") + "</td></tr>";
+  }).join("");
+  $("whichNote").innerHTML = "The two middle columns of the first row are the same directional " +
+    "derivative computed by two unrelated code paths &mdash; a temperature derivative and a dot " +
+    "product of the last layer with its own gradient &mdash; and they agree to <strong class='ok'>" +
+    eng2(Math.abs(dTrain - dir)) + "</strong>. That identity is the reason the training set cannot " +
+    "be used: the direction &ldquo;scale all the logits&rdquo; is already inside the parameter " +
+    "space, so training has been flattening this derivative all along. Here the training-set fit " +
+    "asks for T = <strong class='bad'>" + f4(r.Ttrain) + "</strong> &mdash; below 1, i.e. make an " +
+    "already overconfident model sharper &mdash; while the same logits scored on held-out data ask " +
+    "for <strong>" + f4(r.Tval) + "</strong> and the population optimum is " + f4(r.Tpop) + ".";
+
+  // ---- noise floor (cheap, computed once)
+  if (!NF) NF = noiseFloor(PR, { reps: 8 });
+  $("floor").innerHTML = NF.rows.map(function(row){
+    return "<tr" + (row.n === 500 ? " class='hl'" : "") + "><td>" + row.n.toLocaleString("en-US") +
+      "</td><td>" + f4(row.per[10].mean) + "</td><td class='bad'>" + f4(row.per[15].mean) +
+      "</td><td>" + f4(row.per[30].mean) + "</td><td>" + f4(row.per[15].worst) + "</td><td>" +
+      f4(Math.sqrt(15 / (2 * Math.PI * row.n))) + "</td></tr>";
+  }).join("");
+  var f500 = NF.rows.filter(function(q){ return q.n === 500; })[0].per[15].mean;
+  var eSampB = eceSample(PR, Q1, r.E, 15, "width").ece, eSampA = eceSample(PR, QT, r.E, 15, "width").ece;
+  $("floorNote").innerHTML = "The predictor being scored here is p* itself: calibration error " +
+    "<strong class='ok'>" + eng(NF.exact) + "</strong> at every grouping, no approximation. Yet " +
+    "15 bins and 500 examples report <strong class='bad'>" + f4(f500) + "</strong>, and 30 bins at " +
+    "n=100 report " + f4(NF.rows[0].per[30].mean) + ". The estimator is biased upward because each " +
+    "bin's accuracy is a noisy average and the absolute value keeps the noise; it falls roughly as " +
+    "&radic;(B/n), and the last column is that curve. Now the practical consequence: on this page's " +
+    "own " + r.E.n + "-example held-out set the reported 15-bin error goes " + f4(eSampB) +
+    " &rarr; " + f4(eSampA) + " under temperature scaling, an improvement of <strong>" +
+    f4(eSampB - eSampA) + "</strong> &mdash; " + (eSampB - eSampA < f500 ? "<strong class='bad'>" +
+    "smaller than the floor</strong>, so at that sample size it is not a measurement" :
+    "just above the floor") + ". Any published ECE delta below this line is indistinguishable " +
+    "from a perfectly calibrated model.";
+
+  // ---- gradient check
+  if (!GC){
+    var fresh = makeModel({ seed: 1, dx: PR.dx, H: r.H, K: PR.K });
+    GC = { init: gradCheck(fresh, r.items, { perTensor: 6, seed: 3 }),
+           trained: gradCheck(r.M, r.items, { perTensor: 6, seed: 3 }) };
+  }
+  $("gc").innerHTML = GC.init.rows.map(function(row, i){
+    return "<tr><td>d" + row.name + "</td><td class='" + cls(row.rel < 1e-6) + "'>" +
+      eng2(row.rel) + "</td><td>" + eng2(GC.trained.rows[i].rel) + "</td></tr>";
+  }).join("");
+  $("gcNote").innerHTML = "Worst over the four tensors: <strong class='ok'>" + eng2(GC.init.worst) +
+    "</strong> at initialisation. At the trained point the same check with the same step size reads " +
+    eng2(GC.trained.worst) + ", and that is expected rather than alarming: the relative error is " +
+    "divided by the gradient magnitude, which is 30&times; smaller there. The assertions check at " +
+    "initialisation, where the number means what it looks like.";
+}
+
+// ---------------------------------------------------------------- buttons
+$("runGrid").addEventListener("click", function(){
+  var btn = $("runGrid");
+  btn.disabled = true;
+  $("gridStatus").textContent = "27 models, each trained from scratch…";
+  setTimeout(function(){
+    var t0 = Date.now(), g = robustGrid(PR, {});
+    var q = function(label, o, fmt){
+      return "<tr><td>" + label + "</td><td>" + fmt(o.min) + "</td><td>" + fmt(o.med) +
+        "</td><td>" + fmt(o.max) + "</td><td>" + g.n + "</td></tr>";
+    };
+    $("grid").innerHTML =
+      q("fitted T, held-out", g.T, f2) +
+      q("fitted T, training set", g.Ttrain, f3) +
+      q("finest / 15-bin, T = 1", g.ratioBefore, function(v){ return f2(v) + "&times;"; }) +
+      q("finest / 15-bin, after scaling", g.ratioAfter, function(v){ return f2(v) + "&times;"; }) +
+      q("drop in the REPORTED 15-bin error", g.dropReported, pct) +
+      q("drop in the FINEST reading", g.dropReal, pct) +
+      "<tr class='hl'><td>configurations where the reported drop beat the real one</td>" +
+      "<td colspan='3' style='text-align:center'><strong class='bad'>" + g.reportedBeatsReal +
+      " of " + g.n + "</strong></td><td>" + g.n + "</td></tr>" +
+      "<tr><td>configurations where the training-set fit gave T &le; 1</td>" +
+      "<td colspan='3' style='text-align:center'><strong>" + g.trainLE1 + " of " + g.n +
+      "</strong></td><td>" + g.n + "</td></tr>" +
+      "<tr><td>configurations where the finest reading got WORSE</td>" +
+      "<td colspan='3' style='text-align:center'><strong class='bad'>" + g.realNegative + " of " +
+      g.n + "</strong></td><td>" + g.n + "</td></tr>";
+    $("gridNote").innerHTML = "Across sample sizes 150&ndash;600, training lengths 100&ndash;800 " +
+      "and widths 4&ndash;32, the reported drop exceeded the real drop in <strong class='bad'>" +
+      g.reportedBeatsReal + " of " + g.n + "</strong> configurations &mdash; median " +
+      pct(g.dropReported.med) + " reported against " + pct(g.dropReal.med) + " real &mdash; and in " +
+      "<strong class='bad'>" + g.realNegative + "</strong> of them the strictest reading got worse " +
+      "(down to " + pct(g.dropReal.min) + ") while the reported one improved. The understatement " +
+      "after scaling runs " + f2(g.ratioAfter.min) + "&times; to " + f2(g.ratioAfter.max) +
+      "&times; against " + f2(g.ratioBefore.min) + "&ndash;" + f2(g.ratioBefore.max) +
+      "&times; before it, so post-hoc calibration reliably widens the gap between the number and " +
+      "the thing. And the held-out fit asked for T &ge; 1 in " + g.valGE1 + " of " + g.n +
+      " configurations while the training-set fit asked for T &le; 1 in " + g.trainLE1 + ".";
+    $("gridStatus").textContent = "done in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    btn.disabled = false;
+  }, 30);
+});
+
+$("runCurve").addEventListener("click", function(){
+  var btn = $("runCurve");
+  btn.disabled = true;
+  $("curveStatus").textContent = "1,500 steps, probing every 100…";
+  setTimeout(function(){
+    var t0 = Date.now(), oc = overconfidenceCurve(PR, { steps: 1500, probeEvery: 100, B: +$("sB").value });
+    var soft = makeModel({ seed: 1, dx: PR.dx, H: 16, K: PR.K });
+    train(soft, popItems(PR), { steps: 1500 });
+    var ms = metrics(PR, probsFromLogits(logitsAll(soft, PR), 1), { B: +$("sB").value });
+    $("curve").innerHTML = oc.rows.map(function(q){
+      return "<tr" + (q.step === oc.bestNllStep ? " class='hl'" : "") + "><td>" + q.step +
+        (q.step === oc.bestNllStep ? " <span class='lg'>&larr; best NLL</span>" : "") + "</td><td>" +
+        f4(q.trainLoss) + "</td><td>" + f4(q.acc) + "</td><td>" + f4(q.nll) + "</td><td>" +
+        f4(q.conf) + "</td><td>" + f4(q.gap) + "</td><td>" + f4(q.ce) + "</td><td>" + f4(q.ece) +
+        "</td><td>" + f2(q.Tval) + "</td><td>" + f3(q.Ttrain) + "</td></tr>";
+    }).join("") +
+      "<tr class='hl'><td>the SAME net on the exact population objective <span class='lg'>1,500 " +
+      "steps</span></td><td><span class='lg'>&mdash;</span></td><td>" + f4(ms.acc) + "</td><td>" +
+      f4(ms.nll) + "</td><td>" + f4(ms.conf) + "</td><td class='ok'>" + f4(ms.gap) + "</td><td>" +
+      f4(ms.ce) + "</td><td>" + f4(ms.ece) + "</td><td colspan='2'><span class='lg'>nothing to " +
+      "fix</span></td></tr>";
+    var last = oc.rows[oc.rows.length - 1];
+    $("curveNote").innerHTML = "Training NLL falls the whole way. The true NLL bottoms out at " +
+      "<strong>" + f4(oc.bestNll) + "</strong> at step <strong>" + oc.bestNllStep + "</strong> and " +
+      "then climbs to " + f4(last.nll) + " &mdash; <strong class='bad'>" +
+      f2(last.nll / oc.bestNll) + "&times;</strong> &mdash; while accuracy drifts from " +
+      f4(oc.bestAcc) + " down to " + f4(last.acc) + ", a fall of only " +
+      pct(1 - last.acc / oc.bestAcc) + ". Confidence keeps rising the whole time and the " +
+      "temperature that would fix it goes from " + f2(oc.rows[0].Tval) + " to <strong>" +
+      f2(last.Tval) + "</strong>. That is the classic figure (Guo et al. 2017), and the last row is " +
+      "the control that names the cause: the identical network trained on the exact population " +
+      "objective for the same 1,500 steps ends with conf &minus; acc = <strong class='ok'>" +
+      f4(ms.gap) + "</strong> and a calibration error of " + f4(ms.ce) + ". Overconfidence is not " +
+      "the softmax, the depth or the width. It is what minimising NLL against hard labels on a " +
+      "finite sample does &mdash; and note the training-set temperature column, which sits below 1 " +
+      "at every single checkpoint.";
+    $("curveStatus").textContent = "done in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    btn.disabled = false;
+  }, 30);
+});
+
+$("runDiag").addEventListener("click", function(){
+  var btn = $("runDiag");
+  btn.disabled = true;
+  $("diagStatus").textContent = "108 models, one held-out set each…";
+  setTimeout(function(){
+    var t0 = Date.now(), d = diagStudy(PR, {});
+    var row = function(label, a, b, note){
+      return "<tr" + (note ? " class='hl'" : "") + "><td>" + label + "</td><td class='" +
+        (a.auc > 0.9 ? "ok" : a.auc < 0.8 ? "bad" : "") + "'>" + f3(a.auc) + "</td><td>" +
+        (b ? f3(b.auc) : "<span class='lg'>&mdash;</span>") + "</td><td>" + a.pairs + "</td></tr>";
+    };
+    $("diag").innerHTML =
+      row("15-bin ECE <span class='lg'>the calibration number</span>", d.eceVsNll, d.eceVsCe, true) +
+      row("held-out NLL <span class='lg'>a proper scoring rule</span>", d.nllVsNll, d.nllVsCe) +
+      row("held-out Brier <span class='lg'>also proper</span>", d.brierVsNll, null) +
+      row("plain error rate <span class='lg'>ignores the probabilities</span>", d.errVsNll, null) +
+      row("|conf &minus; acc| <span class='lg'>one bin</span>", { auc: d.gapVsCe.auc, pairs: d.gapVsCe.pairs }, null) +
+      row("15-bin ECE, only pairs differing by more than the noise floor", d.eceVsNllBig, null) +
+      row("15-bin ECE, only the same model at two temperatures", d.eceVsNllSame, null) +
+      "<tr><td>chance <span class='lg'>rank the pairs at random</span></td><td>0.500</td>" +
+      "<td>0.500</td><td><span class='lg'>&mdash;</span></td></tr>";
+    $("diagNote").innerHTML = "Over <strong>" + d.n + "</strong> trained models, a lower 15-bin " +
+      "ECE predicts better probabilities at <strong class='bad'>AUC " + f3(d.eceVsNll.auc) +
+      "</strong> &mdash; against the plain error rate at " + f3(d.errVsNll.auc) + ", held-out Brier " +
+      "at " + f3(d.brierVsNll.auc) + " and held-out NLL at <strong class='ok'>" + f3(d.nllVsNll.auc) +
+      "</strong>, on the same held-out sets. The accuracy-blind metric is beaten at &ldquo;which " +
+      "model should I trust&rdquo; by accuracy alone. It is not incompetence, it is scope: ECE ranks " +
+      "the finest calibration error at " + f3(d.eceVsCe.auc) + ", and on the one comparison it was " +
+      "designed for &mdash; the same model at two temperatures, accuracy held fixed &mdash; it " +
+      "reaches <strong>" + f3(d.eceVsNllSame.auc) + "</strong>. Restricting to pairs whose ECE " +
+      "differs by more than the noise floor lifts it from " + f3(d.eceVsNll.auc) + " to " +
+      f3(d.eceVsNllBig.auc) + ", which is the practical rule: below the floor the comparison is " +
+      "noise. Finally, the metric disagrees with <em>itself</em>: moving from 15 bins to 10 " +
+      "reverses <strong class='bad'>" + pct(d.binFlip) + "</strong> of its own pairwise rankings, " +
+      "and moving from equal-width to equal-mass bins reverses " + pct(d.massFlip) + ", over " +
+      d.cmp.toLocaleString("en-US") + " pairs.";
+    $("diagStatus").textContent = "done in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    btn.disabled = false;
+  }, 30);
+});
+
+["sN", "sS", "sH", "sB", "sTm", "mSch", "mT"].forEach(function(id){
+  $(id).addEventListener("input", render);
+  $(id).addEventListener("change", render);
+});
+render();
+setTimeout(function(){
+  var c = selfCheck();
+  $("checks").textContent =
+    "selfCheck()  " + c.pass + " / " + c.total + " checks passed" +
+    (c.lines.length ? "\n" + c.lines.join("\n") :
+     "\n\nthe true conditional distribution and an input-ignoring marginal predictor both score\n" +
+     "exactly zero at every grouping, and the marginal predictor's NLL is exactly the marginal\n" +
+     "entropy; binned ECE never exceeds the finest reading and never falls along a nesting chain;\n" +
+     "before scaling no bin is under-confident so 15 bins equals 1 bin, after scaling both signs\n" +
+     "appear and the coarse reading cancels more than 10x of the error away; the net signed error\n" +
+     "is the same at every bin count; temperature leaves every prediction and the accuracy\n" +
+     "bit-identical, gives exactly one-hot outputs as T -> 0 and |acc - 1/K| as T -> infinity;\n" +
+     "the NLL is convex in 1/T with the second derivative a sum of squares, both derivatives\n" +
+     "match central differences and Newton matches a 0.001-step grid; fitting T on the training\n" +
+     "set is the same directional derivative as <grad L, last layer> to 1e-17; the estimator\n" +
+     "reports a non-zero error for a perfectly calibrated predictor and less of it with more\n" +
+     "data; and held-out NLL out-ranks ECE on probability quality while ECE does better on\n" +
+     "pairs that differ only in temperature.");
+}, 40);
+</script>
+</body>
+</html>
