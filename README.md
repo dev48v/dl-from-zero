@@ -72,6 +72,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 68 — Teacher forcing](https://dev48.infy.uk/dl/day68-teacher-forcing.html) — `day68-teacher-forcing.html`
 - [DeepLearningFromZero · Day 69 — KV cache](https://dev48.infy.uk/dl/day69-kv-cache.html) — `day69-kv-cache.html`
 - [DeepLearningFromZero · Day 70 — Confidence calibration & temperature scaling](https://dev48.infy.uk/dl/day70-calibration-temperature-scaling.html) — `day70-calibration-temperature-scaling.html`
+- [DeepLearningFromZero · Day 71 — Tokenisation & the loss you report](https://dev48.infy.uk/dl/day71-tokenisation-and-the-loss-you-report.html) — `day71-tokenisation-and-the-loss-you-report.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk
