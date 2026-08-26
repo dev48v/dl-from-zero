@@ -1,0 +1,2055 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero &middot; Day 72 &mdash; Residual scaling &amp; depth stability</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin:0; background:#f8fafc; color:#0f172a; line-height:1.55;
+         font-family:-apple-system, "Segoe UI", "Inter", Roboto, Helvetica, Arial, sans-serif; }
+  header { background:#fff; }
+  /* the tab bar sticks, not the header: a header taller than the viewport would pin forever */
+  .tabbar { background:#fff; border-bottom:1px solid #e2e8f0; position:sticky; top:0; z-index:20; }
+  .tabbar .wrap { padding-top:10px; padding-bottom:10px; }
+  .wrap { max-width:1120px; margin:0 auto; padding:16px; }
+  .narrow { max-width:780px; margin:0 auto; padding:16px; }
+  @media (min-width:768px){ .wrap, .narrow { padding:26px; } }
+  .kicker { font-size:11px; font-weight:800; letter-spacing:.18em; color:#be123c; margin:0 0 10px; }
+  h1 { font-size:17px; font-weight:800; line-height:1.55; margin:0; }
+  @media (min-width:768px){ h1 { font-size:19px; } }
+  h2 { font-size:23px; font-weight:800; margin:34px 0 10px; line-height:1.25; }
+  h3 { font-size:17px; font-weight:700; margin:26px 0 8px; }
+  p { margin:0 0 12px; }
+  em { font-style:italic; }
+  code { font-family:"SF Mono", Consolas, "Liberation Mono", monospace; font-size:12.5px;
+         background:#eef2f7; padding:1px 4px; border-radius:4px; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px 14px; border-radius:8px; font-size:12px;
+        overflow-x:auto; line-height:1.5;
+        font-family:"SF Mono", Consolas, "Liberation Mono", monospace; }
+  pre code { background:none; padding:0; color:inherit; font-size:inherit; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; }
+  .tabs button { border:0; background:#f1f5f9; color:#0f172a; padding:9px 18px; border-radius:9px;
+                 font-size:13.5px; font-weight:650; cursor:pointer; font-family:inherit; }
+  .tabs button.tab-active { background:#0f172a; color:#fff; }
+  .panel { background:#f1f5f9; }
+  .panel.light { background:#f8fafc; }
+  .hidden { display:none; }
+  .stack > * + * { margin-top:20px; }
+  .card { background:#fff; border-radius:16px; padding:18px;
+          box-shadow:0 1px 3px rgba(15,23,42,.10), 0 1px 2px rgba(15,23,42,.06); }
+  .cap { font-size:11px; font-weight:800; letter-spacing:.12em; color:#64748b; margin:0 0 10px; }
+  .lede { font-size:13.5px; color:#475569; margin:0 0 12px; }
+  .note { font-size:12px; color:#64748b; margin:10px 0 0; }
+  .grid2 { display:grid; gap:20px; }
+  @media (min-width:1000px){ .grid2 { grid-template-columns:1fr 1fr; } }
+  .ctrls { display:grid; gap:12px 22px; grid-template-columns:1fr; }
+  @media (min-width:640px){ .ctrls { grid-template-columns:1fr 1fr; } }
+  @media (min-width:1000px){ .ctrls { grid-template-columns:repeat(3,1fr); } }
+  label.ctl { font-size:13px; display:block; }
+  label.ctl b { float:right; font-variant-numeric:tabular-nums; }
+  input[type=range] { width:100%; margin:4px 0 0; }
+  select { width:100%; border:1px solid #cbd5e1; border-radius:8px; padding:6px 8px;
+           font-size:13px; font-family:inherit; background:#fff; }
+  .scroll { overflow-x:auto; }
+  table.num { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
+  table.num th, table.num td { padding:4px 9px; text-align:right; white-space:nowrap; }
+  table.num th { font-size:10.5px; letter-spacing:.05em; color:#64748b; font-weight:800; }
+  table.num td { font-size:12.5px; border-top:1px solid #e2e8f0; }
+  table.num th:first-child, table.num td:first-child { text-align:left; white-space:normal;
+    min-width:112px; }
+  table.num tr.hl td { background:#f1f5f9; }
+  .ok { color:#15803d; font-weight:800; }
+  .bad { color:#b91c1c; font-weight:800; }
+  .lg { font-size:10px; color:#64748b; font-weight:400; letter-spacing:0; }
+  button.run { border:0; background:#0f172a; color:#fff; padding:9px 17px; border-radius:9px;
+               font-size:13px; font-weight:650; cursor:pointer; font-family:inherit; }
+  button.run:disabled { opacity:.5; cursor:default; }
+  .runbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  .status { font-size:12px; color:#64748b; }
+  svg { max-width:100%; height:auto; display:block; }
+  ul { margin:0 0 12px; padding-left:22px; }
+  li { margin:0 0 6px; }
+  .red { color:#b91c1c; font-weight:800; }
+  .mono { font-family:"SF Mono", Consolas, "Liberation Mono", monospace; font-size:12px;
+          word-break:break-all; color:#334155; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="kicker">DEEPLEARNINGFROMZERO &middot; DAY 72</p>
+    <h1 id="headline">
+      &#129692; Residual scaling &amp; depth stability &mdash; <code>x &larr; x + &#945;&#183;B(x)</code>
+      has a constant in it that most implementations leave at 1 and never mention, and a normaliser
+      whose <em>position</em> decides what the backward pass is allowed to do. This page measures
+      both instead of asserting them. The data is a fixed teacher network, so p*(y|x) is a forward
+      pass rather than an estimate and the held-out score is an <em>exact expectation</em> over
+      labels: excess is a <strong>mean KL</strong>, exactly 0 for the teacher, provably
+      non-negative for everything else, floor <strong>0.7685</strong> nats over 4 classes. Start
+      with the control that needs no training: delete every branch, so the block is a literal
+      no-op. Pre-LN and the bare residual then hand block 0 <em>exactly</em> what arrived at the
+      top &mdash; deviation <strong>0.0e+0</strong>, not a small number, because the backward pass
+      is copying the same array down the stack. <span class="red">Post-LN does not then decay
+      geometrically, which is what this page was written to say.</span> A layer norm's Jacobian is
+      1/&#963; times an <em>orthogonal projector</em>, and a projector is idempotent: once the
+      stream reaches its fixed point, <strong>27</strong> consecutive interior blocks move the
+      gradient by <strong>5.0e-16</strong> relative &mdash; nothing at all. The attenuation fires
+      <em>once</em>, &times;<strong>0.6676</strong>. And with the branches back, nothing vanishes
+      anywhere: at L = 32 the gradient reaching block 0 is <strong>5.37&times;</strong> the one at
+      the top under Pre-LN, <strong>4.66&times;</strong> under Post-LN and
+      <strong>35.51&times;</strong> with no normaliser at all &mdash; every one of them
+      <em>larger</em> than 1, because each block's branch adds to the stream gradient on the way
+      down. The diagnostic everybody reaches for is hunting a vanishing gradient in a place that
+      does not have one. Forward, one residual add decomposes exactly &mdash;
+      <code>msq(x+&#945;b) = msq(x) + &#945;&#178;msq(b) + (2&#945;/d)&#10216;x,b&#10217;</code>,
+      checked to <strong>1.4e-15</strong> &mdash; so the &radic;L law is precisely two dropped
+      assumptions, and both are measured: Pre-LN pins the branch power (drift
+      <strong>1.15&times;</strong>) and the law lands within <strong>4.1%</strong>, while removing
+      the normaliser lets tanh saturate on a growing input (drift <strong>2.93&times;</strong>) and
+      the same law understates the growth by <strong>51.7%</strong> &mdash; feed it the branch
+      power it actually had and the error falls to <strong>10.0%</strong>. The dropped cross term
+      is <em>first</em> order in &#945; while the branch term is <em>second</em>, so shrinking the
+      residual makes the &radic;L law fit <em>worse</em>, not better: <strong>5.3%</strong> of the
+      branch term at &#945; = 1 against <strong>14.2%</strong> at &#945; = 1/&#8730;L. Then the
+      claim this page came to kill. GPT-2 scales the residual output projections by
+      <strong>1/&#8730;(2L)</strong>; re-implementations instead multiply the branch by a constant;
+      these are described interchangeably and at initialisation they <em>are</em> the same function
+      &mdash; powers of two agree bit for bit at 0.0e+0 and everything else to
+      <strong>6.2e-16</strong>, which is the number to quote, since engines round differently. They
+      are not the same <em>experiment</em>. Fitted as a slope, the function-space step scales as
+      c<sup><strong>2.0000000000000018</strong></sup> under SGD and
+      c<sup><strong>1.0000004</strong></sup> under Adam, whose update is
+      <em>scale invariant</em>: at c = 1/8 the two parameterisations move the function by
+      <strong>8.0&times;</strong> different amounts under Adam and <strong>64&times;</strong> under
+      SGD from an identical start, and after 150 Adam steps the init-scaled branch is
+      <strong>3.35&times;</strong> the &#945;-scaled one. <strong>Shrinking the initialisation does
+      not shrink the updates at all.</strong> Finally the number itself, scored as a ranker over
+      <strong>90</strong> trained configurations, 2 of them failed outright and
+      <em>ranked last rather than dropped</em>: the init-time gradient ratio gets
+      <strong>AUC 0.582</strong> against a coin's 0.500, beaten by one optimiser step
+      (<strong>0.774</strong>), by ten steps (<strong>0.776</strong>), by the training loss you
+      were going to watch anyway (<strong>0.886</strong>) and even by
+      <strong>&#945;&#8730;L</strong>, a closed form needing no data, no forward pass and no
+      training, at <strong>0.604</strong> &mdash; while &ldquo;deeper is better&rdquo; scores
+      <strong>0.396</strong>, below the coin. The number is not broken and the control says so:
+      hold the placement and the learning rate fixed, so the diagnostic only arbitrates
+      comparisons it can actually see, and the same ratio scores <strong>0.802</strong> over 405
+      pairs. And the page's own recommendation is undercut by its own noise floor &mdash; seed
+      spread <strong>0.0657</strong> against a held-out sample spread of <strong>0.0162</strong>
+      &mdash; so of three placements where &#945; = 1/&#8730;L looks like it helps, only
+      <strong>2</strong> clear the spread of the runs the claim is made from. Gradients checked
+      against independently written central differences on an independently written second forward
+      pass to <strong>3.2e-8</strong>, 67 in-page assertions and 1,617 in Node.
+      Pure vanilla JavaScript, one file, no build step.
+    </h1>
+  </div>
+</header>
+
+<div class="tabbar">
+  <div class="wrap">
+    <div class="tabs" id="tabs">
+      <button data-tab="look" class="tab-active">&#128300; MEASURE</button>
+      <button data-tab="understand">&#129504; UNDERSTAND</button>
+      <button data-tab="build">&#128296; BUILD</button>
+    </div>
+  </div>
+</div>
+
+<section id="look" class="panel">
+  <div class="wrap stack">
+
+    <div class="card">
+      <div class="ctrls">
+        <label class="ctl">deepest stack L <b id="vL">24</b>
+          <input id="sL" type="range" min="8" max="40" step="4" value="24"></label>
+        <label class="ctl">stream width d <b id="vD">8</b>
+          <input id="sD" type="range" min="4" max="20" step="2" value="8"></label>
+        <label class="ctl">branch hidden h <b id="vH">10</b>
+          <input id="sH" type="range" min="4" max="24" step="2" value="10"></label>
+        <label class="ctl">Adam steps <b id="vS">160</b>
+          <input id="sS" type="range" min="60" max="500" step="20" value="160"></label>
+        <label class="ctl">learning rate <b id="vR">0.020</b>
+          <input id="sR" type="range" min="2" max="60" step="2" value="20"></label>
+        <label class="ctl">seed <b id="vE">3</b>
+          <input id="sE" type="range" min="1" max="12" step="1" value="3"></label>
+      </div>
+      <p class="note">
+        The data is a fixed <em>teacher</em> residual net, depth 6, so the conditional
+        distribution p*(y|x) is known exactly and the floor is a computation, not an estimate:
+        the held-out conditional entropy is <strong id="ent">&mdash;</strong> nats over
+        <strong id="kk">4</strong> classes. Every student is scored by its <em>excess</em>
+        &mdash; the mean KL from p* &mdash; evaluated as an exact expectation over labels, so the
+        label noise that normally dominates a held-out number is removed by construction and what
+        is left is only the input sample. Training still sees sampled labels, like anything real.
+        <span class="status" id="mainStatus"></span>
+      </p>
+    </div>
+
+    <div class="card">
+      <p class="cap">HOW MUCH GRADIENT REACHES BLOCK 0 &mdash; WITH THE BRANCHES DELETED, AND WITH THEM BACK</p>
+      <p class="lede">
+        The number is <code>&#8214;g&#8320;&#8214;/&#8214;g<sub>L</sub>&#8214;</code>: the size of
+        the gradient arriving at the bottom of the stack divided by its size at the top. Above 1
+        means the residual path <em>delivered more</em> than it received. The
+        <em>deleted</em> columns set every branch output matrix to zero, so the block is a literal
+        no-op and anything left belongs to the normaliser rather than to the branch, the weights or
+        the data.
+      </p>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>L</th>
+            <th>Pre-LN, deleted</th><th>Pre-LN, real</th><th>per block</th>
+            <th>Post-LN, deleted</th><th>Post-LN, real</th><th>per block</th>
+            <th>no LN, deleted</th><th>no LN, real</th><th>per block</th></tr></thead>
+          <tbody id="ident"></tbody>
+        </table>
+      </div>
+      <p class="note" id="identNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE STREAM AT INITIALISATION &mdash; WHAT DEPTH DOES TO THE SIGNAL BEFORE ANY TRAINING</p>
+      <p class="lede">
+        One residual add decomposes exactly &mdash; this is algebra, and the page checks it to
+        floating point:
+        <code>msq(x + &#945;b) = msq(x) + &#945;&#178;msq(b) + (2&#945;/d)&#183;&#10216;x,b&#10217;</code>.
+        The &radic;L law is what is left when you drop the last term and hold msq(b) constant, so
+        it is exactly two assumptions, and both of them are measured below rather than assumed:
+        the <em>cross</em> column is the term that was dropped, and <em>branch drift</em> is
+        whether the branch power stayed put.
+      </p>
+      <div class="grid2">
+        <div>
+          <div class="scroll">
+            <table class="num">
+              <thead><tr><th>placement &amp; &#945;</th><th>P<sub>L</sub>/P&#8320;</th>
+                <th>&radic;L law</th><th>err</th><th>accum. branch</th><th>err</th>
+                <th>cross / branch</th><th>branch drift</th></tr></thead>
+              <tbody id="grow"></tbody>
+            </table>
+          </div>
+          <p class="note" id="growNote"></p>
+        </div>
+        <div>
+          <div id="growSVG"></div>
+          <p class="note">
+            log&#8321;&#8320; of the stream power against block index. Straight and rising on this
+            axis is exponential growth; the &radic;L law is the gently bending curve.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="cap">ONE INITIALISATION, TWO PARAMETERISATIONS &mdash; IDENTICAL FUNCTION, DIFFERENT EXPERIMENT</p>
+      <p class="lede">
+        There are two ways to make a residual branch start small. Multiply the branch by a constant
+        &#945; = c and leave the initialiser alone, or leave &#945; = 1 and initialise the branch's
+        output matrix at c times its usual scale. At initialisation these are the <em>same
+        function</em> &mdash; the branch is linear in that matrix, so c&#183;(W&#8322;a) and
+        (cW&#8322;)&#183;a are the same vector. They are not the same optimisation problem, and the
+        size of the discrepancy depends on which optimiser you use.
+      </p>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>c</th><th>max rel. logit gap at init</th><th>SGD: &#916;f(&#945;=c) / &#916;f(init&#183;c)</th>
+            <th>c&#178;</th><th>Adam: &#916;f(&#945;=c) / &#916;f(init&#183;c)</th><th>c</th></tr></thead>
+          <tbody id="scale"></tbody>
+        </table>
+      </div>
+      <p class="note" id="scaleNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">DEPTH &times; PLACEMENT &times; &#945; &mdash; TRAINED, AND SCORED AGAINST AN EXACT FLOOR</p>
+      <p class="lede">
+        The same budget, the same data, the same width, the same seed. Only the depth, the
+        normaliser placement and the residual scale differ. <em>Excess</em> is the mean KL from the
+        true conditional on held-out inputs, so 0 is the teacher and lower is better without
+        qualification.
+      </p>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>configuration</th><th>L</th><th>params</th><th>&#945;</th>
+            <th>&#8214;g&#8320;&#8214;/&#8214;g<sub>L</sub>&#8214; at init</th><th>P<sub>L</sub>/P&#8320; at init</th>
+            <th>excess @10 steps</th><th>final train loss</th><th>final excess</th></tr></thead>
+          <tbody id="main"></tbody>
+        </table>
+      </div>
+      <p class="note" id="mainNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">DOES &#945; = 1/&#8730;L ACTUALLY HELP? &mdash; THE SAME COMPARISON OVER SEVERAL SEEDS</p>
+      <p class="lede">
+        One row of the grid above is one training run, and a training run is noisy. This card runs
+        the &#945; = 1 against &#945; = 1/&#8730;L comparison at the deepest setting under several
+        seeds and asks whether the difference clears the spread of the runs it is made of. A
+        difference smaller than the spread is not a result, and the last column says so.
+      </p>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>placement, L = 24</th><th>&#945; = 1, mean</th><th>spread</th>
+            <th>&#945; = 1/&#8730;L, mean</th><th>spread</th><th>improvement</th>
+            <th>clears the spread?</th></tr></thead>
+          <tbody id="conf"></tbody>
+        </table>
+      </div>
+      <p class="note" id="confNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE INIT-TIME DIAGNOSTIC, SCORED AS A RANKER</p>
+      <p class="lede">
+        &ldquo;Check the gradient norms at initialisation&rdquo; is the standard advice for a deep
+        stack that will not train. It is a number, so it can be scored: build a pool of real
+        configurations, train every one of them to the same budget, and ask how often the
+        diagnostic puts the better model first. 0.500 is a coin. Every candidate below is oriented
+        so that <em>smaller is predicted better</em>, and that orientation is fixed before the
+        scoring runs.
+      </p>
+      <div class="runbar">
+        <button class="run" id="runRank">train the pool</button>
+        <span class="status" id="rankStatus">the pool is a few hundred small networks &mdash; a few seconds</span>
+      </div>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>candidate</th><th>needs training?</th><th>AUC</th><th>vs a coin</th>
+            <th>pairs</th></tr></thead>
+          <tbody id="rank"></tbody>
+        </table>
+      </div>
+      <div id="rankSVG"></div>
+      <p class="note" id="rankNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE NOISE FLOOR OF THE NUMBER EVERY ROW ABOVE IS RANKED BY</p>
+      <p class="lede">
+        Two sources of noise survive. The seed moves the initial weights and the minibatch order;
+        the held-out input sample moves the estimate of a fixed model's excess. The label noise
+        does not survive, because the evaluation is an exact expectation over labels rather than a
+        sample of them &mdash; which is why the second column is as small as it is.
+      </p>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>source of variation</th><th>mean excess</th><th>spread (max&minus;min)</th>
+            <th>std</th><th>draws</th></tr></thead>
+          <tbody id="floor"></tbody>
+        </table>
+      </div>
+      <p class="note" id="floorNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">ASSERTIONS, RUN IN THIS TAB</p>
+      <pre id="checks">running&hellip;</pre>
+    </div>
+
+  </div>
+</section>
+
+<section id="understand" class="panel light hidden">
+  <div class="narrow">
+
+    <h2>The thing a residual stack actually is</h2>
+    <p>
+      A residual block is one line:
+    </p>
+    <pre><code>x &larr; x + &#945;&#183;B(x)</code></pre>
+    <p>
+      B is whatever the block computes &mdash; an attention head, a feed-forward sandwich, a
+      convolution &mdash; and &#945; is a scalar that most implementations leave at 1 and never
+      mention. The reason the line is written that way is the backward pass: differentiate it and
+      you get <code>&part;x<sub>out</sub>/&part;x<sub>in</sub> = I + &#945;&#183;J<sub>B</sub></code>.
+      The <code>I</code> is the whole point. Stack L of them and the Jacobian from the top of the
+      network to the bottom contains a term that is the product of L copies of the identity, which
+      is the identity, so there is a path along which the gradient reaches block 0 undamped no
+      matter how deep the stack is.
+    </p>
+    <p>
+      That is the argument, and it is correct, and it is also conditional on something the argument
+      does not say out loud: the identity has to survive to the <em>next</em> block. Put a
+      normaliser on the main path &mdash; which is exactly what Post-LN does, because
+      <code>x &larr; LN(x + &#945;B(x))</code> normalises the sum, not the branch &mdash; and the
+      Jacobian is no longer <code>I + &#945;J</code>, it is
+      <code>J<sub>LN</sub>&#183;(I + &#945;J)</code>. The identity term is now multiplied by
+      J<sub>LN</sub>, once per block, L times.
+    </p>
+    <p>
+      The first card measures precisely that, with the branches deleted so that nothing else can be
+      blamed. Zeroing every W&#8322; makes the block a literal no-op in the Pre-LN arrangement, and
+      the gradient reaching block 0 is bit-identical to the gradient at the top &mdash; the ratio
+      is 1 with no tolerance at all, printed as 0.0e+0 error, because the backward pass is
+      genuinely copying the same array down the stack. In the Post-LN arrangement the same deleted
+      branches leave a stack of layer norms applied to a vector that is already normalised, which
+      the forward pass barely notices, and the gradient no longer arrives unchanged. What it does
+      <em>not</em> do is decay geometrically, and that is the card's actual finding. The
+      normaliser's Jacobian is 1/&#963; times a projection: it removes the component along the
+      all-ones direction and the component along the current activation, so it is singular by
+      construction &mdash; but a projection is also idempotent, so applying it to a gradient that
+      already lies in its range does nothing at all. The change fires once, at the top of the
+      stack, and every interior block leaves the gradient identical to the rounding floor. Nothing
+      about that is a pathology of the branch, of the initialisation or of the data, and it is why
+      the fix that worked was moving the LN rather than tuning anything.
+    </p>
+
+    <h2>Why &radic;L, and what &#945; is for</h2>
+    <p>
+      Forward, the story is the other one. At initialisation the branch weights are independent of
+      everything the stream has accumulated, so the branch output is uncorrelated with the stream
+      it is being added to, and the expected squared norms add:
+    </p>
+    <pre><code>P<sub>l+1</sub> = P<sub>l</sub> + &#945;&#178;&#183;P<sub>branch</sub>  &rArr;  P<sub>L</sub> = P&#8320; + L&#183;&#945;&#178;&#183;P<sub>branch</sub></code></pre>
+    <p>
+      Power grows linearly in depth, so the norm grows like &radic;L. That is a prediction with no
+      fitted quantity in it: measure P&#8320; and the branch power at the first block and the whole
+      curve follows, which is what the second card checks &mdash; and it is a <em>measurement</em>,
+      not an identity, because the independence assumption is only true at initialisation and only
+      approximately even then, so the honest output is the worst relative deviation rather than a
+      claim of exactness.
+    </p>
+    <p>
+      The consequence is that the branch's contribution shrinks relative to the stream it is added
+      to. At block L the branch is adding a vector of size &#945;&#8730;P<sub>branch</sub> to a
+      stream of size &#8730;(L&#945;&#178;P<sub>branch</sub>), so its relative contribution falls
+      like 1/&radic;L. Deep Pre-LN stacks have a documented tendency for their later blocks to do
+      very little, and this is the arithmetic of it, visible at initialisation with no training at
+      all. Setting &#945; = 1/&radic;L trades one for the other: the total accumulated power
+      becomes depth-independent, so a 40-block stack and a 4-block stack hand the head a stream of
+      the same size, at the cost of every individual block contributing less.
+    </p>
+    <p>
+      Post-LN never accumulates anything, because the normaliser resets the stream to unit scale at
+      every block. That is the trade in one sentence: Post-LN pays for a stable forward pass with an
+      attenuated backward pass, Pre-LN pays for an undamped backward pass with a forward pass whose
+      scale is a function of depth.
+    </p>
+
+    <h2>The part that surprised me</h2>
+    <p>
+      GPT-2's initialisation scales the residual output projections by 1/&radic;(2L). Many
+      re-implementations instead multiply the branch by a constant. These are described
+      interchangeably, and at initialisation they <em>are</em> interchangeable, because the branch
+      is linear in its output matrix: c&#183;(W&#8322;a) and (cW&#8322;)&#183;a are the same
+      vector, and the page measures the gap between them as a bound rather than asserting a zero,
+      since it is floating-point summation order and engines round differently.
+    </p>
+    <p>
+      They are not the same experiment. Write the branch as &#945;W&#8322;a and the gradient with
+      respect to W&#8322; picks up a factor of &#945;, so under plain SGD the step in W&#8322; is
+      &#945; times larger <em>and</em> its effect on the function is multiplied by &#945; again:
+      the function-space step scales as &#945;&#178;. Fold the same constant into the
+      initialisation instead and the gradient is un-scaled, the step is un-scaled, and the effect on
+      the function is un-scaled. The two exponents differ by two.
+    </p>
+    <p>
+      Under Adam it is worse in an interesting way. Adam's update is scale-invariant &mdash; the
+      first step is exactly &minus;lr&#183;g/(|g|+&#949;), which does not care that g was
+      multiplied by &#945; &mdash; so the &#945; = c parameterisation takes a function-space step
+      proportional to c while the init-scaled parameterisation takes one proportional to 1. The
+      exponents are 2 and 1, measured on the page as a fitted slope rather than quoted from the
+      algebra, and the practical reading is blunt: <strong>under Adam, shrinking the
+      initialisation does not shrink the updates at all.</strong> A branch initialised 8&times;
+      small is one Adam step away from being the size Adam wants it to be. An explicit &#945;
+      stays small for as long as you leave it there. Whatever the 1/&radic;(2L) rule buys, it is
+      not the thing an explicit residual scale buys, and the two are not substitutes.
+    </p>
+
+    <h2>The diagnostic, scored instead of trusted</h2>
+    <p>
+      &ldquo;Print the gradient norms at each layer and check they are not vanishing&rdquo; is the
+      first thing anybody does to a deep stack that will not train. It is a number attached to a
+      decision, so it can be scored the same way a classifier is: over a pool of configurations
+      whose true quality is known, how often does it order a pair correctly? The pool here is real
+      &mdash; every member is trained to the same budget and scored against an exact floor &mdash;
+      and the answer is on the MEASURE tab.
+    </p>
+    <p>
+      The result to take seriously is not that the diagnostic is bad. It is that the diagnostic is
+      answering a narrower question than the one being asked of it. A gradient ratio tells you
+      whether the backward pass is delivering signal to the bottom of the stack. It has nothing to
+      say about whether the learning rate is survivable, whether the width is sufficient, or
+      whether the model has enough capacity for the function &mdash; and a pool that varies those
+      things is asking it to arbitrate cases it cannot see. Hold the things it cannot see fixed and
+      it recovers, which is the control the page reports next to the headline: the same number,
+      inside one placement-and-learning-rate cell, is a different instrument.
+    </p>
+    <p>
+      The other half of the result is the one that keeps recurring in this series. A cheap probe
+      &mdash; the excess after ten steps, one eighth of the pool's eighty-step budget &mdash; ranks the pool far
+      better than any static analysis of the initialisation, because it is a measurement of the
+      thing you actually care about rather than a proxy for it. If you can afford to run ten steps,
+      run ten steps.
+    </p>
+
+    <h2>What is and is not asserted</h2>
+    <p>
+      Three things on this page are identities and are checked without a tolerance beyond
+      floating-point: the Pre-LN zero-branch gradient ratio is exactly 1; the two parameterisations
+      of a scaled residual are the same function at initialisation; and the excess of a model
+      against the true conditional is non-negative, with the teacher's own excess exactly zero.
+    </p>
+    <p>
+      Everything else is a measurement with a spread, and the page prints the spread. The &radic;L
+      law is reported as a worst relative deviation, not as an equation that holds. The exponents 2
+      and 1 are fitted slopes with a residual. The trained comparisons are quoted against a noise
+      floor measured by re-running the same configuration under different seeds, and two rows
+      closer together than that floor are one row and are not ranked.
+    </p>
+
+    <h2>The setup, so the numbers can be checked</h2>
+    <p>
+      The data is a fixed teacher: a 6-block Pre-LN residual net with &#945; = 1/&radic;6 over 6
+      Gaussian inputs and 4 classes, so p*(y|x) is available in closed form for any x. Training
+      uses labels sampled from p*; evaluation uses p* itself, so a student's held-out score is
+      &sum;<sub>y</sub> p*(y|x)&#183;(&minus;log q(y|x)) averaged over held-out x &mdash; an exact
+      expectation, and subtracting the conditional entropy of p* turns it into a mean KL that is
+      zero for the teacher and non-negative for everything else. Students are the same family with
+      the depth, the normaliser placement, the residual scale, the width and the learning rate
+      varied. Forward and backward are both written by hand; the gradients are checked against
+      central differences taken on a second forward pass written independently of the first.
+    </p>
+
+  </div>
+</section>
+
+<section id="build" class="panel light hidden">
+  <div class="narrow">
+
+    <h2>&#128296; How it is built</h2>
+
+    <h3>1. A teacher, so the floor is a computation</h3>
+    <p>
+      Every claim on the page is &ldquo;this model is better than that one&rdquo;, so
+      &ldquo;better&rdquo; has to have an answer. The data-generating process is itself a residual
+      net with fixed weights, which makes p*(y|x) a forward pass rather than an estimate. The
+      held-out score of any student is then
+      <code>&sum;<sub>y</sub> p*(y|x)&#183;(&minus;log q(y|x))</code> averaged over x &mdash; an
+      exact expectation over labels, not an average of sampled ones. Subtract the conditional
+      entropy of p* and it becomes the mean KL, which is exactly 0 for the teacher and provably
+      non-negative for anything else. Both facts are asserted.
+    </p>
+    <p>
+      Removing the label sampling from the evaluation is not cosmetic. It is what makes the noise
+      floor small enough to rank anything at all: the remaining variation is the held-out input
+      sample and the training seed, and the page measures both separately.
+    </p>
+
+    <h3>2. Placement is a switch, not three implementations</h3>
+    <pre><code>pre:   x &larr; x + &#945;&#183;B(LN(x))          + one final LN before the head
+post:  x &larr; LN(x + &#945;&#183;B(x))
+none:  x &larr; x + &#945;&#183;B(x)</code></pre>
+    <p>
+      One forward function with a switch, and one backward function with the matching switch, so
+      the three arrangements cannot drift apart. The layer-norm gain and bias are initialised to
+      1 and 0 and consume no random numbers, which means all three placements at the same seed
+      share <em>bit-identical</em> W&#8321;, W&#8322;, W<sub>in</sub> and W<sub>out</sub>. Any
+      difference between the rows is the placement and nothing else.
+    </p>
+
+    <h3>3. The zero-branch control</h3>
+    <p>
+      The strongest available demonstration that the attenuation belongs to the normaliser is to
+      remove everything else. Setting every W&#8322; and b&#8322; to zero makes the branch output
+      identically zero, so <code>x + &#945;&#183;B(x) = x</code> exactly, and the backward pass
+      through the branch contributes exactly zero to the stream gradient. In the Pre-LN
+      arrangement the gradient array reaching block 0 is then the same array that arrived at the
+      top &mdash; the ratio is 1 to the bit, and the page prints the deviation as 0.0e+0 rather
+      than as a small number. In the Post-LN arrangement it decays. This is a control, not a
+      simulation of one.
+    </p>
+
+    <h3>4. Two forward passes, and gradients that have to match both</h3>
+    <p>
+      The cached forward pass is written for speed: it stores the normaliser's intermediates so the
+      backward pass can reuse them. The second forward pass is written from the equations, with its
+      own matrix-vector helper and its own normalisation routine, and shares no code with the
+      first. It is used for two things: an equality check at every setting, and as the function the
+      central differences are taken on. A gradient that agrees with a finite difference of the code
+      that produced it has proved very little; a gradient that agrees with a finite difference of a
+      different implementation has proved something.
+    </p>
+
+    <h3>5. The exponent, measured rather than derived</h3>
+    <pre><code>A: branch = c&#183;(W&#8322;a),  W&#8322; ~ &#963;      B: branch = W&#8322;&#8242;a,  W&#8322;&#8242; ~ c&#963;</code></pre>
+    <p>
+      Identical functions at initialisation. To measure how differently they <em>move</em>, only
+      W&#8322; and b&#8322; are stepped &mdash; every other gradient is discarded &mdash; and the
+      quantity compared is the change in the logits, which is the change in the function rather
+      than the change in the parameters. The stack is one block deep for this card so the logits
+      are exactly linear in the branch output and the ratio is not contaminated by curvature. The
+      SGD step is <code>&minus;lr&#183;g</code> and the Adam step is written in the closed form the
+      first step actually has, <code>&minus;lr&#183;g/(|g|+&#949;)</code>, so the scale invariance
+      is visible in the source rather than emerging from an optimiser loop. The exponent is a
+      least-squares slope of log(ratio) against log(c) through the origin, reported with its
+      residual.
+    </p>
+
+    <h3>6. Divergence is recorded, not averaged away</h3>
+    <p>
+      Some configurations in the pool blow up, which is the point of including them. A run whose
+      loss stops being finite is marked diverged, its excess is infinite, and it is ranked last
+      rather than dropped &mdash; dropping it would quietly delete the failures the diagnostic is
+      supposed to predict. Comparisons that need finite numbers are stated separately from the ones
+      that do not, so an infinity never lands inside a tolerance.
+    </p>
+
+    <h3>7. What the verifier does that the page cannot</h3>
+    <p>
+      The Node verifier re-implements the layer norm, its backward pass, the full forward pass, the
+      Adam update, the AUC and the variance-accumulation prediction from the equations, and checks
+      every gradient against central differences taken on <em>its own</em> forward pass rather than
+      the page's second one. It also builds a network with the nonlinearity removed, where the
+      whole model is a product of matrices and the exact gradient is available in closed form, and
+      compares against that. Assertions exist whose only purpose is to fail if the page ever drifts
+      back to claiming that a gradient ratio predicts trainability, or that the two ways of scaling
+      a residual are interchangeable.
+    </p>
+
+  </div>
+</section>
+
+<script>
+// ===== ENGINE:BEGIN =====
+// Everything the page asserts is computed in here. No DOM, no globals from the page.
+// Extracted verbatim by the Node verifier, which then checks it against independently
+// written implementations of the same quantities.
+
+function mulberry32(a){
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function gauss(rng){
+  var u = 0, v = 0;
+  while (u === 0) u = rng();
+  while (v === 0) v = rng();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+function vec(n, f){ var v = []; for (var i = 0; i < n; i++) v.push(f ? f(i) : 0); return v; }
+function mat(r, c, f){
+  var M = [];
+  for (var i = 0; i < r; i++){ var row = []; for (var j = 0; j < c; j++) row.push(f ? f(i, j) : 0); M.push(row); }
+  return M;
+}
+function msq(v){ var s = 0; for (var i = 0; i < v.length; i++) s += v[i] * v[i]; return s / v.length; }
+function nrm(v){ var s = 0; for (var i = 0; i < v.length; i++) s += v[i] * v[i]; return Math.sqrt(s); }
+function logsumexp(z){
+  var mx = -Infinity, i;
+  for (i = 0; i < z.length; i++) if (z[i] > mx) mx = z[i];
+  if (!isFinite(mx)) return mx;
+  var s = 0;
+  for (i = 0; i < z.length; i++) s += Math.exp(z[i] - mx);
+  return mx + Math.log(s);
+}
+function softmaxOf(z){
+  var l = logsumexp(z), o = [];
+  for (var i = 0; i < z.length; i++) o.push(Math.exp(z[i] - l));
+  return o;
+}
+
+// ---------------------------------------------------------------- layer normalisation
+function lnFwd(x, g, b, eps){
+  var d = x.length, i, mu = 0;
+  for (i = 0; i < d; i++) mu += x[i];
+  mu /= d;
+  var v = 0;
+  for (i = 0; i < d; i++){ var t = x[i] - mu; v += t * t; }
+  v /= d;
+  var inv = 1 / Math.sqrt(v + eps), xh = [], y = [];
+  for (i = 0; i < d; i++){ xh.push((x[i] - mu) * inv); y.push(g[i] * xh[i] + b[i]); }
+  return { y: y, xh: xh, inv: inv };
+}
+// dx = inv * ( dxh - mean(dxh) - xh * mean(dxh*xh) ); gains and biases accumulate in place
+function lnBwd(dy, xh, inv, g, dg, db){
+  var d = dy.length, i, dxh = [], m1 = 0, m2 = 0;
+  for (i = 0; i < d; i++){
+    dg[i] += dy[i] * xh[i];
+    db[i] += dy[i];
+    var t = dy[i] * g[i];
+    dxh.push(t); m1 += t; m2 += t * xh[i];
+  }
+  m1 /= d; m2 /= d;
+  var dx = [];
+  for (i = 0; i < d; i++) dx.push(inv * (dxh[i] - m1 - xh[i] * m2));
+  return dx;
+}
+
+// ---------------------------------------------------------------- the network
+function alphaOf(rule, L){
+  if (rule === "invsqrtL") return 1 / Math.sqrt(L);
+  if (rule === "invsqrt2L") return 1 / Math.sqrt(2 * L);
+  if (rule === "invL") return 1 / L;
+  return 1;
+}
+function ruleLabel(rule){
+  if (rule === "invsqrtL") return "1/&#8730;L";
+  if (rule === "invsqrt2L") return "1/&#8730;2L";
+  if (rule === "invL") return "1/L";
+  return "1";
+}
+// LN gain/bias are constants (1 and 0) and consume no random numbers, so the same seed gives
+// bit-identical weight matrices for every placement -- the rows differ only by the placement.
+function makeNet(o){
+  var rng = mulberry32(o.seed === undefined ? 1 : o.seed);
+  var din = o.din, d = o.d, h = o.h, K = o.K, L = o.L;
+  var s2 = o.w2scale === undefined ? 1 : o.w2scale;
+  var N = { din: din, d: d, h: h, K: K, L: L, place: o.place || "pre", eps: 1e-5,
+            rule: o.rule || "one", w2scale: s2 };
+  N.alpha = o.alpha === undefined ? alphaOf(N.rule, L) : o.alpha;
+  N.Win = mat(din, d, function(){ return gauss(rng) / Math.sqrt(din); });
+  N.bin = vec(d);
+  N.B = [];
+  for (var l = 0; l < L; l++){
+    N.B.push({
+      g: vec(d, function(){ return 1; }),
+      bn: vec(d),
+      W1: mat(d, h, function(){ return gauss(rng) / Math.sqrt(d); }),
+      b1: vec(h),
+      W2: mat(h, d, function(){ return s2 * gauss(rng) / Math.sqrt(h); }),
+      b2: vec(d)
+    });
+  }
+  N.gf = vec(d, function(){ return 1; });
+  N.bf = vec(d);
+  N.Wout = mat(d, K, function(){ return (o.sharp === undefined ? 1 : o.sharp) * gauss(rng) / Math.sqrt(d); });
+  N.bout = vec(K);
+  return N;
+}
+function cloneNet(N){ return JSON.parse(JSON.stringify(N)); }
+function zerosLike(N){
+  var Z = { din: N.din, d: N.d, h: N.h, K: N.K, L: N.L, place: N.place, eps: N.eps, alpha: N.alpha };
+  Z.Win = mat(N.din, N.d); Z.bin = vec(N.d);
+  Z.B = [];
+  for (var l = 0; l < N.L; l++)
+    Z.B.push({ g: vec(N.d), bn: vec(N.d), W1: mat(N.d, N.h), b1: vec(N.h), W2: mat(N.h, N.d), b2: vec(N.d) });
+  Z.gf = vec(N.d); Z.bf = vec(N.d); Z.Wout = mat(N.d, N.K); Z.bout = vec(N.K);
+  return Z;
+}
+function tensorList(N){
+  var T = [N.Win, N.bin];
+  for (var l = 0; l < N.L; l++){
+    var B = N.B[l];
+    T.push(B.g); T.push(B.bn); T.push(B.W1); T.push(B.b1); T.push(B.W2); T.push(B.b2);
+  }
+  T.push(N.gf); T.push(N.bf); T.push(N.Wout); T.push(N.bout);
+  return T;
+}
+// every tensor flattened to a list of 1-D rows, so parameters, gradients and optimiser state
+// can be walked in lockstep without knowing which tensor a row came from
+function flatViews(T){
+  var R = [];
+  for (var i = 0; i < T.length; i++){
+    var t = T[i];
+    if (Array.isArray(t[0])) { for (var j = 0; j < t.length; j++) R.push(t[j]); }
+    else R.push(t);
+  }
+  return R;
+}
+function countParams(N){
+  var usesLN = N.place !== "none", n = N.din * N.d + N.d;
+  for (var l = 0; l < N.L; l++) n += N.d * N.h + N.h + N.h * N.d + N.d + (usesLN ? 2 * N.d : 0);
+  n += N.d * N.K + N.K + (N.place === "pre" ? 2 * N.d : 0);
+  return n;
+}
+function zeroBranches(N){
+  for (var l = 0; l < N.L; l++){
+    var B = N.B[l];
+    for (var k = 0; k < N.h; k++) for (var j = 0; j < N.d; j++) B.W2[k][j] = 0;
+    for (j = 0; j < N.d; j++) B.b2[j] = 0;
+  }
+  return N;
+}
+
+// ---------------------------------------------------------------- forward (cached)
+function fwd(N, u, cache){
+  var d = N.d, h = N.h, i, j, k, s;
+  var x = [];
+  for (j = 0; j < d; j++){ s = N.bin[j]; for (i = 0; i < N.din; i++) s += u[i] * N.Win[i][j]; x.push(s); }
+  var recs = null;
+  if (cache){ cache.u = u; cache.x0 = x.slice(); recs = cache.recs = []; }
+  for (var l = 0; l < N.L; l++){
+    var B = N.B[l], rec = cache ? {} : null, z = x, ln;
+    if (N.place === "pre"){
+      ln = lnFwd(x, B.g, B.bn, N.eps);
+      z = ln.y;
+      if (rec){ rec.xh = ln.xh; rec.inv = ln.inv; }
+    }
+    var a = [];
+    for (k = 0; k < h; k++){ s = B.b1[k]; for (j = 0; j < d; j++) s += z[j] * B.W1[j][k]; a.push(Math.tanh(s)); }
+    var br = [];
+    for (j = 0; j < d; j++){ s = B.b2[j]; for (k = 0; k < h; k++) s += a[k] * B.W2[k][j]; br.push(s); }
+    var xn = [];
+    for (j = 0; j < d; j++) xn.push(x[j] + N.alpha * br[j]);
+    if (N.place === "post"){
+      ln = lnFwd(xn, B.g, B.bn, N.eps);
+      if (rec){ rec.xh = ln.xh; rec.inv = ln.inv; }
+      xn = ln.y;
+    }
+    if (rec){ rec.z = z; rec.a = a; rec.br = br; rec.xin = x; recs.push(rec); }
+    x = xn;
+  }
+  if (cache) cache.xTop = x.slice();
+  if (N.place === "pre"){
+    var lf = lnFwd(x, N.gf, N.bf, N.eps);
+    if (cache){ cache.fh = lf.xh; cache.finv = lf.inv; }
+    x = lf.y;
+  }
+  if (cache) cache.xL = x;
+  var zo = [];
+  for (var c = 0; c < N.K; c++){ s = N.bout[c]; for (j = 0; j < d; j++) s += x[j] * N.Wout[j][c]; zo.push(s); }
+  return zo;
+}
+
+// ---------------------------------------------------------------- backward
+// G.flow, if present, accumulates the squared norm of dL/dx at every level of the stack:
+// index L is the stream leaving the last block, index 0 is the stream entering the first.
+function bwd(N, cache, dz, G){
+  var d = N.d, h = N.h, i, j, k, l;
+  var x = cache.xL, dx = vec(d);
+  for (var c = 0; c < N.K; c++){
+    G.bout[c] += dz[c];
+    for (j = 0; j < d; j++){ G.Wout[j][c] += x[j] * dz[c]; dx[j] += N.Wout[j][c] * dz[c]; }
+  }
+  if (N.place === "pre") dx = lnBwd(dx, cache.fh, cache.finv, N.gf, G.gf, G.bf);
+  if (G.flow){ var t0 = 0; for (j = 0; j < d; j++) t0 += dx[j] * dx[j]; G.flow[N.L] += t0; }
+  for (l = N.L - 1; l >= 0; l--){
+    var B = N.B[l], Bg = G.B[l], rec = cache.recs[l];
+    var dxn = dx;
+    if (N.place === "post") dxn = lnBwd(dx, rec.xh, rec.inv, B.g, Bg.g, Bg.bn);
+    var dbr = [];
+    for (j = 0; j < d; j++) dbr.push(N.alpha * dxn[j]);
+    var dxin = dxn.slice();                       // the identity path
+    var da = vec(h);
+    for (j = 0; j < d; j++){
+      Bg.b2[j] += dbr[j];
+      for (k = 0; k < h; k++){ Bg.W2[k][j] += rec.a[k] * dbr[j]; da[k] += B.W2[k][j] * dbr[j]; }
+    }
+    var ds = [];
+    for (k = 0; k < h; k++) ds.push(da[k] * (1 - rec.a[k] * rec.a[k]));
+    var dz1 = vec(d);
+    for (k = 0; k < h; k++){
+      Bg.b1[k] += ds[k];
+      for (j = 0; j < d; j++){ Bg.W1[j][k] += rec.z[j] * ds[k]; dz1[j] += B.W1[j][k] * ds[k]; }
+    }
+    if (N.place === "pre"){
+      var dfl = lnBwd(dz1, rec.xh, rec.inv, B.g, Bg.g, Bg.bn);
+      for (j = 0; j < d; j++) dxin[j] += dfl[j];
+    } else {
+      for (j = 0; j < d; j++) dxin[j] += dz1[j];
+    }
+    dx = dxin;
+    if (G.flow){ var tt = 0; for (j = 0; j < d; j++) tt += dx[j] * dx[j]; G.flow[l] += tt; }
+  }
+  for (j = 0; j < d; j++){
+    G.bin[j] += dx[j];
+    for (i = 0; i < N.din; i++) G.Win[i][j] += cache.u[i] * dx[j];
+  }
+}
+
+// ---------------------------------------------------------------- a second, independent forward
+// Written from the equations with its own helpers; shares no code with fwd(). Used for an
+// equality check and as the function the central differences are taken on.
+function matVec(M, v){
+  var r = M.length, c = M[0].length, out = [];
+  for (var j = 0; j < c; j++){
+    var s = 0;
+    for (var i = 0; i < r; i++) s += v[i] * M[i][j];
+    out.push(s);
+  }
+  return out;
+}
+function addVec(a, b){ var o = []; for (var i = 0; i < a.length; i++) o.push(a[i] + b[i]); return o; }
+function scaleVec(a, c){ var o = []; for (var i = 0; i < a.length; i++) o.push(c * a[i]); return o; }
+function normalise(x, g, b, eps){
+  var n = x.length, i, m = 0;
+  for (i = 0; i < n; i++) m += x[i];
+  m = m / n;
+  var q = 0;
+  for (i = 0; i < n; i++) q += (x[i] - m) * (x[i] - m);
+  var sd = Math.sqrt(q / n + eps), o = [];
+  for (i = 0; i < n; i++) o.push(g[i] * ((x[i] - m) / sd) + b[i]);
+  return o;
+}
+function fwdAlt(N, u){
+  var x = addVec(matVec(N.Win, u), N.bin);
+  for (var l = 0; l < N.L; l++){
+    var B = N.B[l];
+    var inp = N.place === "pre" ? normalise(x, B.g, B.bn, N.eps) : x;
+    var pre = addVec(matVec(B.W1, inp), B.b1), hid = [];
+    for (var k = 0; k < pre.length; k++) hid.push(Math.tanh(pre[k]));
+    var br = addVec(matVec(B.W2, hid), B.b2);
+    var sum = addVec(x, scaleVec(br, N.alpha));
+    x = N.place === "post" ? normalise(sum, B.g, B.bn, N.eps) : sum;
+  }
+  if (N.place === "pre") x = normalise(x, N.gf, N.bf, N.eps);
+  return addVec(matVec(N.Wout, x), N.bout);
+}
+function nllAlt(N, U, Y){
+  var s = 0;
+  for (var i = 0; i < U.length; i++){
+    var z = fwdAlt(N, U[i]);
+    s += logsumexp(z) - z[Y[i]];
+  }
+  return s / U.length;
+}
+
+// ---------------------------------------------------------------- loss and gradient
+function lossGradIdx(N, U, Y, idx, G){
+  var n = idx.length, tot = 0, cache = {};
+  for (var q = 0; q < n; q++){
+    var i = idx[q];
+    var z = fwd(N, U[i], cache);
+    var p = softmaxOf(z);
+    tot += logsumexp(z) - z[Y[i]];
+    var dz = [];
+    for (var c = 0; c < N.K; c++) dz.push((p[c] - (c === Y[i] ? 1 : 0)) / n);
+    bwd(N, cache, dz, G);
+  }
+  return tot / n;
+}
+function lossGrad(N, U, Y, G){
+  var idx = [];
+  for (var i = 0; i < U.length; i++) idx.push(i);
+  return lossGradIdx(N, U, Y, idx, G);
+}
+function gradCheck(N, U, Y, o){
+  o = o || {};
+  var hh = o.h || 1e-5, per = o.per || 12, rng = mulberry32(o.seed || 5);
+  var G = zerosLike(N);
+  lossGrad(N, U, Y, G);
+  var TN = flatViews(tensorList(N)), TG = flatViews(tensorList(G));
+  var worst = 0, checked = 0, moved = 0;
+  for (var q = 0; q < per; q++){
+    var ri = Math.floor(rng() * TN.length), row = TN[ri];
+    var ci = Math.floor(rng() * row.length), old = row[ci];
+    row[ci] = old + hh; var lp = nllAlt(N, U, Y);
+    row[ci] = old - hh; var lm = nllAlt(N, U, Y);
+    row[ci] = old;
+    var num = (lp - lm) / (2 * hh), ana = TG[ri][ci];
+    var den = Math.max(1e-7, Math.abs(num) + Math.abs(ana));
+    var e = Math.abs(num - ana) / den;
+    if (Math.abs(ana) > 1e-9) moved++;
+    if (e > worst) worst = e;
+    checked++;
+  }
+  return { worst: worst, checked: checked, moved: moved };
+}
+
+// ---------------------------------------------------------------- training
+function trainNet(N, U, Y, o){
+  o = o || {};
+  var steps = o.steps || 200, batch = o.batch || 48, lr = o.lr === undefined ? 0.02 : o.lr;
+  var kind = o.opt || "adam", rng = mulberry32(o.seed || 7);
+  var G = zerosLike(N), TN = flatViews(tensorList(N)), TG = flatViews(tensorList(G));
+  var M = null, V = null;
+  if (kind === "adam"){ M = flatViews(tensorList(zerosLike(N))); V = flatViews(tensorList(zerosLike(N))); }
+  var diverged = false, hist = [], upd1 = null, probes = {}, i, j, s;
+  for (s = 0; s < steps; s++){
+    for (i = 0; i < TG.length; i++){ var r0 = TG[i]; for (j = 0; j < r0.length; j++) r0[j] = 0; }
+    var idx = [];
+    for (var b = 0; b < batch; b++) idx.push(Math.floor(rng() * U.length));
+    var loss = lossGradIdx(N, U, Y, idx, G);
+    if (!isFinite(loss)){ diverged = true; break; }
+    hist.push(loss);
+    var wn = 0, dn = 0, t = s + 1;
+    var bc1 = 1 - Math.pow(0.9, t), bc2 = 1 - Math.pow(0.999, t);
+    for (i = 0; i < TN.length; i++){
+      var rn = TN[i], rg = TG[i], rm = M ? M[i] : null, rv = V ? V[i] : null;
+      for (j = 0; j < rn.length; j++){
+        var step;
+        if (kind === "adam"){
+          rm[j] = 0.9 * rm[j] + 0.1 * rg[j];
+          rv[j] = 0.999 * rv[j] + 0.001 * rg[j] * rg[j];
+          step = lr * (rm[j] / bc1) / (Math.sqrt(rv[j] / bc2) + 1e-8);
+        } else step = lr * rg[j];
+        if (s === 0){ wn += rn[j] * rn[j]; dn += step * step; }
+        rn[j] -= step;
+      }
+    }
+    if (s === 0) upd1 = Math.sqrt(dn) / Math.max(1e-12, Math.sqrt(wn));
+    if (o.probeAt && o.probe && o.probeAt.indexOf(s + 1) >= 0) probes[s + 1] = o.probe(N);
+  }
+  return { diverged: diverged, hist: hist, upd1: upd1, probes: probes,
+           finalTrain: hist.length ? hist[hist.length - 1] : Infinity };
+}
+
+// ---------------------------------------------------------------- the task
+function makeTask(o){
+  o = o || {};
+  var din = o.din || 6, K = o.K || 4;
+  var T = makeNet({ din: din, d: o.td || 12, h: o.th || 16, K: K, L: o.tL || 6,
+                    place: "pre", rule: "invsqrtL", seed: o.seed || 11, sharp: o.sharp || 2.2 });
+  return { net: T, din: din, K: K };
+}
+function sampleInputs(task, n, seed){
+  var rng = mulberry32(seed), U = [];
+  for (var i = 0; i < n; i++){
+    var u = [];
+    for (var j = 0; j < task.din; j++) u.push(gauss(rng));
+    U.push(u);
+  }
+  return U;
+}
+function trueProbs(task, U){
+  var P = [];
+  for (var i = 0; i < U.length; i++) P.push(softmaxOf(fwd(task.net, U[i], null)));
+  return P;
+}
+function sampleLabels(P, seed){
+  var rng = mulberry32(seed), Y = [];
+  for (var i = 0; i < P.length; i++){
+    var r = rng(), c = 0, acc = P[i][0];
+    while (r > acc && c < P[i].length - 1){ c++; acc += P[i][c]; }
+    Y.push(c);
+  }
+  return Y;
+}
+function condEntropy(P){
+  var s = 0;
+  for (var i = 0; i < P.length; i++) for (var c = 0; c < P[i].length; c++)
+    if (P[i][c] > 0) s -= P[i][c] * Math.log(P[i][c]);
+  return s / P.length;
+}
+// exact expectation over labels: no label sampling anywhere in the evaluation
+function exactNLL(N, U, P){
+  var s = 0;
+  for (var i = 0; i < U.length; i++){
+    var z = fwd(N, U[i], null), l = logsumexp(z);
+    if (!isFinite(l)) return Infinity;
+    for (var c = 0; c < N.K; c++) s += P[i][c] * (l - z[c]);
+  }
+  return s / U.length;
+}
+function excessOf(N, U, P, H){ return exactNLL(N, U, P) - H; }
+
+// ---------------------------------------------------------------- init-time diagnostics
+function streamPower(N, U){
+  var pw = vec(N.L + 1), cache = {};
+  for (var i = 0; i < U.length; i++){
+    fwd(N, U[i], cache);
+    for (var l = 0; l < N.L; l++) pw[l] += msq(cache.recs[l].xin);
+    pw[N.L] += msq(cache.xTop);
+  }
+  for (l = 0; l <= N.L; l++) pw[l] /= U.length;
+  return pw;
+}
+function branchPower(N, U){
+  var p = 0, cache = {};
+  for (var i = 0; i < U.length; i++){ fwd(N, U[i], cache); p += msq(cache.recs[0].br); }
+  return p / U.length;
+}
+function gradFlow(N, U, Y){
+  var G = zerosLike(N);
+  G.flow = vec(N.L + 1);
+  var idx = [];
+  for (var i = 0; i < U.length; i++) idx.push(i);
+  lossGradIdx(N, U, Y, idx, G);
+  var f = [];
+  for (var l = 0; l <= N.L; l++) f.push(Math.sqrt(G.flow[l]));
+  return { flow: f, ratio: f[0] / f[N.L] };
+}
+
+// ---------------------------------------------------------------- card 1: the zero-branch control
+// Two columns per placement: branches deleted (W2 = b2 = 0, so the block is a literal no-op) and
+// branches intact. The comparison is the point -- with the branches gone the stream stops moving,
+// which turns out to matter a great deal for what the normaliser's Jacobian does.
+function identityStudy(o){
+  var depths = o.depths || [8, 16, 32], places = ["pre", "post", "none"];
+  var task = o.task, n = o.n || 48;
+  var U = o.U.slice(0, n), Y = o.Y.slice(0, n), rows = [];
+  for (var di = 0; di < depths.length; di++){
+    var L = depths[di], row = { L: L, cells: [] };
+    for (var pi = 0; pi < places.length; pi++){
+      var cfg = { din: task.din, d: o.d || 10, h: o.h || 12, K: task.K, L: L,
+                  place: places[pi], rule: "one", seed: o.seed || 3 };
+      var z = gradFlow(zeroBranches(makeNet(cfg)), U, Y);
+      var r = gradFlow(makeNet(cfg), U, Y);
+      // how much the INTERIOR of the stack moves the gradient. The stream needs two blocks to
+      // settle onto the layer norm's fixed point (eps makes the first pass land 1e-6 short), so
+      // the interior is measured from block 3 up to L-2 -- every block that is unambiguously
+      // seeing an already-settled, already-normalised stream on both sides.
+      var mid = 0, lo3 = Math.min(3, L - 1);
+      for (var q = lo3; q <= L - 2; q++) mid = Math.max(mid, Math.abs(z.flow[q] - z.flow[lo3]));
+      var settle = Math.abs(z.flow[1] - z.flow[lo3]);
+      row.cells.push({ place: places[pi], zero: z.ratio, real: r.ratio,
+                       zeroDev: Math.abs(z.ratio - 1),
+                       // relative, because "unchanged" is a statement about ulps, not about the
+                       // absolute size of a gradient that depends on d, on L and on the batch
+                       midDev: mid / Math.max(1e-300, z.flow[lo3]), settle: settle,
+                       // blocks lo3 .. L-3 are the ones whose action lies between flow[lo3] and
+                       // flow[L-2], so that is the span the deviation above was measured over
+                       midBlocks: Math.max(0, L - 2 - lo3),
+                       first: z.flow[L - 1] / z.flow[L], last: z.flow[0] / z.flow[1],
+                       zeroPer: Math.pow(z.ratio, 1 / L), realPer: Math.pow(r.ratio, 1 / L) });
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+// ---------------------------------------------------------------- card 2: the growth law
+// One residual add decomposes EXACTLY, and the decomposition is checked to floating point:
+//     msq(x + a*br) = msq(x) + a^2*msq(br) + (2a/d)*<x, br>
+// so the sqrt(L) law is precisely the statement "the cross term is negligible and the branch
+// power does not drift". Both of those are measurements, not assumptions, and both are reported.
+// Note the asymmetry that falls out: the cross term is FIRST order in alpha and the branch term
+// is SECOND order, so shrinking alpha makes the additive law describe the growth LESS well.
+function meanGain(task, o, place, rule, L, S){
+  var g = 0, cache = {}, U = o.U;
+  for (var s = 1; s <= S; s++){
+    var N = makeNet({ din: task.din, d: o.d || 10, h: o.h || 12, K: task.K, L: L,
+                      place: place, rule: rule, seed: s });
+    var p0 = 0, pL = 0;
+    for (var i = 0; i < U.length; i++){
+      fwd(N, U[i], cache);
+      p0 += msq(cache.recs[0].xin); pL += msq(cache.xTop);
+    }
+    g += pL / p0;
+  }
+  return g / S;
+}
+function growthStudy(o){
+  var task = o.task, U = o.U.slice(0, o.n || 300), L = o.L || 24, S = o.seeds || 6, rows = [];
+  var combos = o.combos || [["pre", "one"], ["pre", "invsqrtL"], ["post", "one"],
+                            ["post", "invsqrtL"], ["none", "one"], ["none", "invsqrtL"]];
+  var oo = { U: U, d: o.d || 10, h: o.h || 12 };
+  for (var ci = 0; ci < combos.length; ci++){
+    var place = combos[ci][0], rule = combos[ci][1];
+    var pw = vec(L + 1), bp = vec(L), cr = vec(L), exact = 0, alpha = 0, n = 0, cache = {}, l, j;
+    for (var s = 1; s <= S; s++){
+      var N = makeNet({ din: task.din, d: oo.d, h: oo.h, K: task.K, L: L,
+                        place: place, rule: rule, seed: s });
+      alpha = N.alpha;
+      for (var i = 0; i < U.length; i++){
+        fwd(N, U[i], cache);
+        n++;
+        for (l = 0; l < L; l++){
+          var x = cache.recs[l].xin, br = cache.recs[l].br, c = 0;
+          for (j = 0; j < x.length; j++) c += x[j] * br[j];
+          pw[l] += msq(x); bp[l] += msq(br); cr[l] += 2 * N.alpha * c / x.length;
+          if (place !== "post"){
+            var xn = [];
+            for (j = 0; j < x.length; j++) xn.push(x[j] + N.alpha * br[j]);
+            var lhs = msq(xn), rhs = msq(x) + N.alpha * N.alpha * msq(br) + 2 * N.alpha * c / x.length;
+            exact = Math.max(exact, Math.abs(lhs - rhs) / Math.max(1e-12, Math.abs(lhs)));
+          }
+        }
+        pw[L] += msq(cache.xTop);
+      }
+    }
+    for (l = 0; l <= L; l++) pw[l] /= n;
+    for (l = 0; l < L; l++){ bp[l] /= n; cr[l] /= n; }
+    var a2 = alpha * alpha, predC = [], predM = [], accM = pw[0], accC = 0;
+    for (l = 0; l <= L; l++){
+      predC.push(pw[0] + l * a2 * bp[0]);
+      predM.push(accM);
+      if (l < L){ accM += a2 * bp[l]; accC += cr[l]; }
+    }
+    rows.push({ place: place, rule: rule, alpha: alpha, pw: pw, bp: bp, predC: predC, predM: predM,
+                p0: pw[0], pL: pw[L], gain: pw[L] / pw[0],
+                predConst: predC[L], predMeas: predM[L],
+                errConst: Math.abs(predC[L] - pw[L]) / pw[L],
+                errMeas: Math.abs(predM[L] - pw[L]) / pw[L],
+                branchTerm: predM[L] - pw[0], crossTerm: accC, growth: pw[L] - pw[0],
+                crossFrac: accC / (pw[L] - pw[0]),
+                crossOverBranch: accC / (predM[L] - pw[0]),
+                bpDrift: bp[L - 1] / bp[0], exact: exact });
+  }
+  var lo = o.lo || 4, hi = o.hi || 32;
+  var out = { rows: rows, L: L, seeds: S, lo: lo, hi: hi,
+              scaledShallow: meanGain(task, oo, "pre", "invsqrtL", lo, S),
+              scaledDeep: meanGain(task, oo, "pre", "invsqrtL", hi, S),
+              plainShallow: meanGain(task, oo, "pre", "one", lo, S),
+              plainDeep: meanGain(task, oo, "pre", "one", hi, S) };
+  out.scaledRatio = out.scaledDeep / out.scaledShallow;
+  out.plainRatio = out.plainDeep / out.plainShallow;
+  return out;
+}
+
+// ---------------------------------------------------------------- card 3: the two parameterisations
+// only W2 and b2 are stepped, and the quantity compared is the change in the LOGITS, i.e. the
+// change in the function rather than in the parameters
+function applyStepTo(P, GP, o){
+  var rows = Array.isArray(P[0]) ? P : [P], grows = Array.isArray(GP[0]) ? GP : [GP];
+  for (var i = 0; i < rows.length; i++) for (var j = 0; j < rows[i].length; j++){
+    var g = grows[i][j];
+    // Adam's FIRST step in closed form: mhat = g, vhat = g^2, so the step is lr*g/(|g|+eps)
+    rows[i][j] -= o.opt === "adam" ? o.lr * g / (Math.abs(g) + 1e-8) : o.lr * g;
+  }
+}
+function functionStep(N0, U, Y, o){
+  var N = cloneNet(N0), i, j;
+  var Z0 = [];
+  for (i = 0; i < U.length; i++) Z0.push(fwd(N, U[i], null));
+  var G = zerosLike(N);
+  lossGrad(N, U, Y, G);
+  for (var l = 0; l < N.L; l++){
+    applyStepTo(N.B[l].W2, G.B[l].W2, o);
+    applyStepTo(N.B[l].b2, G.B[l].b2, o);
+  }
+  var mv = 0, cnt = 0;
+  for (i = 0; i < U.length; i++){
+    var z1 = fwd(N, U[i], null);
+    for (j = 0; j < z1.length; j++){ mv += Math.abs(z1[j] - Z0[i][j]); cnt++; }
+  }
+  return mv / cnt;
+}
+function fitExponent(cs, ratios){
+  var num = 0, den = 0, res = 0, i;
+  for (i = 0; i < cs.length; i++){
+    if (cs[i] === 1) continue;
+    var lc = Math.log(cs[i]), lr = Math.log(ratios[i]);
+    num += lc * lr; den += lc * lc;
+  }
+  var p = num / den, n = 0;
+  for (i = 0; i < cs.length; i++){
+    if (cs[i] === 1) continue;
+    var e = Math.log(ratios[i]) - p * Math.log(cs[i]);
+    res += e * e; n++;
+  }
+  return { p: p, rms: Math.sqrt(res / n) };
+}
+function scaleStudy(o){
+  var task = o.task, U = o.U.slice(0, o.n || 40), Y = o.Y.slice(0, o.n || 40);
+  // powers of two AND values that are not: multiplying by a power of two is exact in binary
+  // floating point, so those rows agree to 0.0e+0 and say nothing about portability
+  var cs = o.cs || [0.125, 0.3, 0.5, 1, 1.7, 4];
+  var base = { din: task.din, d: o.d || 10, h: o.h || 12, K: task.K, L: o.L || 1,
+               place: "none", seed: o.seed || 3 };
+  var rows = [], sgdR = [], adamR = [], worstAgree = 0, worstPow2 = 0, worstOther = 0;
+  for (var i = 0; i < cs.length; i++){
+    var c = cs[i];
+    var A = makeNet(Object.assign({}, base, { alpha: c, w2scale: 1 }));
+    var B = makeNet(Object.assign({}, base, { alpha: 1, w2scale: c }));
+    var agree = 0;
+    for (var k = 0; k < U.length; k++){
+      var za = fwd(A, U[k], null), zb = fwd(B, U[k], null);
+      for (var m = 0; m < za.length; m++)
+        agree = Math.max(agree, Math.abs(za[m] - zb[m]) / (1 + Math.abs(za[m])));
+    }
+    var lg = Math.log(c) / Math.LN2, pow2 = Math.abs(lg - Math.round(lg)) < 1e-12;
+    worstAgree = Math.max(worstAgree, agree);
+    if (pow2) worstPow2 = Math.max(worstPow2, agree); else worstOther = Math.max(worstOther, agree);
+    var sA = functionStep(A, U, Y, { opt: "sgd", lr: o.lr || 0.01 });
+    var sB = functionStep(B, U, Y, { opt: "sgd", lr: o.lr || 0.01 });
+    var aA = functionStep(A, U, Y, { opt: "adam", lr: o.lr || 0.01 });
+    var aB = functionStep(B, U, Y, { opt: "adam", lr: o.lr || 0.01 });
+    rows.push({ c: c, agree: agree, pow2: pow2, sgd: sA / sB, adam: aA / aB, c2: c * c });
+    sgdR.push(sA / sB); adamR.push(aA / aB);
+  }
+  var fs = fitExponent(cs, sgdR), fa = fitExponent(cs, adamR);
+  return { rows: rows, cs: cs, sgdExp: fs.p, sgdRms: fs.rms, adamExp: fa.p, adamRms: fa.rms,
+           worstAgree: worstAgree, worstPow2: worstPow2, worstOther: worstOther };
+}
+// the branch's size in FUNCTION terms: the constant and the matrix always appear as a product
+function branchScale(N){
+  var s = 0;
+  for (var l = 0; l < N.L; l++) for (var k = 0; k < N.h; k++) for (var j = 0; j < N.d; j++)
+    s += Math.pow(N.alpha * N.B[l].W2[k][j], 2);
+  return Math.sqrt(s);
+}
+// the same two parameterisations, actually trained -- the practical consequence
+function scaleTrainStudy(o){
+  var task = o.task, c = o.c || 0.125, L = o.L || 8;
+  var base = { din: task.din, d: o.d || 10, h: o.h || 12, K: task.K, L: L,
+               place: "pre", seed: o.seed || 3 };
+  var out = {}, kinds = ["adam", "sgd"];
+  for (var q = 0; q < kinds.length; q++){
+    var A = makeNet(Object.assign({}, base, { alpha: c, w2scale: 1 }));
+    var B = makeNet(Object.assign({}, base, { alpha: 1, w2scale: c }));
+    var lr = kinds[q] === "adam" ? (o.lrAdam || 0.02) : (o.lrSgd || 0.1);
+    var st = { steps: o.steps || 150, batch: 48, lr: lr, opt: kinds[q], seed: 5 };
+    var a0 = branchScale(A), b0 = branchScale(B);
+    trainNet(A, o.Utr, o.Ytr, st);
+    trainNet(B, o.Utr, o.Ytr, st);
+    var a1 = branchScale(A), b1 = branchScale(B);
+    out[kinds[q]] = { start: a0, startGap: Math.abs(a0 - b0) / a0, a: a1, b: b1,
+                      grewA: a1 / a0, grewB: b1 / b0, gap: b1 / a1,
+                      exA: excessOf(A, o.Ute, o.Pte, o.H), exB: excessOf(B, o.Ute, o.Pte, o.H) };
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- card 4: the trained grid
+function runConfig(task, cfg, data, o){
+  o = o || {};
+  var N = makeNet({ din: task.din, d: cfg.d, h: cfg.h, K: task.K, L: cfg.L,
+                    place: cfg.place, rule: cfg.rule, seed: cfg.seed });
+  var dU = data.Utr.slice(0, 48), dY = data.Ytr.slice(0, 48);
+  var gf = gradFlow(N, dU, dY);
+  var pw = streamPower(N, dU);
+  var loss0 = exactNLL(N, data.Ute, data.Pte) - data.H;
+  var probe = function(net){ return excessOf(net, data.Ute, data.Pte, data.H); };
+  var tr = trainNet(N, data.Utr, data.Ytr, { steps: cfg.steps, batch: cfg.batch || 48,
+                                             lr: cfg.lr, opt: "adam", seed: cfg.seed + 100,
+                                             probeAt: [10], probe: probe });
+  var ex = tr.diverged ? Infinity : excessOf(N, data.Ute, data.Pte, data.H);
+  if (!isFinite(ex)) ex = Infinity;
+  return { cfg: cfg, net: N, params: countParams(N), alpha: N.alpha,
+           gratio: gf.ratio, growth: pw[cfg.L] / pw[0], loss0: loss0,
+           upd1: tr.upd1, ex10: tr.probes[10] === undefined ? Infinity : tr.probes[10],
+           trainLoss: tr.finalTrain, excess: ex, diverged: tr.diverged || !isFinite(ex) };
+}
+function depthStudy(task, data, o){
+  o = o || {};
+  // the ladder has to stay strictly increasing and end at the slider's depth: a fixed
+  // [2,4,8,16,Lmax] duplicates a row and puts a deeper stack ABOVE the "deepest" one whenever
+  // the slider sits at 8, 12 or 16, and then the deepest-row lookup below picks the wrong row
+  var Lmax = o.Lmax || 24;
+  var depths = o.depths || [2, 4, 8, 16].filter(function(v){ return v < Lmax; }).concat([Lmax]);
+  var places = ["pre", "post", "none"], rows = [];
+  for (var pi = 0; pi < places.length; pi++) for (var di = 0; di < depths.length; di++){
+    rows.push(runConfig(task, { L: depths[di], d: o.d || 8, h: o.h || 10, place: places[pi],
+                                rule: "one", lr: o.lr || 0.02, steps: o.steps || 150,
+                                batch: o.batch || 32, seed: o.seed || 3 }, data));
+  }
+  // one extra family: the deepest stack with alpha = 1/sqrt(L)
+  for (pi = 0; pi < places.length; pi++){
+    rows.push(runConfig(task, { L: depths[depths.length - 1], d: o.d || 8, h: o.h || 10,
+                                place: places[pi], rule: "invsqrtL", lr: o.lr || 0.02,
+                                steps: o.steps || 150, batch: o.batch || 32, seed: o.seed || 3 }, data));
+  }
+  var best = null, anyDiv = false;
+  for (var i = 0; i < rows.length; i++){
+    if (rows[i].diverged) anyDiv = true;
+    if (!best || rows[i].excess < best.excess) best = rows[i];
+  }
+  return { rows: rows, best: best, anyDiverged: anyDiv, depths: depths };
+}
+
+// ---------------------------------------------------------------- card 5: the ranker
+function aucOf(truth, cand){
+  var g = 0, n = 0;
+  for (var i = 0; i < truth.length; i++) for (var j = i + 1; j < truth.length; j++){
+    if (truth[i] === truth[j]) continue;
+    n++;
+    var lo = truth[i] < truth[j] ? i : j, hi = lo === i ? j : i;
+    g += cand[lo] < cand[hi] ? 1 : (cand[lo] === cand[hi] ? 0.5 : 0);
+  }
+  return { auc: n ? g / n : 0.5, pairs: n };
+}
+function poolConfigs(o){
+  o = o || {};
+  var depths = o.depths || [2, 4, 8, 16, 24], places = ["pre", "post", "none"];
+  var rules = ["one", "invsqrtL"], lrs = o.lrs || [0.01, 0.06, 0.30], seeds = o.seeds || [1];
+  var cfgs = [];
+  for (var a = 0; a < depths.length; a++) for (var b = 0; b < places.length; b++)
+    for (var c = 0; c < rules.length; c++) for (var e = 0; e < lrs.length; e++)
+      for (var f = 0; f < seeds.length; f++)
+        cfgs.push({ L: depths[a], place: places[b], rule: rules[c], lr: lrs[e], seed: seeds[f],
+                    d: o.d || 8, h: o.h || 8, steps: o.steps || 80, batch: o.batch || 24 });
+  return cfgs;
+}
+// every candidate is oriented so that SMALLER IS PREDICTED BETTER, decided before scoring
+function candidatesOf(res){
+  return [
+    { name: "gradient ratio at init <span class='lg'>|ln(&#8214;g&#8320;&#8214;/&#8214;g<sub>L</sub>&#8214;)|</span>",
+      train: "no, one backward pass", v: res.map(function(r){ return Math.abs(Math.log(Math.max(1e-300, r.gratio))); }) },
+    { name: "stream growth at init <span class='lg'>|ln(P<sub>L</sub>/P&#8320;)|</span>",
+      train: "no, one forward pass", v: res.map(function(r){ return Math.abs(Math.log(Math.max(1e-300, r.growth))); }) },
+    { name: "held-out loss at step 0",
+      train: "no", v: res.map(function(r){ return r.loss0; }) },
+    { name: "first update ratio <span class='lg'>|ln(&#8214;&#916;w&#8214;/&#8214;w&#8214; &divide; 10&#8315;&#179;)|</span>",
+      train: "one step", v: res.map(function(r){ return Math.abs(Math.log(Math.max(1e-300, r.upd1) / 1e-3)); }) },
+    { name: "depth alone <span class='lg'>deeper predicted better</span>",
+      train: "nothing at all", v: res.map(function(r){ return -r.cfg.L; }) },
+    { name: "&#945;&#8730;L <span class='lg'>|ln(&#945;&#8730;L)|, closed form</span>",
+      train: "nothing at all", v: res.map(function(r){ return Math.abs(Math.log(r.alpha * Math.sqrt(r.cfg.L))); }) },
+    { name: "final <em>training</em> loss <span class='lg'>the curve you watch</span>",
+      train: "the whole budget", v: res.map(function(r){ return isFinite(r.trainLoss) ? r.trainLoss : Infinity; }) },
+    { name: "held-out excess after 10 steps <span class='lg'>10 of the " +
+            (res.length ? res[0].cfg.steps : 0) + "-step budget</span>",
+      train: "10 steps", v: res.map(function(r){ return r.ex10; }) }
+  ];
+}
+function rankerStudy(task, data, o){
+  o = o || {};
+  // the pool is scored on a smaller held-out sample than the main table; the noise-floor card
+  // says what that costs, and it is far below the spread the pool actually contains
+  var nev = o.nev || 400;
+  var Ue = data.Ute.slice(0, nev), Pe = data.Pte.slice(0, nev);
+  var small = { Utr: data.Utr, Ytr: data.Ytr, Ute: Ue, Pte: Pe, H: condEntropy(Pe) };
+  var cfgs = poolConfigs(o), res = [];
+  for (var i = 0; i < cfgs.length; i++) res.push(runConfig(task, cfgs[i], small));
+  var truth = res.map(function(r){ return r.excess; });
+  var cands = candidatesOf(res), scored = [];
+  for (i = 0; i < cands.length; i++){
+    var a = aucOf(truth, cands[i].v);
+    scored.push({ name: cands[i].name, train: cands[i].train, auc: a.auc, pairs: a.pairs });
+  }
+  // the control: the same diagnostic INSIDE one (placement, learning rate) cell
+  var cells = {}, within = [], wPairs = 0, wSum = 0;
+  for (i = 0; i < res.length; i++){
+    var k = res[i].cfg.place + "/" + res[i].cfg.lr;
+    (cells[k] = cells[k] || []).push(i);
+  }
+  for (var k2 in cells){
+    var ix = cells[k2];
+    var t = ix.map(function(q){ return truth[q]; });
+    var v = ix.map(function(q){ return Math.abs(Math.log(Math.max(1e-300, res[q].gratio))); });
+    var aa = aucOf(t, v);
+    if (aa.pairs > 0){ within.push({ cell: k2, auc: aa.auc, pairs: aa.pairs });
+                       wSum += aa.auc * aa.pairs; wPairs += aa.pairs; }
+  }
+  // "failure" is not only a NaN: Adam rarely overflows, it plateaus. A run whose excess is an
+  // order of magnitude above the pool median has failed whether or not it produced a number.
+  var sorted = truth.slice().sort(function(a, b){ return a - b; });
+  var med = sorted[Math.floor(sorted.length / 2)];
+  var nDiv = 0, nBad = 0;
+  for (i = 0; i < res.length; i++){
+    if (res[i].diverged) nDiv++;
+    if (!(truth[i] < 10 * med)) nBad++;
+  }
+  return { res: res, scored: scored, n: res.length, within: within, median: med,
+           withinAuc: wPairs ? wSum / wPairs : 0.5, withinPairs: wPairs,
+           diverged: nDiv, failed: nBad };
+}
+// the one comparison the depth grid cannot settle on its own, run over several seeds so it can
+// be checked against the noise floor rather than read off a single run
+function alphaConfirm(task, data, o){
+  o = o || {};
+  var L = o.L || 24, seeds = o.seeds || [1, 2, 3, 4], places = ["pre", "post", "none"], out = [];
+  for (var pi = 0; pi < places.length; pi++){
+    var one = [], sc = [];
+    for (var s = 0; s < seeds.length; s++){
+      var base = { L: L, d: o.d || 8, h: o.h || 10, place: places[pi], lr: o.lr || 0.02,
+                   steps: o.steps || 150, batch: 32, seed: seeds[s] };
+      one.push(runConfig(task, Object.assign({}, base, { rule: "one" }), data).excess);
+      sc.push(runConfig(task, Object.assign({}, base, { rule: "invsqrtL" }), data).excess);
+    }
+    var a = spreadOf(one), b = spreadOf(sc);
+    out.push({ place: places[pi], one: a, scaled: b, gain: a.mean - b.mean,
+               ratio: a.mean / b.mean, seeds: seeds.length,
+               // a difference is only real if it clears the seed-to-seed spread of both arms
+               real: (a.mean - b.mean) > Math.max(a.spread, b.spread) });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- card 6: the noise floor
+function spreadOf(v){
+  var lo = Infinity, hi = -Infinity, s = 0, i;
+  for (i = 0; i < v.length; i++){ if (v[i] < lo) lo = v[i]; if (v[i] > hi) hi = v[i]; s += v[i]; }
+  var m = s / v.length, q = 0;
+  for (i = 0; i < v.length; i++) q += (v[i] - m) * (v[i] - m);
+  return { mean: m, spread: hi - lo, std: Math.sqrt(q / v.length), n: v.length };
+}
+function noiseFloor(task, data, o){
+  o = o || {};
+  var cfg = { L: o.L || 8, d: o.d || 10, h: o.h || 12, place: "pre", rule: "one",
+              lr: o.lr || 0.02, steps: o.steps || 150, batch: 48, seed: 1 };
+  var seeds = o.seeds || [1, 2, 3, 4, 5], bySeed = [];
+  var nets = [];
+  for (var i = 0; i < seeds.length; i++){
+    var r = runConfig(task, Object.assign({}, cfg, { seed: seeds[i] }), data);
+    bySeed.push(r.excess);
+    nets.push(r.net);
+  }
+  // the SAME trained model, scored on independently drawn held-out inputs
+  var byData = [], N0 = nets[0];
+  for (i = 0; i < (o.draws || 8); i++){
+    var Ux = sampleInputs(task, data.Ute.length, 5000 + i);
+    var Px = trueProbs(task, Ux);
+    byData.push(excessOf(N0, Ux, Px, condEntropy(Px)));
+  }
+  return { seed: spreadOf(bySeed), data: spreadOf(byData), seeds: seeds };
+}
+
+// ---------------------------------------------------------------- in-page assertions
+function selfCheck(o){
+  var pass = 0, total = 0, lines = [];
+  function ok(c, msg){ total++; if (c) pass++; else lines.push("FAIL  " + msg); }
+  var task = o.task, data = o.data;
+
+  // ---- the task and its floor
+  {
+    var worst = 0;
+    for (var i = 0; i < data.Pte.length; i++){
+      var s = 0;
+      for (var c = 0; c < data.Pte[i].length; c++) s += data.Pte[i][c];
+      worst = Math.max(worst, Math.abs(s - 1));
+    }
+    ok(worst < 1e-12, "the true conditional does not normalise: " + worst);
+    ok(data.H > 0 && data.H < Math.log(task.K), "the conditional entropy is not inside (0, log K)");
+    var te = excessOf(task.net, data.Ute, data.Pte, data.H);
+    ok(Math.abs(te) < 1e-12, "the teacher's own excess is not zero: " + te);
+    var R = makeNet({ din: task.din, d: 8, h: 8, K: task.K, L: 3, place: "pre", seed: 9 });
+    ok(excessOf(R, data.Ute, data.Pte, data.H) > -1e-12, "an untrained model has negative excess");
+  }
+  // ---- layer norm on its own
+  {
+    var rng = mulberry32(4), x = vec(9, function(){ return 3 * gauss(rng) + 2; });
+    var g = vec(9, function(){ return 1; }), b = vec(9);
+    var r = lnFwd(x, g, b, 0);
+    var m = 0, v = 0, i;
+    for (i = 0; i < 9; i++) m += r.y[i];
+    m /= 9;
+    for (i = 0; i < 9; i++) v += (r.y[i] - m) * (r.y[i] - m);
+    v /= 9;
+    ok(Math.abs(m) < 1e-12, "layer norm output is not mean zero: " + m);
+    ok(Math.abs(v - 1) < 1e-12, "layer norm output is not unit variance: " + v);
+  }
+  // ---- the two forward passes, and the gradients
+  {
+    var N = makeNet({ din: task.din, d: 8, h: 10, K: task.K, L: 5, place: "pre", seed: 2 });
+    var U = data.Utr.slice(0, 24), Y = data.Ytr.slice(0, 24);
+    var d0 = 0;
+    for (var i2 = 0; i2 < U.length; i2++){
+      var za = fwd(N, U[i2], null), zb = fwdAlt(N, U[i2]);
+      for (var j = 0; j < za.length; j++) d0 = Math.max(d0, Math.abs(za[j] - zb[j]));
+    }
+    ok(d0 < 1e-12, "the two forward passes disagree: " + d0);
+    var places = ["pre", "post", "none"];
+    for (var p = 0; p < places.length; p++){
+      var M = makeNet({ din: task.din, d: 8, h: 10, K: task.K, L: 5, place: places[p], seed: 2 });
+      var gc = gradCheck(M, U, Y, { per: 10, h: 1e-5, seed: 3 });
+      ok(gc.worst < 1e-6, places[p] + " gradients disagree with central differences at init: " + gc.worst);
+      ok(gc.moved >= 4, places[p] + " gradient check touched too few live parameters");
+      trainNet(M, data.Utr, data.Ytr, { steps: 40, batch: 32, lr: 0.03, seed: 4 });
+      var gc2 = gradCheck(M, U, Y, { per: 10, h: 1e-5, seed: 6 });
+      ok(gc2.worst < 1e-6, places[p] + " gradients disagree after training: " + gc2.worst);
+    }
+    var Z = makeNet({ din: task.din, d: 6, h: 6, K: task.K, L: 3, place: "none", seed: 1 });
+    for (var c2 = 0; c2 < Z.K; c2++) for (var j2 = 0; j2 < Z.d; j2++) Z.Wout[j2][c2] = 0;
+    ok(Math.abs(nllAlt(Z, U, Y) - Math.log(task.K)) < 1e-12,
+       "a zero output layer does not cost exactly log K");
+  }
+  // ---- the zero-branch control: the identity path is exact, and the normaliser is not per-block
+  {
+    var idn = identityStudy({ task: task, U: data.Utr, Y: data.Ytr, depths: [8, 32], d: 10, h: 12, seed: 3 });
+    var shal = idn[0], deep = idn[1];
+    for (var q = 0; q < shal.cells.length; q++){
+      var cs = shal.cells[q], cd = deep.cells[q];
+      if (cs.place !== "post"){
+        ok(cs.zeroDev === 0, cs.place + " with zero branches does not have a gradient ratio of " +
+           "exactly 1: " + cs.zeroDev);
+        ok(cd.zeroDev === 0, cd.place + " at depth 32 with zero branches is not exactly 1");
+      } else {
+        // the layer-norm Jacobian is 1/sigma times an ORTHOGONAL PROJECTOR, and a projector is
+        // idempotent: once the stream stops moving, every interior block does nothing but round.
+        // The residue is a few ulps of the gradient itself, not a decay, so the bound is relative
+        // and sits at the rounding floor -- an actual geometric decay would be orders above it.
+        ok(cd.midDev < 1e-13,
+           "post-LN's interior blocks move the gradient above the rounding floor: " + cd.midDev);
+        ok(cs.midDev < 1e-13, "post-LN at depth 8 moves the gradient in its interior");
+        ok(cd.first < 0.99, "the one interior projection did not fire at all: " + cd.first);
+        ok(Math.abs(cd.zero - cs.zero) < 0.3,
+           "post-LN's zero-branch ratio is strongly depth-dependent, which a projector forbids: " +
+           cs.zero + " vs " + cd.zero);
+        ok(cd.real !== cd.zero,
+           "real branches did not change post-LN's gradient flow at all");
+      }
+    }
+    // what is actually true at depth: the residual path DELIVERS MORE, it does not vanish
+    ok(deep.cells[0].real > 1,
+       "pre-LN at depth 32 attenuates the gradient towards the input, which it must not: " +
+       deep.cells[0].real);
+    ok(deep.cells[0].real > deep.cells[1].real,
+       "post-LN does not deliver less gradient to block 0 than pre-LN at depth 32");
+    ok(deep.cells[0].realPer > deep.cells[1].realPer,
+       "the per-block gradient factor does not favour pre-LN");
+  }
+  // ---- the growth law, and the exact decomposition it rests on
+  {
+    var gs = growthStudy({ task: task, U: data.Utr, L: 24, d: 10, h: 12, seeds: 4, n: 200 });
+    var preOne = gs.rows[0], preSc = gs.rows[1], postOne = gs.rows[2], noneOne = gs.rows[4];
+    ok(preOne.exact < 1e-12,
+       "the residual power decomposition is not exact: " + preOne.exact);
+    ok(noneOne.exact < 1e-12, "the decomposition fails without a normaliser");
+    ok(preOne.gain > 3, "24 pre-LN blocks did not grow the stream at all: " + preOne.gain);
+    // the accumulated-branch-power prediction drops exactly one term, so its error IS the cross
+    // term -- an identity, not a tolerance, and worth more than any threshold on the error itself
+    ok(Math.abs(preOne.errMeas - Math.abs(preOne.crossTerm) / preOne.pL) < 1e-12,
+       "the accumulated-branch prediction's error is not exactly the dropped cross term: " +
+       preOne.errMeas + " vs " + Math.abs(preOne.crossTerm) / preOne.pL);
+    ok(Math.abs((preOne.branchTerm + preOne.crossTerm) - preOne.growth) < 1e-12 * preOne.pL,
+       "the per-block decomposition does not telescope to the measured growth");
+    ok(preOne.errMeas < 0.25,
+       "the accumulated-branch-power prediction is off by more than 25%: " + preOne.errMeas);
+    // pre-LN pins the branch power; without a normaliser tanh saturates on a growing input
+    ok(Math.abs(preOne.bpDrift - 1) < 0.15,
+       "pre-LN did not pin the branch power across depth: " + preOne.bpDrift);
+    ok(noneOne.bpDrift > 1.5,
+       "without a normaliser the branch power did not drift, so the sqrt(L) law should have held");
+    // the right comparison is not between two placements' errors -- it is what feeding each law
+    // the branch power it ACTUALLY had is worth. Under pre-LN the power did not drift and it buys
+    // nothing; without a normaliser it drifted 2.4x and it buys an order of magnitude.
+    ok(noneOne.errConst / noneOne.errMeas > 5,
+       "measuring the branch power did not rescue the law without a normaliser: " +
+       noneOne.errConst / noneOne.errMeas);
+    ok(preOne.errConst / preOne.errMeas < 2,
+       "pre-LN's constant-branch law is much worse than its measured-branch law, so the " +
+       "normaliser did not pin the branch power after all: " + preOne.errConst / preOne.errMeas);
+    // the cross term is FIRST order in alpha and the branch term is SECOND order, so its SHARE
+    // grows as alpha shrinks. The share is signed -- compare magnitudes, not signed values.
+    ok(Math.abs(preSc.crossOverBranch) > 2 * Math.abs(preOne.crossOverBranch),
+       "shrinking alpha did not raise the cross term's share, so the order argument is unsupported");
+    ok(Math.abs(postOne.pL - postOne.p0) / postOne.p0 < 0.35,
+       "post-LN accumulated stream power, which it must not");
+    ok(Math.abs(gs.scaledRatio - 1) < 0.35,
+       "alpha = 1/sqrt(L) did not make the stream gain depth-independent: " + gs.scaledRatio);
+    ok(gs.plainRatio > 2.5 * Math.abs(gs.scaledRatio),
+       "the unscaled residual is not markedly more depth-dependent than the scaled one");
+  }
+  // ---- the two parameterisations
+  {
+    var ss = scaleStudy({ task: task, U: data.Utr, Y: data.Ytr, d: 10, h: 12, L: 1, seed: 3 });
+    ok(ss.worstAgree < 1e-13,
+       "alpha scaling and init scaling are not the same function at init: " + ss.worstAgree);
+    // powers of two are exact in binary floating point and say nothing about portability
+    ok(ss.worstPow2 === 0, "a power-of-two rescale did not agree bit for bit: " + ss.worstPow2);
+    ok(ss.worstOther > 0 && ss.worstOther < 1e-13,
+       "a non-power-of-two rescale did not land in the rounding band: " + ss.worstOther);
+    ok(Math.abs(ss.sgdExp - 2) < 0.02, "the SGD exponent is not 2: " + ss.sgdExp);
+    ok(Math.abs(ss.adamExp - 1) < 0.02, "the Adam exponent is not 1: " + ss.adamExp);
+    ok(ss.sgdRms < 1e-3 && ss.adamRms < 1e-3, "the exponent fits have a large residual");
+    ok(Math.abs(ss.sgdExp - ss.adamExp) > 0.9,
+       "the two optimisers give the same exponent, so the page has no result here");
+  }
+  // ---- the diagnostic, as a ranker
+  {
+    var rk = o.ranker;
+    if (rk){
+      var grad = rk.scored[0], probe = rk.scored[7], free = rk.scored[5], depth = rk.scored[4];
+      for (var r2 = 0; r2 < rk.scored.length; r2++)
+        ok(rk.scored[r2].auc >= 0 && rk.scored[r2].auc <= 1, "an AUC left [0,1]");
+      ok(probe.auc > grad.auc + 0.05,
+         "ten steps of training no longer beats the init-time gradient ratio");
+      ok(free.auc > grad.auc,
+         "a closed-form expression needing no data no longer beats the gradient ratio: " +
+         free.auc + " vs " + grad.auc);
+      ok(rk.withinAuc > grad.auc,
+         "the gradient ratio is not better inside one placement-and-rate cell than across the pool");
+      ok(rk.failed > 0, "nothing in the pool failed, so there is nothing for a diagnostic to predict");
+      ok(depth.auc < 0.5, "'deeper is better' is no longer worse than a coin on this pool");
+    }
+  }
+  // ---- determinism
+  {
+    var A = makeNet({ din: task.din, d: 8, h: 8, K: task.K, L: 4, place: "pre", seed: 7 });
+    var B = makeNet({ din: task.din, d: 8, h: 8, K: task.K, L: 4, place: "pre", seed: 7 });
+    ok(A.Win[0][0] === B.Win[0][0] && A.B[2].W2[1][1] === B.B[2].W2[1][1],
+       "the same seed gave different weights");
+    var Ua = data.Utr.slice(0, 16), Ya = data.Ytr.slice(0, 16);
+    ok(nllAlt(A, Ua, Ya) === nllAlt(B, Ua, Ya), "the loss is not deterministic");
+    // the placements share weights bit for bit
+    var P1 = makeNet({ din: task.din, d: 8, h: 8, K: task.K, L: 4, place: "post", seed: 7 });
+    ok(A.B[1].W1[0][0] === P1.B[1].W1[0][0],
+       "two placements at the same seed do not share their weight matrices");
+  }
+  // ---- parameter counting
+  {
+    var N2 = makeNet({ din: task.din, d: 7, h: 9, K: task.K, L: 5, place: "pre", seed: 1 });
+    var rows = flatViews(tensorList(N2)), tot = 0;
+    for (var i3 = 0; i3 < rows.length; i3++) tot += rows[i3].length;
+    ok(tot === countParams(N2), "the flattened view does not agree with the parameter count: " +
+       tot + " vs " + countParams(N2));
+  }
+  return { pass: pass, total: total, lines: lines };
+}
+// ===== ENGINE:END =====
+
+// ---------------------------------------------------------------- UI
+var $ = function(id){ return document.getElementById(id); };
+var f1 = function(x){ return x.toFixed(1); };
+var f2 = function(x){ return x.toFixed(2); };
+var f3 = function(x){ return x.toFixed(3); };
+var f4 = function(x){ return x.toFixed(4); };
+var eng = function(x){ return x === 0 ? "0.0e+0" : x.toExponential(1); };
+var eng2 = function(x){ return x === 0 ? "0.0e+0" : x.toExponential(2); };
+var pct1 = function(x){ return (100 * x).toFixed(1) + "%"; };
+var cls = function(good){ return good ? "ok" : "bad"; };
+var big = function(x){ return isFinite(x) ? f4(x) : "<span class='bad'>diverged</span>"; };
+var COL = ["#0f172a", "#2563eb", "#7c3aed", "#be123c", "#0d9488", "#b45309"];
+
+var TASK = makeTask({});
+var DATA = (function(){
+  var Utr = sampleInputs(TASK, 1200, 21), Ptr = trueProbs(TASK, Utr);
+  var Ytr = sampleLabels(Ptr, 22);
+  var Ute = sampleInputs(TASK, 800, 31), Pte = trueProbs(TASK, Ute);
+  return { Utr: Utr, Ytr: Ytr, Ptr: Ptr, Ute: Ute, Pte: Pte, H: condEntropy(Pte) };
+})();
+var CACHE = {}, RANK = null;
+
+function opts(){
+  return { L: +$("sL").value, d: +$("sD").value, h: +$("sH").value,
+           steps: +$("sS").value, lr: +$("sR").value / 1000, seed: +$("sE").value };
+}
+function showOpts(){
+  var o = opts();
+  $("vL").textContent = o.L; $("vD").textContent = o.d; $("vH").textContent = o.h;
+  $("vS").textContent = o.steps; $("vR").textContent = o.lr.toFixed(3); $("vE").textContent = o.seed;
+}
+
+// ---------------------------------------------------------------- the growth chart
+function growSVG(gs){
+  var W = 470, H = 250, mL = 44, mR = 8, mT = 12, mB = 30, L = gs.L;
+  var lo = Infinity, hi = -Infinity;
+  gs.rows.forEach(function(r){ r.pw.forEach(function(p){
+    var v = Math.log(Math.max(1e-12, p)) / Math.LN10;
+    if (v < lo) lo = v; if (v > hi) hi = v; }); });
+  if (hi - lo < 0.5){ hi += 0.25; lo -= 0.25; }
+  var xOf = function(l){ return mL + (W - mL - mR) * l / L; };
+  var yOf = function(v){ return mT + (H - mT - mB) * (1 - (v - lo) / (hi - lo)); };
+  var out = ['<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="stream power against block index">'];
+  for (var t = 0; t <= 4; t++){
+    var v = lo + (hi - lo) * t / 4;
+    out.push('<line x1="' + mL + '" y1="' + yOf(v) + '" x2="' + (W - mR) + '" y2="' + yOf(v) +
+             '" stroke="#e2e8f0"/>');
+    out.push('<text x="' + (mL - 6) + '" y="' + (yOf(v) + 3.5) + '" font-size="9" fill="#64748b" ' +
+             'text-anchor="end">' + v.toFixed(1) + '</text>');
+  }
+  out.push('<text x="' + mL + '" y="' + (H - 8) + '" font-size="9.5" fill="#64748b">block 0</text>');
+  out.push('<text x="' + (W - mR) + '" y="' + (H - 8) + '" font-size="9.5" fill="#64748b" ' +
+           'text-anchor="end">block ' + L + '</text>');
+  gs.rows.forEach(function(r, k){
+    var pts = r.pw.map(function(p, l){
+      return xOf(l) + "," + yOf(Math.log(Math.max(1e-12, p)) / Math.LN10);
+    }).join(" ");
+    out.push('<polyline points="' + pts + '" fill="none" stroke="' + COL[k % COL.length] +
+             '" stroke-width="' + (r.rule === "one" ? 2 : 1.4) + '"' +
+             (r.rule === "one" ? "" : ' stroke-dasharray="4 3"') + '/>');
+    out.push('<text x="' + (xOf(L) - 4) + '" y="' +
+             (yOf(Math.log(Math.max(1e-12, r.pw[L])) / Math.LN10) - 4) + '" font-size="9" ' +
+             'fill="' + COL[k % COL.length] + '" text-anchor="end">' + r.place + " &#945;=" +
+             (r.rule === "one" ? "1" : "1/&#8730;L") + '</text>');
+  });
+  out.push('</svg>');
+  return out.join("");
+}
+function rankSVG(scored, withinAuc){
+  var W = 470, rowH = 26, H = 22 + rowH * (scored.length + 1), mL = 8, mR = 8;
+  var x0 = mL + 200, x1 = W - mR - 40;
+  var xOf = function(a){ return x0 + (x1 - x0) * Math.max(0, Math.min(1, a)); };
+  var out = ['<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="AUC of each candidate">'];
+  out.push('<line x1="' + xOf(0.5) + '" y1="14" x2="' + xOf(0.5) + '" y2="' + (H - 14) +
+           '" stroke="#94a3b8" stroke-dasharray="3 3"/>');
+  out.push('<text x="' + xOf(0.5) + '" y="10" font-size="9" fill="#64748b" text-anchor="middle">a coin</text>');
+  var all = scored.concat([{ name: "the same, within one cell", auc: withinAuc, within: true }]);
+  all.forEach(function(s, i){
+    var y = 20 + rowH * i + 10;
+    var lab = s.name.replace(/<[^>]*>/g, "").replace(/&#?\w+;/g, "").slice(0, 34);
+    out.push('<text x="' + mL + '" y="' + (y + 3.5) + '" font-size="9.5" fill="#334155">' + lab + '</text>');
+    var c = s.within ? "#0d9488" : (s.auc >= 0.5 ? "#2563eb" : "#b91c1c");
+    var a = xOf(Math.min(0.5, s.auc)), b = xOf(Math.max(0.5, s.auc));
+    out.push('<rect x="' + a + '" y="' + (y - 6) + '" width="' + Math.max(1, b - a) +
+             '" height="12" fill="' + c + '" opacity="0.85"/>');
+    out.push('<text x="' + (x1 + 4) + '" y="' + (y + 3.5) + '" font-size="9.5" fill="' + c +
+             '" font-weight="700">' + s.auc.toFixed(3) + '</text>');
+  });
+  out.push('</svg>');
+  return out.join("");
+}
+
+// ---------------------------------------------------------------- the fast half
+function renderFast(){
+  var o = opts();
+  showOpts();
+  $("ent").textContent = f4(DATA.H);
+  $("kk").textContent = TASK.K;
+
+  var idn = identityStudy({ task: TASK, U: DATA.Utr, Y: DATA.Ytr,
+                            depths: [8, 16, Math.max(32, o.L)], d: o.d, h: o.h, seed: o.seed });
+  $("ident").innerHTML = idn.map(function(r){
+    var cells = r.cells.map(function(c){
+      var exact = c.zeroDev === 0;
+      return "<td class='" + (exact ? "ok" : "") + "'>" +
+        (exact ? "1 <span class='lg'>&plusmn;" + eng(c.zeroDev) + "</span>" : f3(c.zero)) +
+        "</td><td>" + f3(c.real) + "</td><td>" + f4(c.realPer) + "</td>";
+    }).join("");
+    return "<tr" + (r.L >= 32 ? ' class="hl"' : "") + "><td>" + r.L + "</td>" + cells + "</tr>";
+  }).join("");
+  var dp = idn[idn.length - 1], cPre = dp.cells[0], cPost = dp.cells[1];
+  $("identNote").innerHTML =
+    "Two things, and neither is the one the folklore leads you to expect. First, with the " +
+    "branches deleted, Pre-LN and the bare residual hand block 0 <strong class='ok'>exactly what " +
+    "arrived at the top</strong> &mdash; the deviation from 1 is <strong>0.0e+0</strong>, not a " +
+    "small number, because the backward pass is copying the same array down the stack. Post-LN " +
+    "does <em>not</em> then decay geometrically: its interior blocks change the gradient by " +
+    "<strong>" + eng(cPost.midDev) + "</strong> over " + cPost.midBlocks + " of them. A layer norm's " +
+    "Jacobian is 1/&#963; times an <em>orthogonal projector</em>, and a projector is idempotent " +
+    "&mdash; once the stream has stopped moving, applying it again does literally nothing. The " +
+    "attenuation fires once (&times;" + f3(cPost.first) + " at the top block) and never again. " +
+    "Second, and more useful: with the branches back, nothing vanishes anywhere. At L = " + dp.L +
+    " the gradient reaching block 0 is <strong>" + f2(cPre.real) + "&times;</strong> the one at " +
+    "the top under Pre-LN and <strong>" + f2(cPost.real) + "&times;</strong> under Post-LN " +
+    "&mdash; both larger than 1, because every block's branch <em>adds</em> to the stream " +
+    "gradient on the way down. Post-LN's disadvantage is real and it is relative: " +
+    "<strong>" + f4(cPre.realPer) + "</strong> per block against <strong>" + f4(cPost.realPer) +
+    "</strong>, worth <strong>" + f1(cPre.real / cPost.real) + "&times;</strong> over the stack. " +
+    "The diagnostic on the next-but-one card is looking for a vanishing gradient in a place that " +
+    "does not have one.";
+
+  var gs = growthStudy({ task: TASK, U: DATA.Utr, L: o.L, d: o.d, h: o.h, seeds: 5, n: 250 });
+  CACHE.gs = gs;
+  $("grow").innerHTML = gs.rows.map(function(r){
+    var post = r.place === "post";
+    return "<tr" + (r.place === "pre" && r.rule === "one" ? ' class="hl"' : "") + "><td>" +
+      r.place + ", &#945; = " + ruleLabel(r.rule) + " <span class='lg'>" + f3(r.alpha) +
+      "</span></td><td>" + f2(r.gain) + "&times;</td><td>" +
+      (post ? "&mdash;" : f2(r.predConst / r.p0) + "&times;") + "</td><td class='" +
+      (post ? "" : (r.errConst < 0.15 ? "ok" : "bad")) + "'>" + (post ? "&mdash;" : pct1(r.errConst)) +
+      "</td><td>" + (post ? "&mdash;" : f2(r.predMeas / r.p0) + "&times;") + "</td><td class='" +
+      (post ? "" : (r.errMeas < 0.15 ? "ok" : "bad")) + "'>" + (post ? "&mdash;" : pct1(r.errMeas)) +
+      "</td><td>" + (post ? "&mdash;" : pct1(r.crossOverBranch)) + "</td><td>" +
+      (post ? "&mdash;" : f2(r.bpDrift) + "&times;") + "</td></tr>";
+  }).join("");
+  var pre1 = gs.rows[0], pre2 = gs.rows[1], non1 = gs.rows[4];
+  $("growNote").innerHTML =
+    "The decomposition itself is exact to <strong>" + eng(pre1.exact) +
+    "</strong>, so everything here is about which of its terms you are allowed to ignore. With " +
+    "Pre-LN the branch power is pinned by the normaliser &mdash; it drifts <strong>" +
+    f2(pre1.bpDrift) + "&times;</strong> over " + gs.L + " blocks &mdash; and the &radic;L law " +
+    "lands within <strong>" + pct1(pre1.errConst) + "</strong>. Remove the normaliser and the " +
+    "branch input grows, tanh saturates, the branch power drifts <strong>" + f2(non1.bpDrift) +
+    "&times;</strong>, and the same law understates the growth by <strong class='bad'>" +
+    pct1(non1.errConst) + "</strong> &mdash; feed it the branch power it actually had and the " +
+    "error falls to " + pct1(non1.errMeas) + ". The cross term does not vanish and does not " +
+    "average away over " + gs.seeds + " initialisations: it is <strong>" +
+    pct1(pre1.crossOverBranch) + "</strong> of the branch term at &#945; = 1 and <strong>" +
+    pct1(pre2.crossOverBranch) + "</strong> at &#945; = 1/&#8730;L, because it is " +
+    "<em>first</em> order in &#945; while the branch term is <em>second</em> &mdash; predicted " +
+    "ratio 1/&#945; = " + f2(1 / pre2.alpha) + "&times;, measured <strong>" +
+    f2(Math.abs(pre2.crossOverBranch / pre1.crossOverBranch)) + "&times;</strong> (the direction " +
+    "is right and the size is not, because the branch power moves too). Making the residual " +
+    "smaller makes the &radic;L law describe it <em>less</em> well, not more. What &#945; does " +
+    "buy: at &#945; = 1 the stream gain is <strong>" + f2(gs.plainDeep) + "&times;</strong> at " +
+    "L = " + gs.hi + " against <strong>" + f2(gs.plainShallow) + "&times;</strong> at L = " +
+    gs.lo + ", a depth dependence of <strong>" + f2(gs.plainRatio) + "&times;</strong>; at " +
+    "&#945; = 1/&#8730;L the same two depths give <strong>" + f2(gs.scaledDeep) +
+    "&times;</strong> and <strong>" + f2(gs.scaledShallow) + "&times;</strong>, a dependence of " +
+    "<strong class='ok'>" + f2(gs.scaledRatio) + "&times;</strong>.";
+  $("growSVG").innerHTML = growSVG(gs);
+
+  var ss = scaleStudy({ task: TASK, U: DATA.Utr, Y: DATA.Ytr, d: o.d, h: o.h, L: 1, seed: o.seed });
+  CACHE.ss = ss;
+  $("scale").innerHTML = ss.rows.map(function(r){
+    return "<tr" + (r.c === 0.125 ? ' class="hl"' : "") + "><td>" + r.c +
+      (r.pow2 ? " <span class='lg'>a power of 2</span>" : "") + "</td><td class='ok'>" +
+      eng(r.agree) + "</td><td>" + f4(r.sgd) + "</td><td>" + f4(r.c2) + "</td><td>" +
+      f4(r.adam) + "</td><td>" + f4(r.c) + "</td></tr>";
+  }).join("");
+  $("scaleNote").innerHTML =
+    "The two parameterisations are the same function at initialisation. The powers of two agree " +
+    "<strong>bit for bit</strong> &mdash; <strong>0.0e+0</strong>, because scaling by a power of " +
+    "two is exact in binary floating point, which is a fact about the constants and not about " +
+    "the claim &mdash; and the values that are not powers of two agree to <strong>" +
+    eng(ss.worstOther) + "</strong>, which is summation order. Quote the second number as a " +
+    "bound: engines round differently and the first number is a coincidence of the grid. " +
+    "They are not the same <em>experiment</em>. Fitting log(ratio) against log(c) through the " +
+    "origin gives an exponent of <strong>" + f4(ss.sgdExp) + "</strong> under SGD (residual " +
+    eng(ss.sgdRms) + ") and <strong>" + f4(ss.adamExp) + "</strong> under Adam (residual " +
+    eng(ss.adamRms) + ", which is the &#949; in g/(|g|+&#949;)). Adam's update is scale " +
+    "invariant &mdash; its first step is exactly &minus;lr&#183;g/(|g|+&#949;), which does not " +
+    "care that g was multiplied by &#945; &mdash; so <strong class='bad'>shrinking the " +
+    "initialisation does not shrink the update at all</strong>, while an explicit &#945; shrinks " +
+    "it by c. At c = 1/8 the two move the function by <strong>" + f1(1 / ss.rows[0].adam) +
+    "&times;</strong> different amounts under Adam and <strong>" + f1(1 / ss.rows[0].sgd) +
+    "&times;</strong> under SGD, from the same starting function.";
+}
+
+// ---------------------------------------------------------------- the slow half
+function renderSlow(){
+  var o = opts();
+  var key = [o.L, o.d, o.h, o.steps, o.lr, o.seed].join("/");
+  if (!CACHE[key]) CACHE[key] = depthStudy(TASK, DATA, { Lmax: o.L, d: o.d, h: o.h,
+                                                         steps: o.steps, lr: o.lr, seed: o.seed });
+  var st = CACHE[key];
+  var best = st.best;
+  $("main").innerHTML = st.rows.map(function(r){
+    var lab = r.cfg.place + (r.cfg.rule === "one" ? "" : ", &#945; = 1/&#8730;L");
+    return "<tr" + (r === best ? ' class="hl"' : "") + "><td>" + lab + "</td><td>" + r.cfg.L +
+      "</td><td>" + r.params.toLocaleString("en-US") + "</td><td>" + f3(r.alpha) + "</td><td>" +
+      f3(r.gratio) + "</td><td>" + f2(r.growth) + "&times;</td><td>" + big(r.ex10) + "</td><td>" +
+      (isFinite(r.trainLoss) ? f4(r.trainLoss) : "&mdash;") + "</td><td class='" +
+      (r === best ? "ok" : (r.diverged ? "bad" : "")) + "'>" + big(r.excess) + "</td></tr>";
+  }).join("");
+
+  var nf = CACHE["nf/" + key];
+  if (!nf) nf = CACHE["nf/" + key] = noiseFloor(TASK, DATA, { L: 8, d: o.d, h: o.h,
+                                                              steps: Math.min(180, o.steps), lr: o.lr });
+  $("floor").innerHTML =
+    "<tr><td>training seed <span class='lg'>weights + minibatch order</span></td><td>" +
+      f4(nf.seed.mean) + "</td><td class='bad'>" + f4(nf.seed.spread) + "</td><td>" +
+      f4(nf.seed.std) + "</td><td>" + nf.seed.n + "</td></tr>" +
+    "<tr class='hl'><td>held-out input sample <span class='lg'>one fixed trained model</span></td><td>" +
+      f4(nf.data.mean) + "</td><td class='ok'>" + f4(nf.data.spread) + "</td><td>" +
+      f4(nf.data.std) + "</td><td>" + nf.data.n + "</td></tr>";
+  $("floorNote").innerHTML =
+    "Re-running one configuration under " + nf.seed.n + " seeds moves its excess by <strong>" +
+    f4(nf.seed.spread) + "</strong>, so <strong>two rows in the table above that are closer " +
+    "than that are one row</strong> and must not be ranked. Re-drawing the held-out inputs for " +
+    "a single fixed model moves the estimate by only <strong>" + f4(nf.data.spread) +
+    "</strong> &mdash; " + f1(nf.seed.spread / Math.max(1e-9, nf.data.spread)) +
+    "&times; smaller &mdash; because the label noise has been removed by evaluating an exact " +
+    "expectation rather than a sample. Almost all of the uncertainty in a comparison like this " +
+    "one is the training run, not the test set.";
+
+  var deepPre = null, deepPost = null;
+  for (var i = 0; i < st.rows.length; i++){
+    var r = st.rows[i];
+    if (r.cfg.L === o.L && r.cfg.rule === "one"){
+      if (r.cfg.place === "pre") deepPre = r;
+      if (r.cfg.place === "post") deepPost = r;
+    }
+  }
+  var ck = CACHE["cf/" + key];
+  if (!ck) ck = CACHE["cf/" + key] = alphaConfirm(TASK, DATA, { L: o.L, d: o.d, h: o.h,
+                                                                steps: Math.min(150, o.steps),
+                                                                lr: o.lr, seeds: [1, 2, 3, 4] });
+  $("conf").innerHTML = ck.map(function(r){
+    return "<tr" + (r.real ? ' class="hl"' : "") + "><td>" + r.place + "</td><td>" +
+      big(r.one.mean) + "</td><td>" + big(r.one.spread) + "</td><td>" + big(r.scaled.mean) +
+      "</td><td>" + big(r.scaled.spread) + "</td><td class='" + (r.gain > 0 ? "ok" : "bad") +
+      "'>" + (r.gain > 0 ? "&minus;" : "+") + f4(Math.abs(r.gain)) + " <span class='lg'>" +
+      f2(r.ratio) + "&times;</span></td><td class='" + (r.real ? "ok" : "bad") + "'>" +
+      (r.real ? "yes" : "no") + "</td></tr>";
+  }).join("");
+  var realN = 0;
+  for (i = 0; i < ck.length; i++) if (ck[i].real) realN++;
+  $("confNote").innerHTML =
+    "<strong>" + realN + " of " + ck.length + "</strong> placements show an improvement from " +
+    "&#945; = 1/&#8730;L that is larger than the seed-to-seed spread of the runs it is measured " +
+    "from. " + (ck[1].real ? "Post-LN is the one that survives, at <strong class='ok'>" +
+      f2(ck[1].ratio) + "&times;</strong> &mdash; which is the arrangement whose forward pass " +
+      "the normaliser was already holding fixed, so the gain is not about the stream's scale. " :
+      "") +
+    "The rest are inside the noise and this page is not entitled to rank them, which is the " +
+    "difference between a table and a result.";
+
+  var nDiv = 0;
+  for (i = 0; i < st.rows.length; i++) if (st.rows[i].diverged) nDiv++;
+  $("mainNote").innerHTML =
+    "Best on the grid: <strong class='ok'>" + best.cfg.place +
+    (best.cfg.rule === "one" ? "" : " with &#945; = 1/&#8730;L") + " at L = " + best.cfg.L +
+    "</strong>, excess <strong>" + f4(best.excess) + "</strong> against a floor of 0. " +
+    (nDiv ? "<strong class='bad'>" + nDiv + " of " + st.rows.length + "</strong> configurations " +
+      "stopped producing a finite loss and are ranked last rather than dropped &mdash; dropping " +
+      "them would delete exactly the failures an init-time diagnostic is supposed to predict. "
+      : "Nothing diverged at this learning rate; raise it and things start to. ") +
+    (deepPre && deepPost && isFinite(deepPre.excess) ?
+      "At L = " + o.L + " with &#945; = 1, Pre-LN reaches <strong>" + f4(deepPre.excess) +
+      "</strong> and Post-LN " + big(deepPost.excess) + ", with init-time gradient ratios of " +
+      f3(deepPre.gratio) + " and " + f3(deepPost.gratio) + " respectively. " : "") +
+    "Note what the gradient-ratio column does <em>not</em> do: read down it and it does not sort " +
+    "the last column. That is the next card.";
+}
+
+// ---------------------------------------------------------------- assertions
+function runChecks(){
+  var c = selfCheck({ task: TASK, data: DATA, ranker: RANK });
+  $("checks").textContent =
+    "selfCheck()  " + c.pass + " / " + c.total + " checks passed" +
+    (c.lines.length ? "\n" + c.lines.join("\n") :
+     "\n\nthe true conditional normalises and the teacher's own excess is exactly zero while no\n" +
+     "other model's is negative; layer norm returns mean 0 and unit variance; the two forward\n" +
+     "passes agree to 1e-12 and every gradient matches central differences taken on the second\n" +
+     "one, in all three placements, at initialisation and after training; a zero output layer\n" +
+     "costs exactly log K; with the branches deleted the pre-LN and bare-residual gradient\n" +
+     "ratios are exactly 1 -- deviation 0.0e+0, not a tolerance -- while post-LN's is not 1 and\n" +
+     "its interior blocks leave the gradient unchanged to the rounding floor, because a layer\n" +
+     "norm's Jacobian is an idempotent projector; the per-block power decomposition telescopes\n" +
+     "and the dropped cross term IS the accumulated law's error; alpha = 1/sqrt(L) makes the\n" +
+     "stream gain depth-independent\n" +
+     "and alpha = 1 does not; the two ways of scaling a residual are the same function at init\n" +
+     "and move the function with exponents 2 (SGD) and 1 (Adam); ten steps of training rank the\n" +
+     "pool better than any init-time diagnostic, the gradient ratio ranks better inside one\n" +
+     "placement-and-rate cell than across the pool, and some of the pool diverges; the same seed\n" +
+     "reproduces the same weights and three placements share theirs bit for bit." +
+     (RANK ? "" : "\n\n(the ranker assertions run once the pool has been trained)"));
+}
+
+// ---------------------------------------------------------------- wiring
+$("runRank").addEventListener("click", function(){
+  var btn = this;
+  btn.disabled = true;
+  var o = opts();
+  $("rankStatus").textContent = "training the pool…";
+  var t0 = Date.now();
+  setTimeout(function(){
+    var rk = rankerStudy(TASK, DATA, { d: 8, h: 8, steps: 80, batch: 24, nev: 400,
+                                       depths: [2, 4, 8, 16, 24], lrs: [0.01, 0.06, 0.30],
+                                       seeds: [1] });
+    RANK = rk;
+    $("rank").innerHTML = rk.scored.map(function(s, i){
+      var good = s.auc > 0.5;
+      return "<tr" + (i === rk.scored.length - 1 ? ' class="hl"' : "") + "><td>" + s.name +
+        "</td><td>" + s.train + "</td><td class='" + cls(good) + "'>" + f3(s.auc) +
+        "</td><td class='" + cls(good) + "'>" + (s.auc >= 0.5 ? "+" : "&minus;") +
+        f3(Math.abs(s.auc - 0.5)) + "</td><td>" + s.pairs.toLocaleString("en-US") + "</td></tr>";
+    }).join("") +
+      "<tr class='hl'><td>the gradient ratio, <em>within</em> one placement and rate " +
+      "<span class='lg'>the control</span></td><td>no</td><td class='" +
+      cls(rk.withinAuc > 0.5) + "'>" + f3(rk.withinAuc) + "</td><td class='" +
+      cls(rk.withinAuc > 0.5) + "'>" + (rk.withinAuc >= 0.5 ? "+" : "&minus;") +
+      f3(Math.abs(rk.withinAuc - 0.5)) + "</td><td>" +
+      rk.withinPairs.toLocaleString("en-US") + "</td></tr>";
+    $("rankSVG").innerHTML = rankSVG(rk.scored, rk.withinAuc);
+    var grad = rk.scored[0], probe = rk.scored[7], free = rk.scored[5], tl = rk.scored[6];
+    $("rankNote").innerHTML =
+      "Over <strong>" + rk.n + "</strong> trained configurations, <strong>" + rk.failed +
+      "</strong> of which failed outright, the init-time gradient ratio ranks quality at <strong class='" +
+      cls(grad.auc > 0.5) + "'>" + f3(grad.auc) + "</strong> against a coin's 0.500. Ten steps of " +
+      "training &mdash; 10 of the " + rk.res[0].cfg.steps + " each of them was given &mdash; " +
+      "ranks it at <strong class='ok'>" +
+      f3(probe.auc) + "</strong>, and the training loss you were going to watch anyway at " +
+      "<strong>" + f3(tl.auc) + "</strong>. The closed-form &#945;&#8730;L, which needs no data, " +
+      "no forward pass and no training, scores <strong>" + f3(free.auc) + "</strong>. " +
+      "And the control is the honest half of the result: hold the placement and the learning " +
+      "rate fixed &mdash; give the diagnostic only the comparisons it can actually see &mdash; " +
+      "and the same number scores <strong class='" + cls(rk.withinAuc > 0.5) + "'>" +
+      f3(rk.withinAuc) + "</strong> over " + rk.withinPairs.toLocaleString("en-US") +
+      " pairs. The gradient ratio is not broken. It is being asked to arbitrate a comparison it " +
+      "has no information about.";
+    $("rankStatus").textContent = "done in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    btn.disabled = false;
+    runChecks();
+  }, 30);
+});
+
+["sL", "sD", "sH", "sS", "sR", "sE"].forEach(function(id){
+  $(id).addEventListener("input", function(){
+    showOpts();
+    $("mainStatus").textContent = "release to recompute";
+  });
+  $(id).addEventListener("change", function(){
+    renderFast();
+    $("mainStatus").textContent = "training the grid…";
+    setTimeout(function(){
+      var t0 = Date.now();
+      renderSlow();
+      $("mainStatus").textContent = "trained in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    }, 30);
+  });
+});
+
+var tabs = $("tabs").querySelectorAll("button");
+for (var ti = 0; ti < tabs.length; ti++){
+  tabs[ti].addEventListener("click", function(){
+    var name = this.getAttribute("data-tab");
+    for (var k = 0; k < tabs.length; k++) tabs[k].className = tabs[k] === this ? "tab-active" : "";
+    ["look", "understand", "build"].forEach(function(s){
+      $(s).className = (s === "look" ? "panel" : "panel light") + (s === name ? "" : " hidden");
+    });
+    window.scrollTo(0, 0);
+  });
+}
+
+renderFast();
+$("mainStatus").textContent = "training the grid…";
+setTimeout(function(){
+  var t0 = Date.now();
+  renderSlow();
+  $("mainStatus").textContent = "trained in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+}, 30);
+setTimeout(runChecks, 60);
+</script>
+</body>
+</html>
