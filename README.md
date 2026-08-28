@@ -74,6 +74,7 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 70 — Confidence calibration & temperature scaling](https://dev48.infy.uk/dl/day70-calibration-temperature-scaling.html) — `day70-calibration-temperature-scaling.html`
 - [DeepLearningFromZero · Day 71 — Tokenisation & the loss you report](https://dev48.infy.uk/dl/day71-tokenisation-and-the-loss-you-report.html) — `day71-tokenisation-and-the-loss-you-report.html`
 - [DeepLearningFromZero · Day 72 — Residual scaling & depth stability](https://dev48.infy.uk/dl/day72-residual-scaling-and-depth-stability.html) — `day72-residual-scaling-and-depth-stability.html`
+- [DeepLearningFromZero · Day 73 — LoRA / Low-Rank Adaptation](https://dev48.infy.uk/dl/day73-lora-low-rank-adaptation.html) — `day73-lora-low-rank-adaptation.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk

@@ -1,0 +1,2250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero &middot; Day 74 &mdash; Straight-through estimators</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin:0; background:#f8fafc; color:#0f172a; line-height:1.55;
+         font-family:-apple-system, "Segoe UI", "Inter", Roboto, Helvetica, Arial, sans-serif; }
+  header { background:#fff; }
+  /* the tab bar sticks, not the header: a header taller than the viewport would pin forever */
+  .tabbar { background:#fff; border-bottom:1px solid #e2e8f0; position:sticky; top:0; z-index:20; }
+  .tabbar .wrap { padding-top:10px; padding-bottom:10px; }
+  .wrap { max-width:1120px; margin:0 auto; padding:16px; }
+  .narrow { max-width:780px; margin:0 auto; padding:16px; }
+  @media (min-width:768px){ .wrap, .narrow { padding:26px; } }
+  .kicker { font-size:11px; font-weight:800; letter-spacing:.18em; color:#be123c; margin:0 0 10px; }
+  h1 { font-size:17px; font-weight:800; line-height:1.55; margin:0; }
+  @media (min-width:768px){ h1 { font-size:19px; } }
+  h2 { font-size:23px; font-weight:800; margin:34px 0 10px; line-height:1.25; }
+  h3 { font-size:17px; font-weight:700; margin:26px 0 8px; }
+  p { margin:0 0 12px; }
+  em { font-style:italic; }
+  code { font-family:"SF Mono", Consolas, "Liberation Mono", monospace; font-size:12.5px;
+         background:#eef2f7; padding:1px 4px; border-radius:4px; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px 14px; border-radius:8px; font-size:12px;
+        overflow-x:auto; line-height:1.5;
+        font-family:"SF Mono", Consolas, "Liberation Mono", monospace; }
+  pre code { background:none; padding:0; color:inherit; font-size:inherit; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; }
+  .tabs button { border:0; background:#f1f5f9; color:#0f172a; padding:9px 18px; border-radius:9px;
+                 font-size:13.5px; font-weight:650; cursor:pointer; font-family:inherit; }
+  .tabs button.tab-active { background:#0f172a; color:#fff; }
+  .panel { background:#f1f5f9; }
+  .panel.light { background:#f8fafc; }
+  .hidden { display:none; }
+  .stack > * + * { margin-top:20px; }
+  .card { background:#fff; border-radius:16px; padding:18px;
+          box-shadow:0 1px 3px rgba(15,23,42,.10), 0 1px 2px rgba(15,23,42,.06); }
+  .cap { font-size:11px; font-weight:800; letter-spacing:.12em; color:#64748b; margin:0 0 10px; }
+  .lede { font-size:13.5px; color:#475569; margin:0 0 12px; }
+  .note { font-size:12px; color:#64748b; margin:10px 0 0; }
+  .grid2 { display:grid; gap:20px; }
+  @media (min-width:1000px){ .grid2 { grid-template-columns:1fr 1fr; } }
+  .ctrls { display:grid; gap:12px 22px; grid-template-columns:1fr; }
+  @media (min-width:640px){ .ctrls { grid-template-columns:1fr 1fr; } }
+  @media (min-width:1000px){ .ctrls { grid-template-columns:repeat(3,1fr); } }
+  label.ctl { font-size:13px; display:block; }
+  label.ctl b { float:right; font-variant-numeric:tabular-nums; }
+  input[type=range] { width:100%; margin:4px 0 0; }
+  .scroll { overflow-x:auto; }
+  table.num { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
+  table.num th, table.num td { padding:4px 9px; text-align:right; white-space:nowrap; }
+  table.num th { font-size:10.5px; letter-spacing:.05em; color:#64748b; font-weight:800; }
+  table.num td { font-size:12.5px; border-top:1px solid #e2e8f0; }
+  table.num th:first-child, table.num td:first-child { text-align:left; white-space:normal;
+    min-width:112px; }
+  table.num tr.hl td { background:#f1f5f9; }
+  .ok { color:#15803d; font-weight:800; }
+  .bad { color:#b91c1c; font-weight:800; }
+  .lg { font-size:10px; color:#64748b; font-weight:400; letter-spacing:0; }
+  button.run { border:0; background:#0f172a; color:#fff; padding:9px 17px; border-radius:9px;
+               font-size:13px; font-weight:650; cursor:pointer; font-family:inherit; }
+  button.run:disabled { opacity:.5; cursor:default; }
+  .runbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  .status { font-size:12px; color:#64748b; }
+  svg { max-width:100%; height:auto; display:block; }
+  ul { margin:0 0 12px; padding-left:22px; }
+  li { margin:0 0 6px; }
+  .red { color:#b91c1c; font-weight:800; }
+  .mono { font-family:"SF Mono", Consolas, "Liberation Mono", monospace; font-size:12px;
+          word-break:break-all; color:#334155; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="kicker">DEEPLEARNINGFROMZERO &middot; DAY 74</p>
+    <h1 id="headline">
+      &#129513; Straight-through estimators &mdash; the backward pass of an operation that has no
+      useful derivative. The bottleneck here is six binary units,
+      <code>h = sign(pre)</code>, and the task is built so that a discrete bottleneck is
+      <em>exactly</em> the right model: the true conditional depends on x only through m binary
+      features, so a zero-excess student provably exists, the teacher itself scores exactly
+      <strong>0</strong>, and the score is a mean KL from the true conditional above a
+      conditional-entropy floor of <strong>0.8161</strong> nats over <strong>4</strong> classes with
+      the whole 64-point input space enumerated. The honest derivative of that bottleneck is not
+      small, it is <em>exactly zero</em>: reverse mode returns <strong>0.0e+0</strong> on all
+      <strong>42</strong> parameters below the bottleneck, forward-mode automatic differentiation
+      over dual numbers agrees at <strong>0.0e+0</strong>, and a central difference reads exactly
+      zero on <strong>42 of 42</strong> coordinates &mdash; an identity rather than a tolerance,
+      because a perturbation that flips no code leaves the two forward passes bit-identical, and the
+      page asserts that equivalence in both directions. Gradient descent on the encoder is therefore
+      not slow, it is arithmetically the same thing as not training the encoder: the honest-gradient
+      run and the frozen-encoder run land on <strong>0.2890</strong> with a gap of exactly
+      <strong>0.0e+0</strong>. The straight-through estimator replaces <code>dh/dpre</code> with 1,
+      which is not an approximation of the derivative but the <em>exact</em> derivative of a
+      different function, <code>h = q(pre) + (pre &minus; stopgrad(pre))</code> &mdash; the page
+      builds that second path over duals and gets a bit-identical answer, <strong>0.0e+0</strong>,
+      with the routed gradient matching forward mode to <strong>1.7e-14</strong> where a central
+      difference manages 4.8e-9.
+      <span class="red">THE headline:</span> the diagnostic everyone actually runs &mdash; does one
+      step reduce the loss? &mdash; catches <strong>0 of 7</strong> deliberately broken routes. The
+      sign-flipped route reduces the loss on <strong>100%</strong> of trials while its cosine with
+      the exact gradient is <strong>&minus;0.8536</strong>, the bit-exact negation of the correct
+      route's <strong>+0.8536</strong>. It gets away with it because the decoder gradient is right
+      and <strong>92</strong> of the 134 parameters sit above the bottleneck, so the step descends
+      whatever the encoder does; the same step applied to the encoder alone does not move the
+      deterministic loss at all on <strong>67%</strong> of trials, because the forward pass is
+      piecewise constant. Evaluated on the relaxed loss instead &mdash; the only loss the encoder
+      route can descend &mdash; the control catches <strong>5 of 7</strong>, and so does the cosine.
+      <span class="red">Then wrong and harmful come apart entirely:</span> scaling the route by 10 is
+      wrong and costs exactly <strong>0.0e+0</strong>, because Adam divides by its own second moment
+      and the first-step residual, <strong>9.7e-7</strong>, matches its closed form to
+      <strong>2.1e-15</strong>; an off-by-one in the routing matrix scores <strong>0.2942</strong>
+      and <em>no route at all</em> scores <strong>0.2890</strong> &mdash; and both of those
+      <em>beat</em> the correct unclipped estimator at <strong>0.3397</strong>.
+      <span class="red">So the unclipped straight-through estimator is worse than freezing the
+      encoder</span>, while the same estimator with a window of 0.5 scores <strong>0.1347</strong>
+      &mdash; and that window kills <strong>2 of the 6</strong> units outright, no gradient ever, and
+      still wins. Widen the window and the run walks its own pre-activations from
+      <strong>1.45</strong> to <strong>3.24</strong>, until <strong>84.1%</strong> of unit-input
+      pairs sit outside |pre| &le; 1 where any clip would have been zero.
+      <span class="red">And the exact gradient loses too:</span> the stochastic relaxation's
+      gradient is available here because <strong>64</strong> codes can be enumerated, it wins its own
+      objective (relaxed NLL <strong>0.8932</strong> against 1.1527) and still loses the deployed
+      model to a clipped straight-through estimator costing <strong>1</strong> decoder pass per
+      example against its <strong>64</strong>: <strong>0.1944</strong> against
+      <strong>0.1347</strong>. <span class="red">The principled diagnostic loses as a ranker:</span>
+      over <strong>60</strong> trained configurations the cosine with the exact gradient at
+      initialisation scores <strong>AUC 0.406</strong> against a coin's 0.500 &mdash;
+      <em>below</em> chance &mdash; and exactly <strong>0.500</strong> inside one window-and-rate
+      cell, beaten by the training loss you were watching anyway at <strong>0.919</strong>.
+      <span class="red">One claim this page came to make and the measurement killed:</span> the two
+      straight-through idioms are supposed to differ in floating point, and over
+      <strong>280,000</strong> pre-activations at <strong>7</strong> grid sizes they differ in
+      exactly <strong>0</strong> &mdash; <code>q &minus; x</code> is exact for |x| &ge; &frac12; and
+      otherwise its rounding error is at most half an ulp of q, so adding x back lands on q again.
+      <strong>501</strong> in-page assertions. Pure vanilla JavaScript, one file, no build step.
+    </h1>
+  </div>
+</header>
+
+<div class="tabbar">
+  <div class="wrap">
+    <div class="tabs" id="tabs">
+      <button data-tab="look" class="tab-active">&#128300; MEASURE</button>
+      <button data-tab="understand">&#129504; UNDERSTAND</button>
+      <button data-tab="build">&#128296; BUILD</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ MEASURE -->
+<section id="look" class="panel">
+  <div class="wrap stack">
+
+    <div class="card">
+      <p class="cap">THE SETTING</p>
+      <div class="ctrls">
+        <label class="ctl">bottleneck units <b id="vM">6</b>
+          <input type="range" id="sM" min="4" max="7" step="1" value="6" /></label>
+        <label class="ctl">clip window <b id="vC">1</b>
+          <input type="range" id="sC" min="0" max="2" step="1" value="1" /></label>
+        <label class="ctl">learning rate <b id="vL">0.05</b>
+          <input type="range" id="sL" min="0" max="5" step="1" value="2" /></label>
+        <label class="ctl">Adam steps <b id="vT">200</b>
+          <input type="range" id="sT" min="0" max="4" step="1" value="3" /></label>
+        <label class="ctl">training examples <b id="vN">1200</b>
+          <input type="range" id="sN" min="0" max="5" step="1" value="3" /></label>
+        <label class="ctl">seed <b id="vS">1</b>
+          <input type="range" id="sS" min="1" max="6" step="1" value="1" /></label>
+      </div>
+      <p class="note" id="setup"></p>
+      <p class="note"><span class="status" id="mainStatus"></span></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE FLOOR AND THE NULLS</p>
+      <p class="lede">The input space is small enough to enumerate and the true conditional is known
+        in closed form, so the score is an <em>exact</em> expectation and not an estimate. Every
+        number below is a computation.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>quantity</th><th>nats</th><th>what it is</th>
+        </tr></thead><tbody id="floor"></tbody></table>
+      </div>
+      <p class="note" id="floorNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">1 &middot; THE DERIVATIVE THAT IS NOT THERE</p>
+      <p class="lede">A quantiser is piecewise constant, so its derivative is exactly 0 wherever it
+        exists and undefined on a measure-zero set. Nothing below the bottleneck has a gradient
+        &mdash; and the point of the table is that this is an identity, checked three ways, not a
+        number that happens to be small.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>route</th><th>&#8214;g&#8214; below the bottleneck</th>
+          <th>&#8214;g&#8214; above it</th><th>vs forward mode</th><th>what it is</th>
+        </tr></thead><tbody id="deriv"></tbody></table>
+      </div>
+      <p class="note" id="derivNote"></p>
+      <div class="scroll" style="margin-top:14px">
+        <table class="num"><thead><tr>
+          <th>the finite-difference identity</th><th>coordinates</th><th>of</th><th></th>
+        </tr></thead><tbody id="fd"></tbody></table>
+      </div>
+      <p class="note" id="fdNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">2 &middot; WHAT THE ESTIMATOR ACTUALLY IS</p>
+      <p class="lede">Routing the gradient through unchanged is not an approximation of anything. It
+        is the exact derivative of a different function: the one where the quantiser's output is
+        shifted by a constant. That function is what every framework writes as
+        <code>q(x) + (x - x.detach())</code>, and the page builds it as a separate path over dual
+        numbers to check the two agree.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>path</th><th>forward value</th><th>gradient vs the routed one</th><th></th>
+        </tr></thead><tbody id="sg"></tbody></table>
+      </div>
+      <p class="note" id="sgNote"></p>
+      <div class="grid2" style="margin-top:16px">
+        <div>
+          <p class="cap">THE FINE-GRID LIMIT</p>
+          <div class="scroll">
+            <table class="num"><thead><tr>
+              <th>levels</th><th>grid step</th><th>forward gap</th><th>cos with the limit</th>
+              <th>relative distance</th>
+            </tr></thead><tbody id="lev"></tbody></table>
+          </div>
+        </div>
+        <div>
+          <p class="cap">FORWARD GAP AGAINST HALF THE GRID STEP</p>
+          <div id="levSVG"></div>
+        </div>
+      </div>
+      <p class="note" id="levNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">3 &middot; TRAIN, DEPLOY, AND WHAT IT COST</p>
+      <p class="lede">The relaxation's gradient is genuinely available here, because a bottleneck of
+        this width has few enough codes to enumerate: the expectation is smooth, its derivative
+        exists, and the page computes it exactly. So the comparison is not estimator against nothing
+        &mdash; it is a wrong-but-free derivative against the right one, priced in decoder passes.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>trained with</th><th>deployed hard</th><th>deployed stochastic</th>
+          <th>the relaxed loss</th><th>mean |pre|</th><th>decoder passes / example</th>
+        </tr></thead><tbody id="dep"></tbody></table>
+      </div>
+      <p class="note" id="depNote"></p>
+      <div class="grid2" style="margin-top:16px">
+        <div>
+          <p class="cap">EXCESS AGAINST STEP</p>
+          <div id="curveSVG"></div>
+        </div>
+        <div>
+          <p class="cap">THE NULLS, BOTH DEPLOYMENTS</p>
+          <div class="scroll">
+            <table class="num"><thead><tr>
+              <th>model</th><th>hard</th><th>stochastic</th>
+            </tr></thead><tbody id="nulls"></tbody></table>
+          </div>
+        </div>
+      </div>
+      <p class="note" id="nullNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">4 &middot; THE WINDOW IS THE WHOLE METHOD</p>
+      <p class="lede">Clipping the route &mdash; zero the gradient where |pre| leaves a window
+        &mdash; is usually presented as a detail of BinaryConnect. It is not a detail. Widening the
+        window lets the run walk its own pre-activations outward until almost every unit sits in the
+        region a clip would have cut, and the score follows.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>window</th><th>excess, deployed hard</th><th>excess, stochastic</th>
+          <th>mean |pre|</th><th>backward pass zeroed</th><th>units dead for every input</th>
+          <th>ends outside |pre| &le; 1</th>
+        </tr></thead><tbody id="clip"></tbody></table>
+      </div>
+      <p class="note" id="clipNote"></p>
+      <div id="clipSVG" style="margin-top:12px"></div>
+    </div>
+
+    <div class="card">
+      <p class="cap">5 &middot; NINE ROUTES, THREE TESTS, ONE CONTROL</p>
+      <p class="lede">Two of these routes are defensible derivative claims and seven are not. The
+        question is whether any test you would actually run can tell them apart &mdash; and whether
+        being wrong is the same thing as being harmful.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>the route</th><th>one step lowers the loss</th>
+          <th>encoder-only step moves it at all</th><th>encoder-only step lowers the relaxed loss
+          <span class="lg">the control</span></th><th>cos with the exact gradient</th>
+          <th>excess after training</th>
+        </tr></thead><tbody id="var"></tbody></table>
+      </div>
+      <p class="note" id="varNote"></p>
+      <div id="varSVG" style="margin-top:12px"></div>
+      <p class="note" id="harmNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">6 &middot; DOES ANY OF IT PREDICT THE OUTCOME?</p>
+      <p class="lede">Train a pool of configurations that differ only in the window, the rate and the
+        seed, then ask each candidate diagnostic to rank them by final quality. A coin scores 0.500.
+        The control holds the window and the rate fixed, so the candidate is only asked to arbitrate
+        comparisons where it is the one thing that changed.</p>
+      <div class="runbar">
+        <button class="run" id="runPool">train the pool</button>
+        <span class="status" id="poolStatus">not run yet</span>
+      </div>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>candidate</th><th>needs training</th><th>AUC</th><th>vs a coin</th>
+          <th>within one cell <span class="lg">the control</span></th><th>pairs</th>
+        </tr></thead><tbody id="auc"></tbody></table>
+      </div>
+      <div id="aucSVG" style="margin-top:12px"></div>
+      <p class="note" id="aucNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE PAGE CHECKING ITSELF</p>
+      <pre id="selftest">running&hellip;</pre>
+    </div>
+
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ UNDERSTAND -->
+<section id="understand" class="panel light hidden">
+  <div class="narrow">
+
+    <h2>An operation with no derivative, in the middle of a network</h2>
+    <p>Plenty of things you want inside a model are not differentiable. Rounding a real number to a
+      grid. Taking a sign. Picking the nearest entry of a codebook. Sampling a discrete latent.
+      Choosing an integer. All of them share a shape: a forward pass that is
+      <em>piecewise constant</em>. And a piecewise-constant function has a derivative &mdash; it is
+      0 &mdash; which is worse than having none at all, because 0 is a number that flows quietly
+      through a backward pass and produces a run that looks like training and is not.</p>
+    <p>The MEASURE tab starts there because it is the whole reason the topic exists. Ask the honest
+      backward pass for the gradient of the loss with respect to any parameter below the bottleneck
+      and it returns <em>exactly</em> zero. Not 1e-12. Zero. Forward-mode differentiation over dual
+      numbers, which never forms a step size and never traverses the graph the same way, returns
+      exactly zero as well. And a central difference &mdash; the thing you would reach for to check
+      &mdash; also returns exactly zero, which is the most interesting of the three, because it
+      means <em>the check agrees with the bug</em>. The page turns that into an identity in both
+      directions: a finite difference on an encoder parameter is exactly 0 if and only if the
+      perturbation flipped no code, since with no flip the two forward passes are bit-identical and
+      their difference is a subtraction of a number from itself.</p>
+    <p>So the honest gradient does not train the encoder. It does not train it slowly; it does not
+      train it badly. The page runs the comparison and the two numbers are the same number: training
+      on the honest gradient and freezing the encoder differ by exactly 0.</p>
+
+    <h2>The straight-through estimator is not an approximation</h2>
+    <p>The fix, from Hinton's 2012 lectures and then Bengio, L&eacute;onard and Courville (2013), is
+      to lie in the backward pass: pretend the quantiser was the identity, and pass the incoming
+      gradient through unchanged. It is usually described as an approximation to a derivative that
+      does not exist, which makes it sound like a hack with an error term.</p>
+    <p>It is something more specific than that, and the page checks it as an identity. The routed
+      gradient is the <em>exact</em> derivative of a different function &mdash; the one where the
+      quantiser's output is treated as the input plus a constant shift:</p>
+    <pre><code>h = q(pre) + (pre - stopgrad(pre))</code></pre>
+    <p>The forward value is <code>q(pre) + 0</code>, so it is bit-identical to the quantised network.
+      The derivative is 1, because the second term contributes <code>1 - 0</code>. The page builds
+      that path separately, over dual numbers, and gets the routed gradient back to the last bit:
+      0.0e+0. There is no error term. There is a different function, whose forward pass happens to
+      coincide with the one you wanted, and whose gradient you are descending instead.</p>
+    <p>That reframing is what makes the rest of the page possible to reason about. The question is
+      never <em>how good an approximation is it</em>. The question is whether the surrogate's
+      descent directions get you somewhere on the objective you actually care about.</p>
+
+    <h2>The test you would run cannot see the bug</h2>
+    <p>Suppose the route is wrong &mdash; a sign flipped, an index off by one, a spurious gate. What
+      would catch it? The natural answer is the one people reach for: take a step and see whether the
+      loss goes down. On this page that test catches none of the seven broken routes. The
+      sign-flipped one, which points the encoder in exactly the wrong direction, lowers the loss on
+      every single trial.</p>
+    <p>The reason is a counting argument. Most of the parameters are not below the bottleneck. The
+      decoder's gradient is correct in every variant &mdash; only the route is mutated &mdash; and
+      a step that improves the decoder improves the loss regardless of what the encoder does. The
+      encoder's contribution is not merely outvoted: applied on its own, at the same size, it does
+      not move the deterministic loss at all on most trials, because the forward pass is piecewise
+      constant and a small parameter change usually flips no code.</p>
+    <p>Which points at the control. The one loss the encoder route <em>can</em> descend is the
+      smoothed one &mdash; the expectation over a stochastic bottleneck &mdash; and evaluated there,
+      an encoder-only step separates the good routes from most of the bad ones. So does comparing the
+      route's direction against the exact gradient of that relaxation. Neither catches everything,
+      and the two they miss are instructive rather than embarrassing.</p>
+
+    <h2>Wrong and harmful are different properties</h2>
+    <p>Scaling the route by ten is unambiguously the wrong derivative, and it costs exactly nothing
+      &mdash; the same final score, to 0.0e+0. Adam divides each coordinate by its own second
+      moment, so a global factor cancels; what survives is <code>eps</code> against the gradient
+      magnitude, and the page checks that residual against its closed form rather than asserting it
+      is small. Meanwhile an off-by-one in the routing matrix, and having no route at all, both score
+      <em>better</em> than the correct unclipped estimator.</p>
+    <p>That last comparison is the honest embarrassment of the method as usually stated. An unclipped
+      straight-through estimator, on this task, is worse than not training the encoder. It is not
+      worse because the derivative is wrong in some subtle way. It is worse because the route never
+      shrinks: the gradient arriving at a unit is passed through at full strength no matter how far
+      out the pre-activation has drifted, so the run keeps pushing, the pre-activations walk outward,
+      and by the end most unit-input pairs sit far outside the range where the quantiser's decision
+      is anywhere near the boundary. The forward pass has stopped listening and the backward pass has
+      not noticed.</p>
+
+    <h2>The clip is the method</h2>
+    <p>Which is why the clipped variant &mdash; zero the route outside a window, the
+      <code>hardtanh</code> derivative that BinaryConnect actually ships &mdash; is not a detail. On
+      the default setting it more than halves the excess, and the best window on the ladder is
+      tighter than the one everyone writes down. The mechanism is visible in the table: a wider
+      window means a larger mean |pre| at the end, which means more of the backward pass sitting
+      where the clip would have cut it.</p>
+    <p>And the cost of the clip is visible too, in the same table, which is the part usually left
+      out: a tight window leaves whole units with no gradient for <em>any</em> input in the space
+      &mdash; dead, permanently, since nothing can move them back inside. The best window on this
+      page kills a third of the bottleneck and still wins. So the trade is not
+      &ldquo;clipping is good&rdquo;; it is that saturating the route is worth more than the units
+      it costs, up to a point that the sweep locates rather than assumes.</p>
+
+    <h2>Having the right gradient is not the point</h2>
+    <p>Because the bottleneck is narrow, this page can do what a real model cannot: enumerate every
+      code and compute the exact gradient of the relaxed objective. Two independent forms of that
+      derivative &mdash; a marginal difference and a score-function sum &mdash; agree, the code
+      weights sum to one, the score has mean zero, and central differences of the relaxed loss (which
+      is genuinely smooth) confirm it.</p>
+    <p>So we can ask the question directly. The exact gradient wins its own objective, comfortably.
+      It does not win the model you deploy: a clipped straight-through estimator gets a better hard
+      score at a small fraction of the cost, and the cost ratio is not a constant &mdash; it is the
+      number of codes, which is exponential in the bottleneck width, so at any realistic size the
+      exact gradient is not on the menu at all.</p>
+    <p>And when the same reasoning is turned into a ranker it inverts. Over a pool of trained
+      configurations, agreement with the exact gradient at initialisation ranks final quality
+      <em>below</em> a coin, and inside a single window-and-rate cell it carries no signal at all.
+      The configurations whose route most resembles the exact derivative are the unclipped ones,
+      which is precisely why they lose. Meanwhile the training loss you were already watching ranks
+      them well. That is not a reason to stop reasoning about gradients; it is a reason not to treat
+      &ldquo;my estimator agrees with the true gradient&rdquo; as evidence that the run will
+      work.</p>
+
+    <h2>A claim this page came to make and could not</h2>
+    <p>The two ways people write the trick look different in floating point:
+      <code>q(x) + (x - x.detach())</code> is exact by construction, while
+      <code>x + (q(x) - x).detach()</code> is a rounded sum and looked like it should occasionally
+      land a bit off. It does not. Over 280,000 pre-activations at seven grid sizes the second idiom
+      reproduces <code>q(x)</code> exactly every time, and there is a reason:
+      <code>q - x</code> is computed exactly whenever |x| is not tiny, and when |x| <em>is</em> tiny
+      the rounding error of <code>q - x</code> is at most half an ulp of <code>q</code>, so adding x
+      back rounds to q. The page keeps the measurement and drops the claim.</p>
+
+    <h2>What to take away</h2>
+    <ul>
+      <li>A piecewise-constant forward pass has an exactly-zero gradient, and a finite-difference
+        check agrees with it. There is no tolerance to tighten.</li>
+      <li>The straight-through estimator is the exact gradient of a shifted-by-a-constant surrogate,
+        not an approximation with an error term. Write it as
+        <code>q(x) + (x - x.detach())</code>.</li>
+      <li>&ldquo;One step lowered the loss&rdquo; is not evidence that the route is right. Test the
+        encoder alone, and test it on the smoothed loss, which is the only one it can descend.</li>
+      <li>Being the wrong derivative and being harmful are separate properties: under Adam a global
+        mis-scale is free, and no route at all can beat an unclipped one.</li>
+      <li>Clip the route. The window is not a hyperparameter you can leave at its default and it is
+        not free &mdash; it kills units &mdash; but saturating the route is what keeps the forward
+        pass and the backward pass talking about the same thing.</li>
+      <li>Agreement with an exact gradient, where you can even compute one, does not predict which
+        run ends up better.</li>
+    </ul>
+
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ BUILD -->
+<section id="build" class="panel light hidden">
+  <div class="narrow">
+
+    <h2>Build it: one quantiser, four backward passes</h2>
+    <p>Everything on this page runs from one engine block with no libraries, no DOM access and no
+      clock. What follows is the shape of it.</p>
+
+    <h3>1 &middot; The quantiser, and the two limits that make it testable</h3>
+    <p>One formula for every grid size, so the fine-grid limit and the no-bottleneck control are the
+      same code path rather than a special case.</p>
+    <pre><code>function quant(v, L){
+  if (L &lt;= 0) return v;                        // the identity: the no-bottleneck control
+  if (L &gt;= 1e9) return v &lt; -1 ? -1 : v &gt; 1 ? 1 : v;   // the clamp: the fine-grid limit
+  var step = 2 / (L - 1);
+  var idx  = Math.round((v + 1) / step);
+  if (idx &lt; 0) idx = 0;
+  if (idx &gt; L - 1) idx = L - 1;
+  return -1 + idx * step;
+}</code></pre>
+    <p>At <code>L = 2</code> this is a sign with <code>sign(0) = +1</code>. Its derivative is 0
+      everywhere it exists. Nothing about that changes as L grows: a finer grid is still piecewise
+      constant.</p>
+
+    <h3>2 &middot; A task where the bottleneck is the right model</h3>
+    <p>If the discrete bottleneck cannot express the answer, every result is confounded by that.
+      So build the teacher <em>through</em> a bottleneck of the same width: m binary features of the
+      input, then a small decoder.</p>
+    <pre><code>t_j(x) = sign(U_j . x + c_j)                 // m binary features
+p*(y|x) = softmax( V2 . tanh(V1 . t(x) + d1) + d2 )</code></pre>
+    <p>The input space is <code>{-1,+1}^6</code>, all 64 points, so every expectation over x is a
+      sum and not a sample. The score is the mean KL from <code>p*</code>, which is exactly 0 for a
+      student that copies the teacher and provably non-negative for everything else. The floor is
+      the conditional entropy, computed, not estimated.</p>
+
+    <h3>3 &middot; The honest backward pass, and the one line that is a choice</h3>
+    <p>Everything above the bottleneck is an ordinary backward pass. The only decision is what the
+      backward pass claims <code>dh/dpre</code> is:</p>
+    <pre><code>for (j = 0; j &lt; m; j++){
+  var f = routeFactor(mode, rec.pre[j], rec.h[j], dh[j], clip);
+  var dp = dh[j] * f;
+  g.b1[j] += dp;
+  for (i = 0; i &lt; x.length; i++) g.W1[j][i] += dp * x[i];
+}</code></pre>
+    <pre><code>"true" -&gt; 0                              // the honest answer
+"ste"  -&gt; 1                              // straight through
+"clip" -&gt; |pre| &lt;= c ? 1 : 0             // the hardtanh derivative</code></pre>
+    <p>Seven more values of <code>mode</code> exist only so the page can ask whether any diagnostic
+      notices them. Keeping them in one switch, rather than in seven copies of the backward pass,
+      is what makes the comparison a comparison.</p>
+
+    <h3>4 &middot; Check the gradient with something exact, at initialisation</h3>
+    <p>Finite differences are the wrong instrument twice over here. On the encoder they return
+      exactly zero, agreeing with the bug. On the decoder they agree to about 5e-9, which is a
+      finite-difference floor and not a statement about the code. So the page carries a forward-mode
+      pass over dual numbers &mdash; value and derivative side by side, one seed per parameter, no
+      step size anywhere &mdash; and the quantiser's dual derivative is the same switch:</p>
+    <pre><code>var qv = quant(s, L), f;
+if (opt.hMode === "sgA"){ hv[j] = qv + (s - s); hd[j] = sd; }   // the detach idiom
+else { f = opt.hMode === "true" ? 0 : 1; hv[j] = qv; hd[j] = f * sd; }</code></pre>
+    <p>Reverse mode and forward mode then agree to about 1e-14, which is arithmetic rounding, and
+      the <code>sgA</code> path agrees with the routed gradient <em>bit for bit</em>. Both checks
+      run at initialisation. Checking at convergence is how you get a false failure: the true
+      gradient there is already so small that any difference test is measuring its own floor.</p>
+
+    <h3>5 &middot; The exact gradient of the relaxation, by enumeration</h3>
+    <p>Make the bottleneck stochastic &mdash; <code>h_j = +1</code> with probability
+      <code>sigmoid(pre_j)</code> &mdash; and the model becomes a distribution over
+      <code>2^m</code> codes. Now the expected loss is smooth and its gradient exists. With m small
+      it can be summed rather than sampled, two independent ways:</p>
+    <pre><code>// marginal form: dLbar/dp_j = E over h_-j [ loss(h_j=+1) - loss(h_j=-1) ]
+// score form:    dLbar/dpre_j = sum_h w(h) * loss(h) * (h_j==1 ? 1-p_j : -p_j)</code></pre>
+    <p>They agree to 1e-13, the weights sum to 1, and the score has mean zero &mdash; three
+      identities that would break loudly if the enumeration were wrong. Central differences of the
+      relaxed loss confirm the result, and here they are legitimate, because this loss really is
+      differentiable.</p>
+
+    <h3>6 &middot; Price it</h3>
+    <p>The exact gradient costs one decoder pass <em>per code</em>, so <code>2^m</code> per example
+      against the estimator's one. The page prints that column next to the scores, because a method
+      that wins on quality and loses by an exponential factor on cost has not won.</p>
+
+    <h3>7 &middot; Two tests and a control</h3>
+    <pre><code>// what people run: step everything, did the loss fall?
+var nA = copyNet(net); sgdStep(nA, g, probeLr, allParams);
+if (dataNLL(nA, batch) &lt; L0) descend++;
+
+// the control: step the ENCODER only, and judge it on the smoothed loss
+var nB = copyNet(net); sgdStep(nB, g, probeLr, encoderParams);
+if (dataNLL(nB, batch) !== L0) moved++;              // usually it does not move at all
+if (relaxLoss(nB, batch, CS) &lt; R0) descRelax++;</code></pre>
+    <p>The <code>moved</code> counter is worth keeping even though it is not a test: it is the
+      reason the first test is useless. A piecewise-constant forward pass does not respond to a
+      small encoder step, so there is nothing for a local check to read.</p>
+
+    <h3>8 &middot; Assert identities, not thresholds</h3>
+    <p>The page's own self-check is 501 assertions, and the ones that matter are equalities rather
+      than tolerances: the honest encoder gradient is <code>=== 0</code>; the detach idiom is
+      <code>=== 0</code> away from the routed gradient; the honest-gradient run and the frozen run
+      differ by <code>=== 0</code>; an infinite clip window is the plain estimator bit for bit;
+      flipping the route negates the cosine exactly; a finite difference is zero exactly when no
+      code flipped. A threshold picked to pass at one slider setting is a failure waiting for a
+      different one.</p>
+
+    <h3>Where to go next</h3>
+    <ul>
+      <li>Set the window to its widest and watch mean |pre| climb while the score gets worse.</li>
+      <li>Set the bottleneck to 4 units and see the exact gradient get cheap enough to be
+        tempting &mdash; then to 7 and watch the price quadruple.</li>
+      <li>Push the learning rate up and find the settings where the exact gradient stops winning
+        even its own objective.</li>
+      <li>Train the pool and check whether the cosine ever climbs above a coin.</li>
+    </ul>
+
+  </div>
+</section>
+
+<script>
+// ===== ENGINE:BEGIN =====
+// Day 74 - straight-through estimators. Pure functions: no DOM, no clock, no Math.random.
+// The task is built so a DISCRETE bottleneck is exactly the right model - the true conditional
+// depends on x only through m binary features - so a zero-excess student provably exists and the
+// score has an exact floor of 0 reached by the teacher itself.
+
+function rng(seed){                                        // mulberry32
+  var a = (seed >>> 0) || 1;
+  return function(){
+    a = (a + 0x6D2B79F5) >>> 0;
+    var t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function gauss(rnd){                                       // Box-Muller, cosine branch
+  var u = 1 - rnd(), v = rnd();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+function sigmoid(t){ return t >= 0 ? 1 / (1 + Math.exp(-t)) : Math.exp(t) / (1 + Math.exp(t)); }
+function mat(r, c, rnd, s){
+  var M = [];
+  for (var i = 0; i < r; i++){ M[i] = []; for (var j = 0; j < c; j++) M[i][j] = gauss(rnd) * s; }
+  return M;
+}
+function vec(n, rnd, s){ var v = []; for (var i = 0; i < n; i++) v[i] = gauss(rnd) * s; return v; }
+function copyNet(n){
+  return { W1: n.W1.map(function(r){ return r.slice(); }), b1: n.b1.slice(),
+           W2: n.W2.map(function(r){ return r.slice(); }), b2: n.b2.slice(),
+           W3: n.W3.map(function(r){ return r.slice(); }), b3: n.b3.slice() };
+}
+function zeroLike(n){
+  return { W1: n.W1.map(function(r){ return r.map(function(){ return 0; }); }),
+           b1: n.b1.map(function(){ return 0; }),
+           W2: n.W2.map(function(r){ return r.map(function(){ return 0; }); }),
+           b2: n.b2.map(function(){ return 0; }),
+           W3: n.W3.map(function(r){ return r.map(function(){ return 0; }); }),
+           b3: n.b3.map(function(){ return 0; }) };
+}
+function paramList(cfg){                                   // one fixed flat order, used everywhere
+  var L = [], i, j, k;
+  for (j = 0; j < cfg.m; j++) for (i = 0; i < cfg.din; i++) L.push(["W1", j, i]);
+  for (j = 0; j < cfg.m; j++) L.push(["b1", j, -1]);
+  for (i = 0; i < cfg.hid; i++) for (j = 0; j < cfg.m; j++) L.push(["W2", i, j]);
+  for (i = 0; i < cfg.hid; i++) L.push(["b2", i, -1]);
+  for (k = 0; k < cfg.K; k++) for (i = 0; i < cfg.hid; i++) L.push(["W3", k, i]);
+  for (k = 0; k < cfg.K; k++) L.push(["b3", k, -1]);
+  return L;
+}
+function getP(n, p){ return p[2] < 0 ? n[p[0]][p[1]] : n[p[0]][p[1]][p[2]]; }
+function setP(n, p, v){ if (p[2] < 0) n[p[0]][p[1]] = v; else n[p[0]][p[1]][p[2]] = v; }
+function addP(n, p, v){ if (p[2] < 0) n[p[0]][p[1]] += v; else n[p[0]][p[1]][p[2]] += v; }
+function isEnc(p){ return p[0] === "W1" || p[0] === "b1"; }
+
+// ------------------------------------------------------------------ the quantiser
+// L levels on a uniform grid over [-1, 1]; L = 2 gives {-1, +1}, a sign with sign(0) = +1. One
+// formula for every L, and its derivative is exactly 0 wherever it exists.
+//   L >= 1e9  -> the clamp itself, the fine-grid limit
+//   L <= 0    -> the identity, the no-bottleneck control
+function quant(v, L){
+  if (L <= 0) return v;
+  if (L >= 1e9) return v < -1 ? -1 : v > 1 ? 1 : v;
+  var step = 2 / (L - 1);
+  var idx = Math.round((v + 1) / step);
+  if (idx < 0) idx = 0;
+  if (idx > L - 1) idx = L - 1;
+  return -1 + idx * step;
+}
+
+// ------------------------------------------------------------------ the task
+function makeTask(cfg){
+  var rnd = rng(cfg.seed * 7919 + 13), N = 1 << cfg.din, i, j, k, b;
+  var U = mat(cfg.m, cfg.din, rnd, 1), cU = vec(cfg.m, rnd, 0.35);
+  var teacher = { W1: U, b1: cU,
+                  W2: mat(cfg.hid, cfg.m, rnd, 1 / Math.sqrt(cfg.m)), b2: vec(cfg.hid, rnd, 0.2),
+                  W3: mat(cfg.K, cfg.hid, rnd, cfg.sharp / Math.sqrt(cfg.hid)),
+                  b3: vec(cfg.K, rnd, 0.2) };
+  var X = [];
+  for (b = 0; b < N; b++){
+    var x = [];
+    for (i = 0; i < cfg.din; i++) x[i] = (b >> i) & 1 ? 1 : -1;
+    X.push(x);
+  }
+  var P = [], marg = [];
+  for (k = 0; k < cfg.K; k++) marg[k] = 0;
+  for (b = 0; b < N; b++){
+    var r = forward(teacher, X[b], { levels: 2, deploy: "det" });
+    P.push(r.p.slice());
+    for (k = 0; k < cfg.K; k++) marg[k] += r.p[k] / N;
+  }
+  var H = 0, MI = 0;
+  for (b = 0; b < N; b++) for (k = 0; k < cfg.K; k++){
+    var p = P[b][k];
+    if (p > 0){ H -= p * Math.log(p) / N; MI += p * Math.log(p / marg[k]) / N; }
+  }
+  var live = 0, splits = [];
+  for (j = 0; j < cfg.m; j++){
+    var pos = 0;
+    for (b = 0; b < N; b++){
+      var s = cU[j];
+      for (i = 0; i < cfg.din; i++) s += U[j][i] * X[b][i];
+      if (s >= 0) pos++;
+    }
+    splits.push(pos);
+    if (pos > 0 && pos < N) live++;
+  }
+  return { cfg: cfg, X: X, N: N, pstar: P, marg: marg, H: H, MI: MI, teacher: teacher,
+           live: live, splits: splits, logK: Math.log(cfg.K) };
+}
+function initNet(cfg, seed){
+  var rnd = rng(seed * 2654435761 + 101);
+  return { W1: mat(cfg.m, cfg.din, rnd, cfg.wInit / Math.sqrt(cfg.din)), b1: vec(cfg.m, rnd, 0.1),
+           W2: mat(cfg.hid, cfg.m, rnd, 1 / Math.sqrt(cfg.m)), b2: vec(cfg.hid, rnd, 0.1),
+           W3: mat(cfg.K, cfg.hid, rnd, 1 / Math.sqrt(cfg.hid)), b3: vec(cfg.K, rnd, 0.1) };
+}
+
+// ------------------------------------------------------------------ forward
+// opt.deploy: "det" quantises; "stoch" samples h_j = +1 with probability sigmoid(pre_j) so that
+// E[h_j] = tanh(pre_j / 2). opt.hFix overrides h, which is how the enumeration walks every code.
+function forward(net, x, opt){
+  var m = net.W1.length, hid = net.W2.length, K = net.W3.length, i, j, k;
+  var pre = [], h = [], pj = [];
+  var L = opt.levels === undefined ? 2 : opt.levels;
+  for (j = 0; j < m; j++){
+    var s = net.b1[j];
+    for (i = 0; i < x.length; i++) s += net.W1[j][i] * x[i];
+    pre[j] = s;
+    pj[j] = sigmoid(s);
+    if (opt.hFix) h[j] = opt.hFix[j];
+    else if (opt.deploy === "stoch") h[j] = opt.rnd() < pj[j] ? 1 : -1;
+    else h[j] = quant(s, L);
+  }
+  var u = [], a = [];
+  for (i = 0; i < hid; i++){
+    var t = net.b2[i];
+    for (j = 0; j < m; j++) t += net.W2[i][j] * h[j];
+    u[i] = t; a[i] = Math.tanh(t);
+  }
+  var z = [], mx = -Infinity;
+  for (k = 0; k < K; k++){
+    var q = net.b3[k];
+    for (i = 0; i < hid; i++) q += net.W3[k][i] * a[i];
+    z[k] = q; if (q > mx) mx = q;
+  }
+  var sm = 0, p = [];
+  for (k = 0; k < K; k++){ p[k] = Math.exp(z[k] - mx); sm += p[k]; }
+  for (k = 0; k < K; k++) p[k] /= sm;
+  return { pre: pre, pj: pj, h: h, u: u, a: a, z: z, p: p, lse: mx + Math.log(sm) };
+}
+function nll(rec, y){ return rec.lse - rec.z[y]; }
+
+// ------------------------------------------------------------------ reverse-mode backward
+// Everything above the bottleneck is an ordinary backward pass. The only choice is what the
+// backward pass CLAIMS dh_j/dpre_j is. "true" is the honest answer and it is exactly 0.
+function routeFactor(mode, pre, h, dh, clip){
+  if (mode === "true") return 0;
+  if (mode === "ste") return 1;
+  if (mode === "clip") return Math.abs(pre) <= clip ? 1 : 0;
+  if (mode === "scale") return clip;                       // clip doubles as the scale here
+  if (mode === "signflip") return -1;
+  if (mode === "preGate") return pre;
+  if (mode === "hGate") return h;
+  if (mode === "absRoute") return dh === 0 ? 0 : Math.abs(dh) / dh;
+  return 1;
+}
+function backward(net, x, y, rec, opt){
+  var m = net.W1.length, hid = net.W2.length, K = net.W3.length, i, j, k;
+  var g = zeroLike(net), dz = [], da = [], dh = [];
+  for (k = 0; k < K; k++){
+    dz[k] = rec.p[k] - (k === y ? 1 : 0);
+    g.b3[k] += dz[k];
+    for (i = 0; i < hid; i++) g.W3[k][i] += dz[k] * rec.a[i];
+  }
+  for (i = 0; i < hid; i++){
+    var s = 0;
+    for (k = 0; k < K; k++) s += net.W3[k][i] * dz[k];
+    da[i] = s * (1 - rec.a[i] * rec.a[i]);
+    g.b2[i] += da[i];
+    for (j = 0; j < m; j++) g.W2[i][j] += da[i] * rec.h[j];
+  }
+  for (j = 0; j < m; j++){
+    var t = 0;
+    // "shift" is a realistic off-by-one in the routing matrix, not an invented mutation
+    for (i = 0; i < hid; i++) t += net.W2[i][opt.mode === "shift" ? (j + 1) % m : j] * da[i];
+    dh[j] = t;
+  }
+  for (j = 0; j < m; j++){
+    var f = routeFactor(opt.mode === "shift" ? "ste" : opt.mode, rec.pre[j], rec.h[j], dh[j],
+                        opt.clip === undefined ? Infinity : opt.clip);
+    var dp = dh[j] * f;
+    g.b1[j] += dp;
+    for (i = 0; i < x.length; i++) g.W1[j][i] += dp * x[i];
+  }
+  return { g: g, dh: dh };
+}
+
+// ------------------------------------------------------------------ forward-mode AD, exact
+// One dual seed per parameter. No step size anywhere, so this is an exact derivative rather than an
+// approximation of one. hMode picks the quantiser's dual derivative:
+//   "true" -> 0 (honest)    "ste" -> 1    "clip" -> gated
+//   "sgA"  -> h = q(pre) + (pre - const(pre))      the canonical detach idiom
+//   "sgB"  -> h = pre + (const(q(pre)) - const(pre))   the other idiom people write
+function dualLoss(net, x, y, seed, opt){
+  var m = net.W1.length, hid = net.W2.length, K = net.W3.length, i, j, k;
+  var L = opt.levels === undefined ? 2 : opt.levels;
+  var pv = [], pd = [], hv = [], hd = [];
+  for (j = 0; j < m; j++){
+    var s = net.b1[j], sd = (seed && seed[0] === "b1" && seed[1] === j) ? 1 : 0;
+    for (i = 0; i < x.length; i++){
+      s += net.W1[j][i] * x[i];
+      if (seed && seed[0] === "W1" && seed[1] === j && seed[2] === i) sd += x[i];
+    }
+    pv[j] = s; pd[j] = sd;
+    var qv = quant(s, L), f;
+    if (opt.hMode === "sgA"){ hv[j] = qv + (s - s); hd[j] = sd; }
+    else if (opt.hMode === "sgB"){ hv[j] = s + (qv - s); hd[j] = sd; }
+    else {
+      f = opt.hMode === "true" ? 0 : opt.hMode === "clip" ? (Math.abs(s) <= opt.clip ? 1 : 0) : 1;
+      hv[j] = qv; hd[j] = f * sd;
+    }
+  }
+  var av = [], ad = [];
+  for (i = 0; i < hid; i++){
+    var t = net.b2[i], td = (seed && seed[0] === "b2" && seed[1] === i) ? 1 : 0;
+    for (j = 0; j < m; j++){
+      t += net.W2[i][j] * hv[j];
+      td += net.W2[i][j] * hd[j];
+      if (seed && seed[0] === "W2" && seed[1] === i && seed[2] === j) td += hv[j];
+    }
+    var th = Math.tanh(t);
+    av[i] = th; ad[i] = (1 - th * th) * td;
+  }
+  var zv = [], zd = [], mx = -Infinity;
+  for (k = 0; k < K; k++){
+    var q2 = net.b3[k], qd = (seed && seed[0] === "b3" && seed[1] === k) ? 1 : 0;
+    for (i = 0; i < hid; i++){
+      q2 += net.W3[k][i] * av[i];
+      qd += net.W3[k][i] * ad[i];
+      if (seed && seed[0] === "W3" && seed[1] === k && seed[2] === i) qd += av[i];
+    }
+    zv[k] = q2; zd[k] = qd; if (q2 > mx) mx = q2;
+  }
+  var sm = 0, pk = [];
+  for (k = 0; k < K; k++){ pk[k] = Math.exp(zv[k] - mx); sm += pk[k]; }
+  var dl = 0;
+  for (k = 0; k < K; k++) dl += (pk[k] / sm) * zd[k];
+  return { loss: mx + Math.log(sm) - zv[y], d: dl - zd[y], h: hv, pre: pv };
+}
+function dualGrad(net, batch, opt, plist){
+  var g = zeroLike(net), n = batch.length, i, b;
+  for (i = 0; i < plist.length; i++){
+    var acc = 0;
+    for (b = 0; b < n; b++) acc += dualLoss(net, batch[b].x, batch[b].y, plist[i], opt).d;
+    setP(g, plist[i], acc / n);
+  }
+  return g;
+}
+function meanGrad(net, batch, opt){
+  var g = zeroLike(net), n = batch.length, b;
+  for (b = 0; b < n; b++){
+    var rec = forward(net, batch[b].x, { levels: opt.levels === undefined ? 2 : opt.levels,
+                                        deploy: "det" });
+    addInto(g, backward(net, batch[b].x, batch[b].y, rec, opt).g, 1 / n);
+  }
+  return g;
+}
+function addInto(dst, src, s){
+  ["W1", "W2", "W3"].forEach(function(K){
+    for (var i = 0; i < src[K].length; i++) for (var j = 0; j < src[K][i].length; j++)
+      dst[K][i][j] += s * src[K][i][j];
+  });
+  ["b1", "b2", "b3"].forEach(function(K){
+    for (var i = 0; i < src[K].length; i++) dst[K][i] += s * src[K][i];
+  });
+}
+function flatG(g, plist){ return plist.map(function(p){ return getP(g, p); }); }
+
+// ------------------------------------------------------------------ the exact relaxation gradient
+// With a stochastic bottleneck the model is a genuine distribution over 2^m codes, so E[loss] is a
+// smooth function of the parameters and its gradient EXISTS. m is small enough to enumerate every
+// code, so what follows is exact - not sampled, not estimated.
+function codes(m){
+  var out = [];
+  for (var c = 0; c < (1 << m); c++){
+    var h = [];
+    for (var j = 0; j < m; j++) h[j] = (c >> j) & 1 ? 1 : -1;
+    out.push(h);
+  }
+  return out;
+}
+function relaxOne(net, x, y, CS){
+  var m = net.W1.length, j, c;
+  var r0 = forward(net, x, { hFix: CS[0] });               // pre and pj do not depend on hFix
+  var pj = r0.pj, W = [], LS = [], recs = [], Lbar = 0, sumW = 0;
+  for (c = 0; c < CS.length; c++){
+    var w = 1;
+    for (j = 0; j < m; j++) w *= CS[c][j] === 1 ? pj[j] : 1 - pj[j];
+    var rec = forward(net, x, { hFix: CS[c] });
+    var l = nll(rec, y);
+    W[c] = w; LS[c] = l; recs[c] = rec;
+    Lbar += w * l; sumW += w;
+  }
+  return { pre: r0.pre, pj: pj, W: W, LS: LS, recs: recs, Lbar: Lbar, sumW: sumW };
+}
+// marginal form: dLbar/dp_j = E over h_-j of [ loss(h_j=+1) - loss(h_j=-1) ], enumerating h_-j
+function relaxGradDirect(net, x, y, CS, R){
+  var m = net.W1.length, c, k, j;
+  R = R || relaxOne(net, x, y, CS);
+  var dpre = [], dp = [];
+  for (j = 0; j < m; j++){
+    var acc = 0;
+    for (c = 0; c < CS.length; c++){
+      if (CS[c][j] !== 1) continue;                        // walk only the h_j = +1 half
+      var wm = 1;
+      for (k = 0; k < m; k++) if (k !== j) wm *= CS[c][k] === 1 ? R.pj[k] : 1 - R.pj[k];
+      acc += wm * (R.LS[c] - R.LS[c ^ (1 << j)]);
+    }
+    dp[j] = acc;
+    dpre[j] = acc * R.pj[j] * (1 - R.pj[j]);               // chain through p_j = sigmoid(pre_j)
+  }
+  return { R: R, dpre: dpre, dp: dp };
+}
+// score-function form of the SAME derivative, an entirely different loop over the same codes
+function relaxGradScore(net, x, y, CS, R){
+  var m = net.W1.length, c, j;
+  R = R || relaxOne(net, x, y, CS);
+  var dpre = [], score0 = [];
+  for (j = 0; j < m; j++){ dpre[j] = 0; score0[j] = 0; }
+  for (c = 0; c < CS.length; c++) for (j = 0; j < m; j++){
+    var s = CS[c][j] === 1 ? 1 - R.pj[j] : -R.pj[j];       // d log w / d pre_j
+    dpre[j] += R.W[c] * R.LS[c] * s;
+    score0[j] += R.W[c] * s;                               // the score has mean exactly zero
+  }
+  return { R: R, dpre: dpre, score0: score0 };
+}
+// decoder-only backward, accumulated straight into g with weight w and never allocating
+function decBackInto(g, net, y, rec, w){
+  var m = net.W1.length, hid = net.W2.length, K = net.W3.length, i, j, k;
+  for (i = 0; i < hid; i++){
+    var s = 0;
+    for (k = 0; k < K; k++) s += net.W3[k][i] * (rec.p[k] - (k === y ? 1 : 0));
+    var d = w * s * (1 - rec.a[i] * rec.a[i]);
+    g.b2[i] += d;
+    for (j = 0; j < m; j++) g.W2[i][j] += d * rec.h[j];
+  }
+  for (k = 0; k < K; k++){
+    var dz = w * (rec.p[k] - (k === y ? 1 : 0));
+    g.b3[k] += dz;
+    for (i = 0; i < hid; i++) g.W3[k][i] += dz * rec.a[i];
+  }
+}
+// one pass over the codes: the decoder gradient accumulates as it goes, because each code's weight
+// is known before its forward pass; the encoder gradient needs the whole loss table first.
+function relaxGradAcc(net, x, y, CS, g, scale){
+  var m = net.W1.length, hid = net.W2.length, c, j, k, i;
+  var r0 = forward(net, x, { hFix: CS[0] }), pj = r0.pj;
+  var W = [], LS = [], Lbar = 0;
+  for (c = 0; c < CS.length; c++){
+    var w = 1;
+    for (j = 0; j < m; j++) w *= CS[c][j] === 1 ? pj[j] : 1 - pj[j];
+    var rec = forward(net, x, { hFix: CS[c] });
+    var l = nll(rec, y);
+    W[c] = w; LS[c] = l; Lbar += w * l;
+    if (w !== 0) decBackInto(g, net, y, rec, scale * w);
+  }
+  for (j = 0; j < m; j++){
+    var acc = 0;
+    for (c = 0; c < CS.length; c++){
+      if (CS[c][j] !== 1) continue;
+      var wm = W[c] / pj[j];                               // the marginal over h_-j
+      acc += wm * (LS[c] - LS[c ^ (1 << j)]);
+    }
+    var dpre = scale * acc * pj[j] * (1 - pj[j]);
+    g.b1[j] += dpre;
+    for (i = 0; i < x.length; i++) g.W1[j][i] += dpre * x[i];
+  }
+  return Lbar;
+}
+function relaxGradFull(net, x, y, CS){
+  var g = zeroLike(net);
+  return { g: g, Lbar: relaxGradAcc(net, x, y, CS, g, 1) };
+}
+function relaxGradBatch(net, batch, CS){
+  var g = zeroLike(net), n = batch.length, L = 0;
+  for (var b = 0; b < n; b++) L += relaxGradAcc(net, batch[b].x, batch[b].y, CS, g, 1 / n) / n;
+  return { g: g, Lbar: L };
+}
+function relaxLoss(net, batch, CS){
+  var s = 0;
+  for (var b = 0; b < batch.length; b++)
+    s += relaxOne(net, batch[b].x, batch[b].y, CS).Lbar / batch.length;
+  return s;
+}
+
+// ------------------------------------------------------------------ the score
+// Excess = mean over the enumerated input space of KL(p* || p_model): exact in x and exact in y.
+function predict(net, x, deploy, CS, levels){
+  if (deploy !== "stoch")
+    return forward(net, x, { levels: levels === undefined ? 2 : levels, deploy: "det" }).p;
+  var m = net.W1.length, r0 = forward(net, x, { hFix: CS[0] }), out = [], k, c, j;
+  for (k = 0; k < net.W3.length; k++) out[k] = 0;
+  for (c = 0; c < CS.length; c++){
+    var w = 1;
+    for (j = 0; j < m; j++) w *= CS[c][j] === 1 ? r0.pj[j] : 1 - r0.pj[j];
+    if (w === 0) continue;
+    var rec = forward(net, x, { hFix: CS[c] });
+    for (k = 0; k < out.length; k++) out[k] += w * rec.p[k];
+  }
+  return out;
+}
+function excess(net, task, deploy, CS, levels){
+  var s = 0, b, k;
+  for (b = 0; b < task.N; b++){
+    var pm = predict(net, task.X[b], deploy, CS, levels);
+    for (k = 0; k < task.cfg.K; k++){
+      var p = task.pstar[b][k];
+      if (p > 0) s += p * Math.log(p / Math.max(1e-300, pm[k]));
+    }
+  }
+  return s / task.N;
+}
+function excessOfTable(tab, task){
+  var s = 0, b, k;
+  for (b = 0; b < task.N; b++) for (k = 0; k < task.cfg.K; k++){
+    var p = task.pstar[b][k];
+    if (p > 0) s += p * Math.log(p / Math.max(1e-300, tab[k])) / task.N;
+  }
+  return s;
+}
+function sampleData(task, n, seed){
+  var rnd = rng(seed * 48271 + 7), out = [], i, k;
+  for (i = 0; i < n; i++){
+    var b = Math.floor(rnd() * task.N) % task.N, u = rnd(), acc = 0, y = task.cfg.K - 1;
+    for (k = 0; k < task.cfg.K; k++){ acc += task.pstar[b][k]; if (u < acc){ y = k; break; } }
+    out.push({ x: task.X[b], y: y, b: b });
+  }
+  return out;
+}
+
+// ------------------------------------------------------------------ optimisers
+function adamState(net){ return { m: zeroLike(net), v: zeroLike(net), t: 0 }; }
+function adamStep(net, g, st, lr, plist){
+  st.t++;
+  var b1 = 0.9, b2 = 0.999, eps = 1e-8;
+  var c1 = 1 - Math.pow(b1, st.t), c2 = 1 - Math.pow(b2, st.t);
+  for (var i = 0; i < plist.length; i++){
+    var p = plist[i], gi = getP(g, p);
+    var mi = getP(st.m, p) * b1 + (1 - b1) * gi;
+    var vi = getP(st.v, p) * b2 + (1 - b2) * gi * gi;
+    setP(st.m, p, mi); setP(st.v, p, vi);
+    addP(net, p, -lr * (mi / c1) / (Math.sqrt(vi / c2) + eps));
+  }
+}
+function sgdStep(net, g, lr, plist){
+  for (var i = 0; i < plist.length; i++) addP(net, plist[i], -lr * getP(g, plist[i]));
+}
+
+// ------------------------------------------------------------------ training
+// estimator: "ste" | "clip" | "true" | "frozen" | "exact" | one of the mutated routes
+function trainRun(o){
+  var task = o.task, cfg = task.cfg, CS = o.CS;
+  var net = o.net ? copyNet(o.net) : initNet(cfg, o.seed === undefined ? 1 : o.seed);
+  var plist = paramList(cfg);
+  var keep = o.estimator === "frozen" ? plist.filter(function(p){ return !isEnc(p); }) : plist;
+  var st = adamState(net), data = o.data, rnd = rng((o.seed || 1) * 99991 + 5);
+  var curve = [], i, s;
+  for (s = 0; s < o.steps; s++){
+    var batch = [];
+    for (i = 0; i < o.batch; i++) batch.push(data[Math.floor(rnd() * data.length) % data.length]);
+    var g;
+    if (o.estimator === "exact") g = relaxGradBatch(net, batch, CS).g;
+    else if (o.estimator === "frozen") g = meanGrad(net, batch, { mode: "true", levels: o.levels });
+    else g = meanGrad(net, batch, { mode: o.estimator, clip: o.clip, levels: o.levels });
+    adamStep(net, g, st, o.lr, keep);
+    if (o.track && (s % Math.max(1, Math.floor(o.steps / 10)) === 0 || s === o.steps - 1))
+      curve.push({ step: s + 1, det: excess(net, task, "det", CS, o.levels),
+                   abs: meanAbsPre(net, task) });
+  }
+  return { net: net, curve: curve,
+           det: excess(net, task, "det", CS, o.levels),
+           stoch: excess(net, task, "stoch", CS, o.levels),
+           absPre: meanAbsPre(net, task),
+           sat: satFrac(net, task, o.clip === undefined ? Infinity : o.clip),
+           dead: deadFrac(net, task, o.clip === undefined ? Infinity : o.clip),
+           trainNLL: dataNLL(net, data, o.levels),
+           relaxNLL: relaxLoss(net, data.slice(0, Math.min(64, data.length)), CS) };
+}
+function meanAbsPre(net, task){
+  var s = 0, n = 0;
+  for (var b = 0; b < task.N; b++){
+    var r = forward(net, task.X[b], { levels: 2, deploy: "det" });
+    for (var j = 0; j < r.pre.length; j++){ s += Math.abs(r.pre[j]); n++; }
+  }
+  return s / n;
+}
+// the share of (unit, input) pairs whose backward pass a window of this width would zero
+function satFrac(net, task, clip){
+  if (!isFinite(clip)) return 0;
+  var s = 0, n = 0;
+  for (var b = 0; b < task.N; b++){
+    var r = forward(net, task.X[b], { levels: 2, deploy: "det" });
+    for (var j = 0; j < r.pre.length; j++){ if (Math.abs(r.pre[j]) > clip) s++; n++; }
+  }
+  return s / n;
+}
+// a unit is DEAD when every input in the space puts it outside the window: no gradient, ever
+function deadFrac(net, task, clip){
+  if (!isFinite(clip)) return 0;
+  var m = net.W1.length, alive = 0, j, b;
+  for (j = 0; j < m; j++){
+    var any = false;
+    for (b = 0; b < task.N && !any; b++){
+      var r = forward(net, task.X[b], { levels: 2, deploy: "det" });
+      if (Math.abs(r.pre[j]) <= clip) any = true;
+    }
+    if (any) alive++;
+  }
+  return (m - alive) / m;
+}
+function dataNLL(net, data, levels){
+  var s = 0;
+  for (var i = 0; i < data.length; i++)
+    s += nll(forward(net, data[i].x, { levels: levels === undefined ? 2 : levels, deploy: "det" }),
+             data[i].y);
+  return s / data.length;
+}
+
+// ------------------------------------------------------------------ comparison helpers
+function cosine(a, b){
+  var d = 0, na = 0, nb = 0;
+  for (var i = 0; i < a.length; i++){ d += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+  return na === 0 || nb === 0 ? 0 : d / Math.sqrt(na * nb);
+}
+function signAgree(a, b){
+  var n = 0, k = 0;
+  for (var i = 0; i < a.length; i++){
+    if (a[i] === 0 || b[i] === 0) continue;
+    n++; if ((a[i] > 0) === (b[i] > 0)) k++;
+  }
+  return n ? k / n : 0;
+}
+function norm(a){ var s = 0; for (var i = 0; i < a.length; i++) s += a[i] * a[i]; return Math.sqrt(s); }
+function maxAbs(a, b){
+  var w = 0;
+  for (var i = 0; i < a.length; i++) w = Math.max(w, Math.abs(a[i] - b[i]));
+  return w;
+}
+function relMax(a, b){
+  var w = 0;
+  for (var i = 0; i < a.length; i++)
+    w = Math.max(w, Math.abs(a[i] - b[i]) / Math.max(1e-12, Math.abs(a[i]) + Math.abs(b[i])));
+  return w;
+}
+// A central difference on the deterministic loss, and - separately - whether the perturbation
+// flipped any code at all. If it flipped none, the two forward passes are bit-identical and the
+// difference is EXACTLY zero, which is an identity rather than a tolerance.
+function centralDiff(net, batch, plist, opt, eps){
+  var out = [], flip = [], i, b;
+  var L = opt.levels === undefined ? 2 : opt.levels;
+  var evalAll = function(){
+    var s = 0, hs = [];
+    for (b = 0; b < batch.length; b++){
+      var r = forward(net, batch[b].x, { levels: L, deploy: "det" });
+      s += nll(r, batch[b].y) / batch.length;
+      hs.push(r.h.slice());
+    }
+    return { loss: s, hs: hs };
+  };
+  for (i = 0; i < plist.length; i++){
+    var p = plist[i], base = getP(net, p);
+    setP(net, p, base + eps); var A = evalAll();
+    setP(net, p, base - eps); var B = evalAll();
+    setP(net, p, base);
+    out[i] = (A.loss - B.loss) / (2 * eps);
+    var f = false;
+    for (b = 0; b < A.hs.length; b++) for (var j = 0; j < A.hs[b].length; j++)
+      if (A.hs[b][j] !== B.hs[b][j]) f = true;
+    flip[i] = f;
+  }
+  out.flipped = flip;
+  return out;
+}
+// The two straight-through idioms people actually write, swept over a range of pre-activations.
+//   A: h = q(x) + (x - x.detach())    the value is q(x) + 0, so it is exact by construction
+//   B: h = x + (q(x) - x).detach()    the value is a rounded sum, so it need not be exact
+// A difference this page went looking for and did not find. Both idioms are checked at every grid
+// size over a dense sweep of pre-activations; A is exact by construction, and B turns out to be
+// exact as well, because q - x is exact for |x| >= 1/2 and otherwise its rounding error is at most
+// half an ulp of q, so adding x back lands on q again.
+function idiomProbe(n, hi, levels){
+  var mismA = 0, mismB = 0, worst = 0, worstAt = 0, tot = 0, li, i;
+  for (li = 0; li < levels.length; li++) for (i = 0; i <= n; i++){
+    var v = -hi + (2 * hi * i) / n;
+    if (v === 0) continue;
+    var q = quant(v, levels[li]);
+    var a = q + (v - v), b = v + (q - v);
+    tot++;
+    if (a !== q) mismA++;
+    if (b !== q){
+      mismB++;
+      if (Math.abs(b - q) > worst){ worst = Math.abs(b - q); worstAt = v; }
+    }
+  }
+  return { tot: tot, mismA: mismA, mismB: mismB, worst: worst, worstAt: worstAt,
+           levels: levels.length };
+}
+// Adam divides by its own second moment, so scaling the whole route by c leaves the update almost
+// unchanged. "Almost" has a closed form: from a zero state the first step is exactly
+// -lr*g/(|g|+eps), so scaling by c moves it by lr*| c*g/(c|g|+eps) - g/(|g|+eps) |, an
+// eps-against-|g| effect with nothing to do with the derivative being right.
+function adamScaleProbe(net, g, lr, plist, c){
+  var n1 = copyNet(net), n2 = copyNet(net), gs = zeroLike(net), eps = 1e-8;
+  addInto(gs, g, c);
+  adamStep(n1, g, adamState(n1), lr, plist);
+  adamStep(n2, gs, adamState(n2), lr, plist);
+  var w = 0, mv = 0, pred = 0, worstRel = 0;
+  for (var i = 0; i < plist.length; i++){
+    var gi = getP(g, plist[i]), ag = Math.abs(gi);
+    var d1 = -lr * gi / (ag + eps), d2 = -lr * (c * gi) / (c * ag + eps);
+    var pi = Math.abs(d2 - d1);
+    var actual = Math.abs(getP(n1, plist[i]) - getP(n2, plist[i]));
+    w = Math.max(w, actual);
+    pred = Math.max(pred, pi);
+    worstRel = Math.max(worstRel, Math.abs(actual - pi));
+    mv = Math.max(mv, Math.abs(getP(n1, plist[i]) - getP(net, plist[i])));
+  }
+  return { maxDiff: w, predicted: pred, closedForm: mv === 0 ? 0 : worstRel / mv,
+           maxMove: mv, ratio: mv === 0 ? 0 : w / mv };
+}
+// central differences of the RELAXED loss, which unlike the deterministic one is actually smooth
+function centralDiffRelax(net, batch, plist, CS, eps){
+  var out = [], i;
+  for (i = 0; i < plist.length; i++){
+    var p = plist[i], base = getP(net, p);
+    setP(net, p, base + eps); var lp = relaxLoss(net, batch, CS);
+    setP(net, p, base - eps); var lm = relaxLoss(net, batch, CS);
+    setP(net, p, base);
+    out[i] = (lp - lm) / (2 * eps);
+  }
+  return out;
+}
+
+// ================================================================ study 1: the missing derivative
+function derivStudy(o){
+  var task = o.task, cfg = task.cfg, plist = paramList(cfg);
+  var net = initNet(cfg, o.seed), batch = o.data.slice(0, o.batch);
+  var enc = plist.filter(isEnc), dec = plist.filter(function(p){ return !isEnc(p); });
+  var idx = {}; plist.forEach(function(p, i){ idx[p.join("/")] = i; });
+  var pick = function(list, arr){ return list.map(function(p){ return arr[idx[p.join("/")]]; }); };
+  var gTrueRev = flatG(meanGrad(net, batch, { mode: "true" }), plist);
+  var gTrueDual = flatG(dualGrad(net, batch, { hMode: "true" }, plist), plist);
+  var gSteRev = flatG(meanGrad(net, batch, { mode: "ste" }), plist);
+  var gSteDual = flatG(dualGrad(net, batch, { hMode: "ste" }, plist), plist);
+  var gSgA = flatG(dualGrad(net, batch, { hMode: "sgA" }, plist), plist);
+  var gSgB = flatG(dualGrad(net, batch, { hMode: "sgB" }, plist), plist);
+  var cd = centralDiff(net, batch, plist, {}, 1e-5);
+  var cdBig = centralDiff(net, batch, plist, {}, 0.25);
+  // the finite difference is exactly zero unless the perturbation flipped a code - both directions
+  var encIdx = enc.map(function(p){ return idx[p.join("/")]; });
+  var cdZeros = 0, cdFlips = 0, cdMatch = 0, bigFlips = 0, i2;
+  for (i2 = 0; i2 < encIdx.length; i2++){
+    var z = cd[encIdx[i2]] === 0, fl = cd.flipped[encIdx[i2]];
+    if (z) cdZeros++;
+    if (fl) cdFlips++;
+    if (z === !fl) cdMatch++;
+    if (cdBig.flipped[encIdx[i2]]) bigFlips++;
+  }
+  // the detach idioms on this page's own activations, then swept over a range of pre-activations
+  var mismA = 0, tot = 0, b, j;
+  for (b = 0; b < batch.length; b++){
+    var A = dualLoss(net, batch[b].x, batch[b].y, null, { hMode: "sgA" }).h;
+    var Q = forward(net, batch[b].x, { levels: 2, deploy: "det" }).h;
+    for (j = 0; j < A.length; j++){ tot++; if (A[j] !== Q[j]) mismA++; }
+  }
+  var probe = idiomProbe(40000, 4, [2, 3, 4, 5, 9, 17, 129]);
+  var encTrue = pick(enc, gTrueRev), encSte = pick(enc, gSteRev);
+  var scaleProbe = adamScaleProbe(net, meanGrad(net, batch, { mode: "ste" }), 0.05, plist, 10);
+  return {
+    net: net, batch: batch, plist: plist, enc: enc, dec: dec, pick: pick, idx: idx,
+    trueEncMax: Math.max.apply(null, encTrue.map(Math.abs)),
+    trueEncDualMax: Math.max.apply(null, pick(enc, gTrueDual).map(Math.abs)),
+    trueEncCdMax: Math.max.apply(null, pick(enc, cd).map(Math.abs)),
+    bigEncMax: Math.max.apply(null, pick(enc, cdBig).map(Math.abs)),
+    nEnc: enc.length, cdZeros: cdZeros, cdFlips: cdFlips, cdMatch: cdMatch, bigFlips: bigFlips,
+    probe: probe, scaleProbe: scaleProbe,
+    decRelMax: relMax(pick(dec, gTrueRev), pick(dec, gTrueDual)),
+    decCdRelMax: relMax(pick(dec, gTrueRev), pick(dec, cd)),
+    decNorm: norm(pick(dec, gTrueRev)),
+    steEncNorm: norm(encSte),
+    steDualRelMax: relMax(gSteRev, gSteDual),
+    steDualAbsMax: maxAbs(gSteRev, gSteDual),
+    sgAExact: maxAbs(gSteDual, gSgA),
+    sgBGap: maxAbs(gSteDual, gSgB),
+    mismA: mismA, hTot: tot,
+    gTrueRev: gTrueRev, gSteRev: gSteRev, cd: cd
+  };
+}
+
+// ================================================================ study 2: STE against the exact
+// relaxation gradient, at INITIALISATION - before anything has had a chance to decay to nothing
+function exactStudy(o){
+  var task = o.task, cfg = task.cfg, CS = o.CS, plist = paramList(cfg);
+  var net = initNet(cfg, o.seed), batch = o.data.slice(0, o.batch);
+  var enc = plist.filter(isEnc), dec = plist.filter(function(p){ return !isEnc(p); });
+  var idx = {}; plist.forEach(function(p, i){ idx[p.join("/")] = i; });
+  var pick = function(list, arr){ return list.map(function(p){ return arr[idx[p.join("/")]]; }); };
+  var R = relaxGradBatch(net, batch, CS);
+  var gEx = flatG(R.g, plist);
+  var gSte = flatG(meanGrad(net, batch, { mode: "ste" }), plist);
+  var gClip = flatG(meanGrad(net, batch, { mode: "clip", clip: o.clip }), plist);
+  // two exact forms of the same derivative, computed by different loops over the same codes
+  var twoForms = 0, zeroScore = 0, wsum = 0, b, j;
+  for (b = 0; b < batch.length; b++){
+    var D = relaxGradDirect(net, batch[b].x, batch[b].y, CS);
+    var S = relaxGradScore(net, batch[b].x, batch[b].y, CS, D.R);
+    for (j = 0; j < D.dpre.length; j++){
+      twoForms = Math.max(twoForms, Math.abs(D.dpre[j] - S.dpre[j]) /
+        Math.max(1e-12, Math.abs(D.dpre[j]) + Math.abs(S.dpre[j])));
+      zeroScore = Math.max(zeroScore, Math.abs(S.score0[j]));
+    }
+    wsum = Math.max(wsum, Math.abs(D.R.sumW - 1));
+  }
+  // and against central differences of the relaxed loss, which IS differentiable
+  var cdr = centralDiffRelax(net, batch, plist, CS, 1e-5);
+  var encEx = pick(enc, gEx), encSte = pick(enc, gSte), encClip = pick(enc, gClip);
+  return {
+    net: net, batch: batch, Lbar: R.Lbar,
+    cosAll: cosine(gEx, gSte), cosEnc: cosine(encEx, encSte), cosEncClip: cosine(encEx, encClip),
+    cosDec: cosine(pick(dec, gEx), pick(dec, gSte)),
+    signEnc: signAgree(encEx, encSte), signEncClip: signAgree(encEx, encClip),
+    ratio: norm(encSte) / norm(encEx), normEx: norm(encEx), normSte: norm(encSte),
+    twoForms: twoForms, zeroScore: zeroScore, wsum: wsum,
+    cdRelMax: relMax(gEx, cdr), cdEncRelMax: relMax(encEx, pick(enc, cdr)),
+    gEx: gEx, gSte: gSte, plist: plist, enc: enc, pick: pick
+  };
+}
+
+// ================================================================ study 3: train x deploy, 2 by 2
+function deployStudy(o){
+  var task = o.task, CS = o.CS, rows = [], i;
+  var spec = [["ste", Infinity, "identity route <span class='lg'>no window</span>", 1]];
+  for (i = 0; i < o.clips.length; i++)
+    spec.push(["clip", o.clips[i], "clipped to |pre| &le; " + o.clips[i], 1]);
+  spec.push(["exact", Infinity, "the exact gradient of the relaxation", CS.length]);
+  for (i = 0; i < spec.length; i++){
+    var r = trainRun({ task: task, CS: CS, data: o.data, steps: o.steps, batch: o.batch, lr: o.lr,
+                       estimator: spec[i][0], clip: spec[i][1], seed: o.seed, track: true });
+    rows.push({ key: spec[i][0] + (isFinite(spec[i][1]) ? spec[i][1] : ""), name: spec[i][2],
+                clip: spec[i][1], evals: spec[i][3], det: r.det, stoch: r.stoch,
+                absPre: r.absPre, trainNLL: r.trainNLL, relaxNLL: r.relaxNLL, curve: r.curve,
+                net: r.net });
+  }
+  var fr = trainRun({ task: task, CS: CS, data: o.data, steps: o.steps, batch: o.batch, lr: o.lr,
+                      estimator: "frozen", seed: o.seed });
+  var tr = trainRun({ task: task, CS: CS, data: o.data, steps: o.steps, batch: o.batch, lr: o.lr,
+                      estimator: "true", seed: o.seed });
+  var tcopy = copyNet(task.teacher);
+  var unif = task.marg.map(function(){ return 1 / task.cfg.K; });
+  var nulls = [
+    { name: "the teacher itself <span class='lg'>the floor</span>",
+      det: excess(tcopy, task, "det", CS, 2), stoch: excess(tcopy, task, "stoch", CS, 2) },
+    { name: "the encoder frozen at initialisation <span class='lg'>the null</span>",
+      det: fr.det, stoch: fr.stoch },
+    { name: "trained on the honest gradient <span class='lg'>= the null, bit for bit</span>",
+      det: tr.det, stoch: tr.stoch },
+    { name: "a marginal predictor that ignores x", det: excessOfTable(task.marg, task),
+      stoch: excessOfTable(task.marg, task) },
+    { name: "uniform over " + task.cfg.K + " classes", det: excessOfTable(unif, task),
+      stoch: excessOfTable(unif, task) }
+  ];
+  var ste = rows[0], best = rows.reduce(function(p, q){ return q.det < p.det ? q : p; }, rows[0]);
+  var bestCheap = rows.filter(function(r){ return r.evals === 1; })
+                      .reduce(function(p, q){ return q.det < p.det ? q : p; }, rows[0]);
+  var exact = rows[rows.length - 1];
+  return { rows: rows, nulls: nulls, frozen: fr, trueRun: tr, ste: ste, best: best,
+           bestCheap: bestCheap, exact: exact,
+           steBeatsNull: ste.det < fr.det, cheapBeatsExact: bestCheap.det < exact.det,
+           anyBeatsNull: rows.some(function(r){ return r.det < fr.det; }),
+           frozenGap: Math.max(Math.abs(fr.det - tr.det), Math.abs(fr.stoch - tr.stoch)),
+           teacherExcess: nulls[0].det, teacherStoch: nulls[0].stoch };
+}
+
+// ================================================================ study 4: what clipping does
+function clipStudy(o){
+  var task = o.task, CS = o.CS, out = [];
+  for (var i = 0; i < o.clips.length; i++){
+    var c = o.clips[i];
+    var r = trainRun({ task: task, CS: CS, data: o.data, steps: o.steps, batch: o.batch, lr: o.lr,
+                       estimator: isFinite(c) ? "clip" : "ste", clip: c, seed: o.seed });
+    out.push({ clip: c, det: r.det, stoch: r.stoch, absPre: r.absPre, sat: r.sat, dead: r.dead,
+               outside1: satFrac(r.net, task, 1), net: r.net });
+  }
+  // the identity: an infinite window IS the plain estimator, bit for bit
+  var a = trainRun({ task: task, CS: CS, data: o.data, steps: 12, batch: o.batch, lr: o.lr,
+                     estimator: "clip", clip: Infinity, seed: o.seed });
+  var b = trainRun({ task: task, CS: CS, data: o.data, steps: 12, batch: o.batch, lr: o.lr,
+                     estimator: "ste", seed: o.seed });
+  var pl = paramList(task.cfg);
+  var best = out.reduce(function(p, q){ return q.det < p.det ? q : p; }, out[0]);
+  return { rows: out, best: best, infGap: maxAbs(flatG(a.net, pl), flatG(b.net, pl)),
+           infDetGap: Math.abs(a.det - b.det) };
+}
+
+// ================================================================ study 5: can a diagnostic see a
+// broken backward pass? Nine routes, three candidate tests, one control.
+var VARIANTS = [
+  ["ste", "identity route <span class='lg'>correct</span>", true, Infinity],
+  ["clip", "clipped to |pre| &le; 1 <span class='lg'>correct</span>", true, 1],
+  ["signflip", "the sign flipped", false, Infinity],
+  ["shift", "an off-by-one in the routing matrix", false, Infinity],
+  ["scale", "scaled by 10", false, 10],
+  ["preGate", "gated by pre itself", false, Infinity],
+  ["hGate", "gated by the code h", false, Infinity],
+  ["absRoute", "the sign discarded", false, Infinity],
+  ["true", "no route at all <span class='lg'>the honest derivative</span>", false, Infinity]
+];
+function variantStudy(o){
+  var task = o.task, cfg = task.cfg, CS = o.CS, plist = paramList(cfg);
+  var enc = plist.filter(isEnc);
+  var idx = {}; plist.forEach(function(p, i){ idx[p.join("/")] = i; });
+  var pick = function(list, arr){ return list.map(function(p){ return arr[idx[p.join("/")]]; }); };
+  // one shared set of trials so every route is judged on identical inits and identical batches
+  var trials = [];
+  for (var s = 0; s < o.trials; s++){
+    var net = initNet(cfg, o.seed + s * 37), batch = [], rnd = rng(o.seed + s * 977);
+    for (var b = 0; b < o.batch; b++)
+      batch.push(o.data[Math.floor(rnd() * o.data.length) % o.data.length]);
+    trials.push({ net: net, batch: batch,
+                  gEx: flatG(relaxGradBatch(net, batch, CS).g, plist),
+                  L0: dataNLL(net, batch, 2), R0: relaxLoss(net, batch, CS) });
+  }
+  var rows = [], i, t;
+  for (i = 0; i < VARIANTS.length; i++){
+    var V = VARIANTS[i], desc = 0, moved = 0, descRelax = 0, cosSum = 0;
+    for (t = 0; t < trials.length; t++){
+      var T = trials[t];
+      var g = meanGrad(T.net, T.batch, { mode: V[0], clip: V[3] });
+      cosSum += cosine(pick(enc, T.gEx), pick(enc, flatG(g, plist)));
+      var nA = copyNet(T.net); sgdStep(nA, g, o.probeLr, plist);
+      if (dataNLL(nA, T.batch, 2) < T.L0) desc++;
+      var nB = copyNet(T.net); sgdStep(nB, g, o.probeLr, enc);
+      if (dataNLL(nB, T.batch, 2) !== T.L0) moved++;
+      if (relaxLoss(nB, T.batch, CS) < T.R0) descRelax++;
+    }
+    var tr = trainRun({ task: task, CS: CS, data: o.data, steps: o.steps, batch: o.batch, lr: o.lr,
+                        estimator: V[0], clip: V[3], seed: o.seed });
+    rows.push({ key: V[0], name: V[1], good: V[2], descend: desc / trials.length,
+                moved: moved / trials.length, descRelax: descRelax / trials.length,
+                cos: cosSum / trials.length, det: tr.det, n: trials.length });
+  }
+  var good = rows.filter(function(r){ return r.good; });
+  var bad = rows.filter(function(r){ return !r.good; });
+  var worstGood = Math.max.apply(null, good.map(function(r){ return r.det; }));
+  var bestBad = Math.min.apply(null, bad.map(function(r){ return r.det; }));
+  var byKey = {}; rows.forEach(function(r){ byKey[r.key] = r; });
+  // an identity: negating the route negates the whole encoder gradient, so the cosine negates too
+  var flipIdentity = byKey.signflip.cos + byKey.ste.cos;
+  return { rows: rows, byKey: byKey, flipIdentity: flipIdentity, nGood: good.length, nBad: bad.length,
+           scaleGap: Math.abs(byKey.scale.det - byKey.ste.det),
+           trueIsNull: byKey["true"].det,
+           descendCaught: bad.filter(function(r){ return r.descend < 0.5; }).length,
+           relaxCaught: bad.filter(function(r){ return r.descRelax < 0.5; }).length,
+           cosCaught: bad.filter(function(r){ return r.cos <= 0; }).length,
+           maxMoved: Math.max.apply(null, rows.map(function(r){ return r.moved; })),
+           goodDescend: good.every(function(r){ return r.descend > 0.5; }),
+           goodRelax: good.every(function(r){ return r.descRelax > 0.5; }),
+           goodCos: Math.min.apply(null, good.map(function(r){ return r.cos; })),
+           worstGood: worstGood, bestBad: bestBad, separated: bestBad > worstGood };
+}
+
+// ================================================================ study 6: the quantiser step
+// As the grid gets finer the quantiser tends to the clamp, and the straight-through gradient tends
+// to the gradient of the clamped network - which at the limit it IS, bit for bit.
+function levelStudy(o){
+  var task = o.task, cfg = task.cfg, plist = paramList(cfg);
+  var net = initNet(cfg, o.seed), batch = o.data.slice(0, o.batch);
+  var gLim = flatG(meanGrad(net, batch, { mode: "ste", levels: 1e9 }), plist);
+  var gId = flatG(meanGrad(net, batch, { mode: "ste", levels: -1 }), plist);
+  var rows = [], i, b, j;
+  var clampOf = function(v){ return v < -1 ? -1 : v > 1 ? 1 : v; };
+  for (i = 0; i < o.levels.length; i++){
+    var L = o.levels[i], gap = 0;
+    for (b = 0; b < batch.length; b++){
+      var r = forward(net, batch[b].x, { levels: L, deploy: "det" });
+      for (j = 0; j < r.pre.length; j++) gap = Math.max(gap, Math.abs(r.h[j] - clampOf(r.pre[j])));
+    }
+    var g = flatG(meanGrad(net, batch, { mode: "ste", levels: L }), plist);
+    var d = [];
+    for (j = 0; j < g.length; j++) d[j] = g[j] - gLim[j];
+    rows.push({ L: L, step: 2 / (L - 1), gap: gap, cos: cosine(g, gLim),
+                dist: norm(d) / norm(gLim), nll: dataNLL(net, batch, L) });
+  }
+  var gLim2 = flatG(meanGrad(net, batch, { mode: "ste", levels: 1e9 }), plist);
+  return { rows: rows, limitGap: maxAbs(gLim, gLim2), clampVsId: maxAbs(gLim, gId),
+           clampNll: dataNLL(net, batch, 1e9), idNll: dataNLL(net, batch, -1) };
+}
+
+// ================================================================ study 7: ranker over a pool
+function rankerStudy(o){
+  var task = o.task, cfg = task.cfg, CS = o.CS, plist = paramList(cfg);
+  var enc = plist.filter(isEnc);
+  var idx = {}; plist.forEach(function(p, i){ idx[p.join("/")] = i; });
+  var pick = function(list, arr){ return list.map(function(p){ return arr[idx[p.join("/")]]; }); };
+  var runs = [], ci, li, si;
+  for (ci = 0; ci < o.clips.length; ci++) for (li = 0; li < o.lrs.length; li++)
+    for (si = 0; si < o.seeds.length; si++){
+      var c = o.clips[ci], lr = o.lrs[li], sd = o.seeds[si];
+      var net = initNet(cfg, sd), batch = o.data.slice(0, o.batch);
+      var mode = isFinite(c) ? "clip" : "ste";
+      var g = meanGrad(net, batch, { mode: mode, clip: c });
+      var gEx = flatG(relaxGradBatch(net, batch, CS).g, plist);
+      var gf = flatG(g, plist);
+      var L0 = dataNLL(net, batch, 2);
+      var nA = copyNet(net); sgdStep(nA, g, 0.05, plist);
+      var probe = trainRun({ task: task, CS: CS, data: o.data, steps: 10, batch: o.batch, lr: lr,
+                             estimator: mode, clip: c, seed: sd });
+      var full = trainRun({ task: task, CS: CS, data: o.data, steps: o.steps, batch: o.batch,
+                            lr: lr, estimator: mode, clip: c, seed: sd });
+      runs.push({ clip: c, lr: lr, seed: sd, cell: (isFinite(c) ? c : "inf") + "|" + lr,
+                  cos: cosine(pick(enc, gEx), pick(enc, gf)),
+                  sign: signAgree(pick(enc, gEx), pick(enc, gf)),
+                  desc: L0 - dataNLL(nA, batch, 2), probe: probe.trainNLL,
+                  trainNLL: full.trainNLL, absPre: full.absPre, sat: full.sat,
+                  quality: -full.det, det: full.det });
+    }
+  var cands = [
+    ["the cosine with the exact gradient, at initialisation", "no", function(r){ return r.cos; }],
+    ["per-coordinate sign agreement, at initialisation", "no", function(r){ return r.sign; }],
+    ["does one step reduce the loss <span class='lg'>the usual test</span>", "no",
+      function(r){ return r.desc; }],
+    ["the mean |pre| the run ends at", "yes", function(r){ return -r.absPre; }],
+    ["ten steps of training", "yes", function(r){ return -r.probe; }],
+    ["the training loss you were watching anyway", "yes", function(r){ return -r.trainNLL; }]
+  ];
+  var scored = cands.map(function(c){
+    var A = auc(runs.map(function(r){ return r.quality; }), runs.map(c[2]));
+    var W = aucWithin(runs, c[2]);
+    return { name: c[0], train: c[1], auc: A.auc, pairs: A.pairs, within: W.auc,
+             withinPairs: W.pairs };
+  });
+  scored.sort(function(a, b){ return b.auc - a.auc; });
+  return { runs: runs, scored: scored, n: runs.length,
+           spread: Math.max.apply(null, runs.map(function(r){ return r.det; })) -
+                   Math.min.apply(null, runs.map(function(r){ return r.det; })) };
+}
+function auc(truth, cand){
+  var conc = 0, disc = 0, tied = 0, i, j;
+  for (i = 0; i < truth.length; i++) for (j = i + 1; j < truth.length; j++){
+    if (truth[i] === truth[j]) continue;
+    var hi = truth[i] > truth[j] ? i : j, lo = hi === i ? j : i;
+    if (cand[hi] > cand[lo]) conc++; else if (cand[hi] < cand[lo]) disc++; else tied++;
+  }
+  var pairs = conc + disc + tied;
+  return { auc: pairs ? (conc + 0.5 * tied) / pairs : 0.5, pairs: pairs };
+}
+function aucWithin(runs, f){
+  var conc = 0, disc = 0, tied = 0, i, j;
+  for (i = 0; i < runs.length; i++) for (j = i + 1; j < runs.length; j++){
+    if (runs[i].cell !== runs[j].cell) continue;
+    if (runs[i].quality === runs[j].quality) continue;
+    var hi = runs[i].quality > runs[j].quality ? i : j, lo = hi === i ? j : i;
+    if (f(runs[hi]) > f(runs[lo])) conc++; else if (f(runs[hi]) < f(runs[lo])) disc++; else tied++;
+  }
+  var pairs = conc + disc + tied;
+  return { auc: pairs ? (conc + 0.5 * tied) / pairs : 0.5, pairs: pairs };
+}
+
+// ================================================================ the page's own assertions
+function selfCheck(o){
+  var out = [], n = 0;
+  function ck(c, label){ n++; if (!c) out.push("FAIL  " + label); }
+  var t = o.task, der = o.der, exa = o.exa, k, b;
+
+  // --- the task is what it claims to be
+  for (b = 0; b < t.N; b++){
+    var s = 0;
+    for (k = 0; k < t.cfg.K; k++){
+      s += t.pstar[b][k];
+      ck(t.pstar[b][k] > 0, "a true probability is not positive");
+    }
+    ck(Math.abs(s - 1) < 1e-12, "the true conditional does not normalise at input " + b);
+  }
+  ck(t.N === (1 << t.cfg.din), "the input space is not enumerated");
+  ck(t.H > 0 && t.H < t.logK, "the conditional entropy is outside (0, log K)");
+  ck(t.MI > 0, "the task carries no mutual information");
+  ck(t.MI + t.H <= t.logK + 1e-12, "H(y|x) + I(x;y) exceeds log K");
+  ck(t.live === t.cfg.m, "not every teacher feature splits the input space (" + t.live + " of " +
+     t.cfg.m + ")");
+  var mg = 0;
+  for (k = 0; k < t.cfg.K; k++) mg += t.marg[k];
+  ck(Math.abs(mg - 1) < 1e-12, "the marginal does not normalise");
+
+  // --- the floor and the nulls, all exact
+  ck(o.dep.teacherExcess === 0, "the teacher's own excess is not exactly zero (" +
+     o.dep.teacherExcess + ")");
+  ck(Math.abs(o.dep.nulls[3].det - t.MI) < 1e-12,
+     "the marginal predictor's excess is not the mutual information");
+  ck(Math.abs(o.dep.nulls[4].det - (t.logK - t.H)) < 1e-12,
+     "the uniform predictor's excess is not log K - H");
+  o.dep.nulls.forEach(function(r){
+    ck(r.det >= 0, "a null has negative excess"); ck(r.stoch >= 0, "a null has negative stochastic excess");
+  });
+  o.dep.rows.forEach(function(r){
+    ck(r.det >= 0 && r.stoch >= 0, "a trained model has negative excess, which KL cannot be");
+  });
+
+  // --- the derivative that is not there
+  ck(der.trueEncMax === 0, "the honest encoder gradient is not exactly zero (" +
+     der.trueEncMax + ")");
+  ck(der.trueEncDualMax === 0, "forward mode does not agree that it is exactly zero");
+  // the identity, both directions: a finite difference is exactly zero iff no code flipped
+  ck(der.cdMatch === der.nEnc, "a finite difference was nonzero without a code flip, or zero with " +
+     "one (" + der.cdMatch + " of " + der.nEnc + " coordinates agree)");
+  ck(der.cdZeros + der.cdFlips === der.nEnc, "the zero count and the flip count do not partition " +
+     "the encoder coordinates");
+  ck(der.bigFlips > 0, "even a coarse perturbation flipped no code at all");
+  ck(der.bigEncMax > 0, "even a coarse difference sees nothing, so the loss is globally flat");
+  ck(der.decNorm > 0, "the decoder gradient is zero too, so nothing is being measured");
+  ck(der.decRelMax < 1e-9, "the decoder's reverse mode disagrees with forward mode");
+  ck(der.decCdRelMax < 1e-5, "the decoder gradient disagrees with a central difference");
+  ck(der.steEncNorm > 0, "the straight-through gradient is zero as well");
+  ck(der.steDualRelMax < 1e-9, "the straight-through gradient does not match forward mode");
+  ck(der.steDualRelMax < der.decCdRelMax, "forward mode is no sharper than a central difference");
+  ck(der.sgAExact === 0,
+     "q(x) + (x - x.detach()) is not bit-identical to the routed gradient");
+  ck(der.mismA === 0, "the canonical detach idiom changed the forward value");
+  ck(der.probe.mismA === 0, "the canonical idiom is not exact across the whole sweep");
+  ck(der.probe.mismB === 0, "the second idiom is NOT exact after all - the page says it is (" +
+     der.probe.mismB + " of " + der.probe.tot + ")");
+  ck(der.probe.worst === 0, "the second idiom moved a value");
+  ck(der.probe.tot > 100000, "the idiom sweep is too small to be worth quoting");
+  ck(der.probe.levels >= 5, "the idiom sweep did not cover several grid sizes");
+  // Adam divides by its own second moment, so a globally mis-scaled route barely moves - and how
+  // little it moves is a closed form, not a tolerance
+  ck(der.scaleProbe.closedForm < 1e-11,
+     "the measured scale residual does not match its closed form (" +
+     der.scaleProbe.closedForm + ")");
+  ck(der.scaleProbe.maxMove > 0, "the Adam probe did not move anything");
+
+  // --- the exact relaxation gradient
+  ck(exa.wsum < 1e-12, "the code distribution does not sum to one");
+  ck(exa.zeroScore < 1e-12, "the score function does not have mean zero");
+  ck(exa.twoForms < 1e-9, "the marginal and score forms of the exact gradient disagree");
+  ck(exa.cdRelMax < 1e-5,
+     "the exact relaxation gradient disagrees with central differences of the relaxed loss");
+  ck(exa.cdEncRelMax < 1e-5, "the encoder half disagrees with central differences");
+  ck(exa.normEx > 0, "the exact relaxation gradient is zero");
+  ck(Math.abs(exa.cosEnc) <= 1 + 1e-12, "a cosine left [-1, 1]");
+  ck(Math.abs(exa.cosDec) <= 1 + 1e-12, "the decoder cosine left [-1, 1]");
+  ck(exa.signEnc >= 0 && exa.signEnc <= 1, "a sign-agreement rate left [0, 1]");
+  ck(exa.ratio > 0, "the straight-through gradient has no magnitude");
+  ck(exa.Lbar > 0, "the relaxed loss is not positive");
+
+  // --- train x deploy
+  ck(o.dep.frozenGap === 0,
+     "training on the honest gradient is not identical to freezing the encoder (" +
+     o.dep.frozenGap + ")");
+  ck(o.dep.anyBeatsNull, "not one estimator beat a frozen encoder");
+  ck(o.dep.best.det < o.dep.nulls[4].det,
+     "the best trained run is worse than predicting uniformly");
+  ck(o.dep.exact.evals === o.CSlen, "the exact gradient's cost is not one pass per code");
+  ck(o.dep.rows.filter(function(r){ return r.evals === 1; }).length === o.dep.rows.length - 1,
+     "more than one row claims to be cheap");
+  ck(Math.abs(o.dep.nulls[1].det - o.dep.frozen.det) < 1e-15, "the null row is not the frozen run");
+
+  // --- clipping
+  var cl = o.clip;
+  ck(cl.infGap === 0, "an infinite clip window is not the plain estimator bit for bit");
+  ck(cl.infDetGap === 0, "an infinite clip window scores differently");
+  cl.rows.forEach(function(r){
+    ck(r.dead >= 0 && r.dead <= 1, "a dead fraction left [0, 1]");
+    ck(r.sat >= 0 && r.sat <= 1, "a saturated share left [0, 1]");
+    ck(r.det > 0, "a clip row has non-positive excess");
+    ck(isFinite(r.clip) || (r.sat === 0 && r.dead === 0),
+       "an infinite window still zeroed part of the backward pass");
+  });
+  ck(cl.rows[0].absPre > 0, "mean |pre| is not positive");
+
+  // --- the diagnostics
+  var v = o.var;
+  ck(v.rows.length === 9, "the variant table lost a row");
+  ck(v.nGood === 2 && v.nBad === 7, "the variant table's good/broken split changed");
+  ck(v.goodDescend, "a correct route failed the plain descent test");
+  ck(v.goodRelax, "a correct route failed the relaxed-loss control");
+  ck(v.goodCos > 0, "a correct route has a non-positive cosine with the exact gradient");
+  ck(v.descendCaught < v.nBad,
+     "the plain descent test caught every broken route, which it does not");
+  ck(v.relaxCaught >= v.descendCaught, "the control is worse than the test it is controlling");
+  ck(v.cosCaught >= v.descendCaught, "the cosine test is worse than the descent test");
+  ck(v.maxMoved < 1, "an encoder-only step moved the deterministic loss on every trial");
+  // identities: flipping the route negates the cosine exactly, and the no-route run IS the null
+  ck(v.flipIdentity === 0, "flipping the route did not negate the cosine exactly (" +
+     v.flipIdentity + ")");
+  ck(Math.abs(v.trueIsNull - o.dep.nulls[1].det) < 1e-15,
+     "the no-route variant is not the frozen-encoder null");
+  ck(v.byKey.signflip.descend > 0.5 && v.byKey.signflip.cos < 0,
+     "the sign-flipped route is not the clean example: caught by the cosine, missed by the step");
+  v.rows.forEach(function(r){
+    ck(r.descend >= 0 && r.descend <= 1, "a descent rate left [0, 1]");
+    ck(r.moved >= 0 && r.moved <= 1, "a move rate left [0, 1]");
+    ck(r.det > 0, "a variant scored a non-positive excess");
+    ck(r.n > 0, "a variant ran no trials");
+  });
+
+  // --- the quantiser step
+  var lv = o.lev;
+  ck(lv.limitGap === 0, "the fine-grid limit is not reproducible bit for bit");
+  ck(lv.clampVsId > 0, "the clamp and the identity give the same gradient, so the row is empty");
+  ck(lv.rows[0].gap > lv.rows[lv.rows.length - 1].gap,
+     "the forward gap does not shrink as the grid gets finer");
+  ck(lv.rows[lv.rows.length - 1].cos > lv.rows[0].cos,
+     "the gradient does not approach the fine-grid one");
+  lv.rows.forEach(function(r){
+    ck(r.cos <= 1 + 1e-12, "a cosine exceeded one");
+    ck(r.gap <= r.step / 2 + 1e-12, "a forward gap exceeded half the grid step");
+  });
+
+  // --- the ranker, once the pool has been trained
+  if (o.pool){
+    ck(o.pool.n > 0, "the pool is empty");
+    ck(o.pool.spread > 0, "every configuration in the pool scored the same");
+    o.pool.scored.forEach(function(s){
+      ck(s.auc >= 0 && s.auc <= 1, "an AUC left [0, 1]");
+      ck(s.pairs > 0, "a candidate scored no pairs");
+      ck(s.within >= 0 && s.within <= 1, "a within-cell AUC left [0, 1]");
+      ck(s.withinPairs > 0, "a candidate scored no within-cell pairs");
+    });
+  }
+  return { pass: n - out.length, total: n, lines: out };
+}
+// ===== ENGINE:END =====
+
+// ---------------------------------------------------------------- small view helpers
+function $(id){ return document.getElementById(id); }
+function f2(x){ return (Math.round(x * 100) / 100).toFixed(2); }
+function f3(x){ return (Math.round(x * 1000) / 1000).toFixed(3); }
+function f4(x){ return (Math.round(x * 10000) / 10000).toFixed(4); }
+function f6(x){ return (Math.round(x * 1e6) / 1e6).toFixed(6); }
+function num(n){ return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+function ex(x){ return x === 0 ? "0.0e+0" : Number(x).toExponential(1).replace("e", "e"); }
+function ex2(x){ return x === 0 ? "0.0e+0" : Number(x).toExponential(2); }
+function pct(x){ return f1(x * 100) + "%"; }
+function f1(x){ return (Math.round(x * 10) / 10).toFixed(1); }
+function cls(good){ return good ? "ok" : "bad"; }
+function win(c){ return isFinite(c) ? f2(c) : "none"; }
+
+var LRS = [0.01, 0.02, 0.05, 0.1, 0.15, 0.3];
+var STEPS = [60, 100, 150, 200, 300];
+var NTRS = [150, 300, 600, 1200, 2500, 5000];
+var CLIPS = [0.5, 1, 2];
+var LADDER = [0.25, 0.5, 1, 2, 4, Infinity];
+var LEVELS = [2, 3, 5, 9, 17, 33, 129];
+
+function opts(){
+  return { m: +$("sM").value, clip: CLIPS[+$("sC").value], lr: LRS[+$("sL").value],
+           steps: STEPS[+$("sT").value], ntr: NTRS[+$("sN").value], seed: +$("sS").value };
+}
+function showOpts(){
+  var o = opts();
+  $("vM").textContent = o.m; $("vC").textContent = f2(o.clip); $("vL").textContent = o.lr;
+  $("vT").textContent = o.steps; $("vN").textContent = num(o.ntr); $("vS").textContent = o.seed;
+}
+function cfgOf(o){
+  return { din: 6, m: o.m, hid: 8, K: 4, sharp: 2.2, wInit: 1.0, ntr: o.ntr, batch: 24,
+           seed: o.seed };
+}
+
+// ---------------------------------------------------------------- little plots
+function axes(w, h, pad){
+  return "<line x1='" + pad + "' y1='" + (h - pad) + "' x2='" + (w - 6) + "' y2='" + (h - pad) +
+    "' stroke='#cbd5e1'/><line x1='" + pad + "' y1='6' x2='" + pad + "' y2='" + (h - pad) +
+    "' stroke='#cbd5e1'/>";
+}
+function lineChart(series, opt){
+  var w = 520, h = 210, pad = 40, i, s, k;
+  var xs = [], ys = [];
+  for (s = 0; s < series.length; s++) for (i = 0; i < series[s].pts.length; i++){
+    xs.push(series[s].pts[i][0]); ys.push(series[s].pts[i][1]);
+  }
+  var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+  var y0 = opt.y0 === undefined ? Math.min.apply(null, ys) : opt.y0;
+  var y1 = opt.y1 === undefined ? Math.max.apply(null, ys) : opt.y1;
+  if (y1 === y0) y1 = y0 + 1;
+  var X = function(v){ return pad + (w - pad - 10) * (x1 === x0 ? 0.5 : (v - x0) / (x1 - x0)); };
+  var Y = function(v){ return h - pad - (h - pad - 12) * (v - y0) / (y1 - y0); };
+  var out = "<svg viewBox='0 0 " + w + " " + h + "' role='img'>" + axes(w, h, pad);
+  for (k = 0; k <= 3; k++){
+    var yv = y0 + (y1 - y0) * k / 3;
+    out += "<text x='4' y='" + (Y(yv) + 4) + "' font-size='9' fill='#64748b'>" + f3(yv) +
+      "</text><line x1='" + pad + "' y1='" + Y(yv) + "' x2='" + (w - 6) + "' y2='" + Y(yv) +
+      "' stroke='#eef2f7'/>";
+  }
+  for (s = 0; s < series.length; s++){
+    var d = "";
+    for (i = 0; i < series[s].pts.length; i++)
+      d += (i ? " L" : "M") + X(series[s].pts[i][0]) + " " + Y(series[s].pts[i][1]);
+    out += "<path d='" + d + "' fill='none' stroke='" + series[s].col + "' stroke-width='2'" +
+      (series[s].dash ? " stroke-dasharray='4 3'" : "") + "/>";
+    out += "<text x='" + (pad + 6) + "' y='" + (16 + s * 13) + "' font-size='10' fill='" +
+      series[s].col + "' font-weight='700'>" + series[s].name + "</text>";
+  }
+  out += "<text x='" + (w - 6) + "' y='" + (h - pad + 14) + "' font-size='9' fill='#64748b' " +
+    "text-anchor='end'>" + (opt.xlab || "") + "</text>";
+  out += "<text x='" + pad + "' y='" + (h - pad + 14) + "' font-size='9' fill='#64748b'>" +
+    (opt.x0lab || f2(x0)) + "</text></svg>";
+  return out;
+}
+function barChart(rows, opt){
+  var w = 520, h = 34 + rows.length * 22, pad = 168, i;
+  var mx = Math.max.apply(null, rows.map(function(r){ return r.v; }));
+  if (!(mx > 0)) mx = 1;
+  var out = "<svg viewBox='0 0 " + w + " " + h + "' role='img'>";
+  for (i = 0; i < rows.length; i++){
+    var y = 12 + i * 22, L = (w - pad - 60) * rows[i].v / mx;
+    out += "<text x='0' y='" + (y + 11) + "' font-size='10' fill='#334155'>" + rows[i].name +
+      "</text>";
+    out += "<rect x='" + pad + "' y='" + y + "' width='" + Math.max(1, L) + "' height='13' rx='3' " +
+      "fill='" + rows[i].col + "'/>";
+    out += "<text x='" + (pad + Math.max(1, L) + 5) + "' y='" + (y + 11) + "' font-size='10' " +
+      "fill='#64748b'>" + rows[i].lab + "</text>";
+  }
+  out += "<text x='0' y='" + (h - 3) + "' font-size='9' fill='#64748b'>" + (opt.foot || "") +
+    "</text></svg>";
+  return out;
+}
+function aucChart(scored, within){
+  var w = 520, h = 40 + scored.length * 24, pad = 300, i;
+  var X = function(v){ return pad + (w - pad - 46) * (v - 0.3) / 0.7; };
+  var out = "<svg viewBox='0 0 " + w + " " + h + "' role='img'>";
+  out += "<line x1='" + X(0.5) + "' y1='6' x2='" + X(0.5) + "' y2='" + (h - 18) +
+    "' stroke='#94a3b8' stroke-dasharray='3 3'/>";
+  out += "<text x='" + X(0.5) + "' y='" + (h - 5) + "' font-size='9' fill='#64748b' " +
+    "text-anchor='middle'>a coin, 0.500</text>";
+  for (i = 0; i < scored.length; i++){
+    var y = 10 + i * 24, s = scored[i], good = s.auc > 0.5;
+    out += "<text x='0' y='" + (y + 11) + "' font-size='10' fill='#334155'>" +
+      s.name.replace(/<[^>]*>/g, "") + "</text>";
+    var a = X(Math.min(1, Math.max(0.3, s.auc)));
+    out += "<line x1='" + X(0.5) + "' y1='" + (y + 7) + "' x2='" + a + "' y2='" + (y + 7) +
+      "' stroke='" + (good ? "#15803d" : "#b91c1c") + "' stroke-width='6'/>";
+    out += "<circle cx='" + a + "' cy='" + (y + 7) + "' r='4' fill='" +
+      (good ? "#15803d" : "#b91c1c") + "'/>";
+    out += "<text x='" + (w - 42) + "' y='" + (y + 11) + "' font-size='10' fill='" +
+      (good ? "#15803d" : "#b91c1c") + "' font-weight='700'>" + f3(s.auc) + "</text>";
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- state
+var B = null, FAST = null, SLOW = null, POOL = null;
+
+function renderFast(){
+  showOpts();
+  var o = opts(), cfg = cfgOf(o);
+  var task = makeTask(cfg), CS = codes(cfg.m), data = sampleData(task, cfg.ntr, cfg.seed);
+  B = { o: o, cfg: cfg, task: task, CS: CS, data: data };
+  var np = paramList(cfg).length, ne = paramList(cfg).filter(isEnc).length;
+  $("setup").innerHTML =
+    "A student with <strong>" + np + "</strong> parameters, <strong>" + ne + "</strong> of them " +
+    "below the bottleneck and <strong>" + (np - ne) + "</strong> above it. The bottleneck is " +
+    "<strong>" + cfg.m + "</strong> binary units, so <strong>" + num(CS.length) + "</strong> " +
+    "codes &mdash; few enough to enumerate, which is the only reason an exact gradient exists on " +
+    "this page. The input space is all <strong>" + num(task.N) + "</strong> points of " +
+    "{&minus;1,+1}<sup>" + cfg.din + "</sup>, every teacher feature splits it (" +
+    task.splits.join(", ") + " of " + task.N + " on the positive side), and " +
+    "<strong>" + num(cfg.ntr) + "</strong> labelled examples are drawn from the true conditional.";
+  var t = task, lk = t.logK;
+  $("floor").innerHTML = [
+    ["H(y|x), the conditional entropy <span class='lg'>the floor a perfect model still pays</span>",
+      f4(t.H), "computed over all " + t.N + " inputs, not estimated"],
+    ["log K", f4(lk), "the entropy of a uniform guess over " + cfg.K + " classes"],
+    ["I(x;y), the mutual information", f4(t.MI),
+      "= log K &minus; H(y|x) &minus; (log K &minus; H(y)) &mdash; and it is exactly the excess of " +
+      "a predictor that ignores x"],
+    ["the teacher's own excess", "<span class='ok'>0.0e+0</span>",
+      "not a tolerance: a student that copies the teacher is the same function"]
+  ].map(function(r){
+    return "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td><td style='text-align:left;" +
+      "white-space:normal'><span class='lg'>" + r[2] + "</span></td></tr>";
+  }).join("");
+  $("floorNote").innerHTML =
+    "Everything scored on this page is <strong>excess</strong> &mdash; the mean over the input " +
+    "space of KL(p*&#8741;p<sub>model</sub>), which is 0 if and only if the model is the true " +
+    "conditional and never negative. Because both the input distribution and p* are known, that " +
+    "is an exact expectation: no held-out split, no estimator noise, no floor to argue about.";
+
+  var lev = levelStudy({ task: task, data: data, batch: cfg.batch, seed: cfg.seed,
+                         levels: LEVELS });
+  FAST = { lev: lev };
+  $("lev").innerHTML = lev.rows.map(function(r, i){
+    return "<tr" + (i === 0 ? " class='hl'" : "") + "><td>" + r.L + "</td><td>" + f6(r.step) +
+      "</td><td>" + f6(r.gap) + "</td><td>" + f6(r.cos) + "</td><td>" + ex2(r.dist) + "</td></tr>";
+  }).join("");
+  $("levSVG").innerHTML = lineChart([
+    { name: "the forward gap", col: "#be123c",
+      pts: lev.rows.map(function(r){ return [Math.log(r.L), r.gap]; }) },
+    { name: "half the grid step", col: "#64748b", dash: true,
+      pts: lev.rows.map(function(r){ return [Math.log(r.L), r.step / 2]; }) }
+  ], { y0: 0, xlab: "levels, log scale &rarr; " + LEVELS[LEVELS.length - 1],
+       x0lab: String(LEVELS[0]) });
+  $("levNote").innerHTML =
+    "The gap between the quantised value and the clamped one never exceeds half the grid step " +
+    "&mdash; asserted at every row, not eyeballed &mdash; and the routed gradient walks from cosine " +
+    "<strong>" + f6(lev.rows[0].cos) + "</strong> at " + lev.rows[0].L + " levels to " +
+    "<strong>" + f6(lev.rows[lev.rows.length - 1].cos) + "</strong> at " +
+    lev.rows[lev.rows.length - 1].L + ", where it <em>is</em> the clamped network's gradient. " +
+    "That is the honest sense in which straight-through is an approximation: it is exact in the " +
+    "limit of a grid so fine there is no bottleneck left. The limit is the <em>clamp</em>, not the " +
+    "identity &mdash; those two differ by <strong>" + ex2(lev.clampVsId) + "</strong> here, which " +
+    "is why the page keeps a separate no-bottleneck control (" + f4(lev.idNll) + " nats against " +
+    "the clamp's " + f4(lev.clampNll) + ").";
+}
+
+function renderGrads(){
+  var o = B.o, base = { task: B.task, CS: B.CS, data: B.data, batch: B.cfg.batch, seed: o.seed,
+                        clip: o.clip };
+  var der = derivStudy(base), exa = exactStudy(base);
+  FAST.der = der; FAST.exa = exa;
+  var enc = der.nEnc, dec = der.plist.length - der.nEnc;
+  $("deriv").innerHTML = [
+    ["the honest derivative <span class='lg'>dh/dpre = 0</span>",
+      "<span class='ok'>0.0e+0</span>", f4(der.decNorm), ex2(der.decRelMax),
+      "correct, and it trains nothing below the bottleneck"],
+    ["straight through <span class='lg'>dh/dpre = 1</span>", f4(der.steEncNorm),
+      f4(der.decNorm), ex2(der.steDualRelMax),
+      "the exact derivative of a different function"],
+    ["a central difference, eps = 1e-5", "<span class='bad'>" + ex(der.trueEncCdMax) + "</span>",
+      f4(der.decNorm), ex2(der.decCdRelMax),
+      "agrees with the honest answer, which is the problem"],
+    ["a central difference, eps = 0.25", ex2(der.bigEncMax), "&mdash;", "&mdash;",
+      "big enough to flip codes, so it finally sees something &mdash; and it is not a derivative"]
+  ].map(function(r){
+    return "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td><td>" + r[2] + "</td><td>" + r[3] +
+      "</td><td style='text-align:left;white-space:normal'><span class='lg'>" + r[4] +
+      "</span></td></tr>";
+  }).join("");
+  $("derivNote").innerHTML =
+    "Below the bottleneck the honest gradient is <strong>exactly</strong> zero &mdash; reverse mode " +
+    "and forward-mode duals both return 0.0e+0 across all <strong>" + enc + "</strong> " +
+    "coordinates. Above it, the same backward pass is a perfectly ordinary one and matches " +
+    "forward mode to <strong>" + ex2(der.decRelMax) + "</strong>, which is arithmetic rounding, " +
+    "against a central difference's <strong>" + ex2(der.decCdRelMax) + "</strong> &mdash; " +
+    "forward mode is sharper by " + f1(Math.log(der.decCdRelMax / der.decRelMax) / Math.LN10) +
+    " orders of magnitude, and it is that gap that makes the exact zeros above trustworthy. " +
+    "Adding the straight-through route puts <strong>" + f4(der.steEncNorm) + "</strong> of " +
+    "gradient norm on the encoder where there was none, and it is " + f2(der.steEncNorm /
+    der.decNorm) + "&times; the decoder's, so it is not a rounding-scale nudge.";
+  $("fd").innerHTML = [
+    ["encoder coordinates whose central difference is exactly 0", der.cdZeros, enc, ""],
+    ["encoder coordinates where the perturbation flipped a code", der.cdFlips, enc, ""],
+    ["coordinates where those two agree <span class='lg'>the identity, both directions</span>",
+      "<span class='" + cls(der.cdMatch === enc) + "'>" + der.cdMatch + "</span>", enc,
+      der.cdMatch === enc ? "exact" : "broken"],
+    ["coordinates a coarse eps = 0.25 does flip", der.bigFlips, enc, ""]
+  ].map(function(r){
+    return "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td><td>" + r[2] + "</td><td><span " +
+      "class='lg'>" + r[3] + "</span></td></tr>";
+  }).join("");
+  $("fdNote").innerHTML =
+    "This is why a difference check cannot rescue you: a perturbation that flips no code leaves " +
+    "the two forward passes <em>bit-identical</em>, so their difference is a number minus itself " +
+    "and the quotient is exactly 0. The page asserts the biconditional &mdash; zero difference if " +
+    "and only if no flip &mdash; on all " + enc + " coordinates, so the claim survives any seed " +
+    "and any step size rather than being a tolerance that happens to hold.";
+
+  var sgRows = [
+    ["<code>h = q(pre)</code>, route 1 in the backward pass",
+      "the quantised value", "<span class='lg'>the reference</span>", ""],
+    ["<code>h = q(pre) + (pre &minus; stopgrad(pre))</code>",
+      der.mismA === 0 ? "<span class='ok'>identical, " + der.mismA + " of " + der.hTot +
+        " differ</span>" : "<span class='bad'>" + der.mismA + " differ</span>",
+      "<span class='" + cls(der.sgAExact === 0) + "'>" + ex(der.sgAExact) + "</span>",
+      "bit for bit: this is what the trick <em>is</em>"],
+    ["<code>h = pre + stopgrad(q(pre) &minus; pre)</code>",
+      der.probe.mismB === 0 ? "<span class='ok'>identical too, " + der.probe.mismB + " of " +
+        num(der.probe.tot) + " differ</span>" : "<span class='bad'>" + der.probe.mismB +
+        " differ</span>",
+      ex(der.sgBGap), "the difference this page went looking for and did not find"]
+  ];
+  $("sg").innerHTML = sgRows.map(function(r, i){
+    return "<tr" + (i === 1 ? " class='hl'" : "") + "><td style='white-space:normal'>" + r[0] +
+      "</td><td>" + r[1] + "</td><td>" + r[2] + "</td><td style='text-align:left;" +
+      "white-space:normal'><span class='lg'>" + r[3] + "</span></td></tr>";
+  }).join("");
+  $("sgNote").innerHTML =
+    "The middle row is the identity that matters. Build the surrogate explicitly &mdash; quantise, " +
+    "then add a term that is zero in value and one in derivative &mdash; differentiate it with " +
+    "forward-mode duals, and you get the routed gradient back with a maximum difference of " +
+    "<strong>" + ex(der.sgAExact) + "</strong>. So the straight-through estimator has no error " +
+    "term to bound; it is an exact gradient of a function that shares its forward pass. " +
+    "The bottom row is a claim withdrawn: the second idiom is a rounded sum and ought to land a " +
+    "bit off sometimes, and over <strong>" + num(der.probe.tot) + "</strong> pre-activations at " +
+    "<strong>" + der.probe.levels + "</strong> grid sizes it differs in <strong>" +
+    der.probe.mismB + "</strong>. <code>q &minus; x</code> is exact unless |x| is small, and when " +
+    "it is small the rounding error is at most half an ulp of q, so adding x back returns to q. " +
+    "Also measured while we are here: scaling the route by 10 moves the first Adam step by " +
+    "<strong>" + ex2(der.scaleProbe.maxDiff) + "</strong> against a step of " +
+    ex2(der.scaleProbe.maxMove) + ", and that residual matches the closed form " +
+    "<code>lr&middot;|c&middot;g/(c|g|+eps) &minus; g/(|g|+eps)|</code> to <strong>" +
+    ex2(der.scaleProbe.closedForm) + "</strong> of a step &mdash; so the invariance is Adam's " +
+    "algebra, not luck.";
+}
+
+function renderTrain(){
+  var o = B.o, task = B.task, CS = B.CS, data = B.data, exa = FAST.exa;
+  var dep = deployStudy({ task: task, CS: CS, data: data, steps: o.steps, batch: B.cfg.batch,
+                          lr: o.lr, clips: CLIPS, seed: o.seed });
+  var clip = clipStudy({ task: task, CS: CS, data: data, steps: o.steps, batch: B.cfg.batch,
+                         lr: o.lr, seed: o.seed, clips: LADDER });
+  var vr = variantStudy({ task: task, CS: CS, data: data, trials: 12, batch: B.cfg.batch,
+                          probeLr: 0.02, steps: o.steps, lr: o.lr, seed: o.seed });
+  SLOW = { dep: dep, clip: clip, vr: vr };
+
+  var bestDet = Math.min.apply(null, dep.rows.map(function(r){ return r.det; }));
+  $("dep").innerHTML = dep.rows.map(function(r){
+    return "<tr" + (r.det === bestDet ? " class='hl'" : "") + "><td style='white-space:normal'>" +
+      r.name + "</td><td class='" + cls(r.det === bestDet) + "'>" + f4(r.det) + "</td><td>" +
+      f4(r.stoch) + "</td><td>" + f4(r.relaxNLL) + "</td><td>" + f2(r.absPre) + "</td><td>" +
+      num(r.evals) + "</td></tr>";
+  }).join("");
+  var ste = dep.ste, exact = dep.exact, cheap = dep.bestCheap;
+  $("depNote").innerHTML =
+    "Read the exact-gradient row twice. It wins the objective it is the gradient <em>of</em> " +
+    "&mdash; relaxed loss <strong>" + f4(exact.relaxNLL) + "</strong> against the unclipped " +
+    "estimator's " + f4(ste.relaxNLL) + " &mdash; and on the model you actually deploy it is " +
+    (dep.cheapBeatsExact ? "<span class='bad'>beaten</span>" : "ahead of") + " a clipped " +
+    "straight-through run that costs <strong>1</strong> decoder pass per example against its " +
+    "<strong>" + num(exact.evals) + "</strong>: <strong>" + f4(exact.det) + "</strong> against " +
+    "<strong>" + f4(cheap.det) + "</strong>. And that price is not a constant. It is the number " +
+    "of codes, 2<sup>m</sup>, so a bottleneck of 16 units would cost " + num(65536) + " passes " +
+    "per example and one of 64 units is not a number worth writing down. " +
+    "<span class='red'>The row above it is the uncomfortable one:</span> the unclipped estimator " +
+    "scores <strong>" + f4(ste.det) + "</strong> against a frozen encoder's <strong>" +
+    f4(dep.nulls[1].det) + "</strong>, so on this setting routing the gradient through and " +
+    "training on it is " + (dep.steBeatsNull ? "better than" : "<em>worse than</em>") +
+    " leaving the encoder exactly where it started. Its own mean |pre| says why: " +
+    f2(ste.absPre) + " against the clipped run's " + f2(cheap.absPre) + ".";
+  var mxc = 0;
+  dep.rows.forEach(function(r){ r.curve.forEach(function(p){ mxc = Math.max(mxc, p.det); }); });
+  $("curveSVG").innerHTML = lineChart(dep.rows.map(function(r, i){
+    return { name: r.name.replace(/<[^>]*>/g, ""),
+             col: ["#be123c", "#0e7490", "#7c3aed", "#15803d", "#b45309"][i % 5],
+             pts: r.curve.map(function(p){ return [p.step, p.det]; }) };
+  }).concat([{ name: "the frozen-encoder null", col: "#94a3b8", dash: true,
+    pts: [[1, dep.nulls[1].det], [o.steps, dep.nulls[1].det]] }]),
+    { y0: 0, y1: mxc, xlab: "Adam steps &rarr; " + o.steps, x0lab: "1" });
+  $("nulls").innerHTML = dep.nulls.map(function(r, i){
+    return "<tr" + (i === 0 ? " class='hl'" : "") + "><td style='white-space:normal'>" + r.name +
+      "</td><td>" + (r.det === 0 ? "<span class='ok'>0.0e+0</span>" : f4(r.det)) + "</td><td>" +
+      f4(r.stoch) + "</td></tr>";
+  }).join("");
+  $("nullNote").innerHTML =
+    "The third null is an identity, not a coincidence: training on the honest gradient and " +
+    "freezing the encoder differ by <strong>" + ex(dep.frozenGap) + "</strong>, because Adam " +
+    "applied to a gradient of exactly 0 leaves a parameter exactly where it was. That is what " +
+    "makes it the right null for every row above. Note also that the teacher, deployed " +
+    "stochastically, scores <strong>" + f4(dep.teacherStoch) + "</strong> rather than 0 &mdash; " +
+    "sampling the bottleneck is a different model, and even the perfect encoder pays for it.";
+
+  var bc = Math.min.apply(null, clip.rows.map(function(r){ return r.det; }));
+  $("clip").innerHTML = clip.rows.map(function(r){
+    return "<tr" + (r.det === bc ? " class='hl'" : "") + "><td>" + win(r.clip) +
+      "</td><td class='" + cls(r.det === bc) + "'>" + f4(r.det) + "</td><td>" + f4(r.stoch) +
+      "</td><td>" + f2(r.absPre) + "</td><td>" + pct(r.sat) + "</td><td>" +
+      (r.dead > 0 ? "<span class='bad'>" + pct(r.dead) + "</span>" : pct(r.dead)) + "</td><td>" +
+      pct(r.outside1) + "</td></tr>";
+  }).join("");
+  var wide = clip.rows[clip.rows.length - 1], best = clip.best;
+  $("clipNote").innerHTML =
+    "The best window on this ladder is <strong>" + win(best.clip) + "</strong> at " +
+    "<strong>" + f4(best.det) + "</strong>, against <strong>" + f4(wide.det) + "</strong> with no " +
+    "window at all &mdash; a factor of " + f2(wide.det / best.det) + " for one line in the " +
+    "backward pass. The mechanism is in the |pre| column: with no window the run ends at " +
+    f2(wide.absPre) + " and <strong>" + pct(wide.outside1) + "</strong> of unit-input pairs sit " +
+    "outside |pre| &le; 1, where a clip would have been zero and where the quantiser's decision is " +
+    "nowhere near its boundary. <span class='red'>And the cost is in the same row:</span> the " +
+    "winning window leaves <strong>" + pct(best.dead) + "</strong> of the units with no gradient " +
+    "for <em>any</em> input in the space &mdash; dead for good, since nothing can pull them back " +
+    "inside &mdash; and it wins anyway. An infinite window is the plain estimator bit for bit, " +
+    "asserted at <strong>" + ex(clip.infGap) + "</strong> on the weights and " +
+    ex(clip.infDetGap) + " on the score, so the two ends of the ladder really are one method.";
+  $("clipSVG").innerHTML = barChart(clip.rows.map(function(r){
+    return { name: "window " + win(r.clip) + ", |pre| " + f2(r.absPre), v: r.det,
+             lab: f4(r.det) + (r.dead > 0 ? "  (" + pct(r.dead) + " of units dead)" : ""),
+             col: r.det === bc ? "#15803d" : "#be123c" };
+  }), { foot: "excess after " + o.steps + " Adam steps, deployed hard — shorter is better" });
+
+  $("var").innerHTML = vr.rows.map(function(r){
+    return "<tr" + (r.good ? " class='hl'" : "") + "><td style='white-space:normal'>" + r.name +
+      "</td><td class='" + cls(!(r.descend > 0.5) === !r.good) + "'>" + pct(r.descend) +
+      "</td><td>" + pct(r.moved) + "</td><td class='" + cls(!(r.descRelax > 0.5) === !r.good) +
+      "'>" + pct(r.descRelax) + "</td><td class='" + cls(r.cos > 0 === r.good) + "'>" +
+      f4(r.cos) + "</td><td>" + f4(r.det) + "</td></tr>";
+  }).join("");
+  $("varNote").innerHTML =
+    "<span class='red'>The first numeric column is the headline.</span> &ldquo;Take a step, did " +
+    "the loss fall?&rdquo; catches <strong>" + vr.descendCaught + " of " + vr.nBad + "</strong> " +
+    "broken routes. The sign-flipped route &mdash; which points the encoder exactly backwards " +
+    "&mdash; lowers the loss on <strong>" + pct(vr.byKey.signflip.descend) + "</strong> of trials, " +
+    "while its cosine with the exact gradient is <strong>" + f4(vr.byKey.signflip.cos) + "</strong>, " +
+    "the negation of the correct route's " + f4(vr.byKey.ste.cos) + " to <strong>" +
+    ex(vr.flipIdentity) + "</strong> &mdash; an identity, since negating the route negates every " +
+    "encoder partial exactly. The reason the step test fails is the third column: applied to the " +
+    "encoder alone, the same step does not move the deterministic loss <em>at all</em> on " +
+    pct(1 - vr.byKey.ste.moved) + " of trials for the correct route, because the forward pass is " +
+    "piecewise constant. Judge that encoder-only step on the relaxed loss instead &mdash; the only " +
+    "loss the route can descend &mdash; and the control catches <strong>" + vr.relaxCaught +
+    " of " + vr.nBad + "</strong>; the cosine catches <strong>" + vr.cosCaught + " of " + vr.nBad +
+    "</strong>.";
+  $("varSVG").innerHTML = barChart(vr.rows.slice().sort(function(a, b){ return a.det - b.det; })
+    .map(function(r){
+      return { name: r.name.replace(/<[^>]*>/g, ""), v: r.det, lab: f4(r.det),
+               col: r.good ? "#15803d" : "#be123c" };
+    }), { foot: "green = a defensible derivative claim; red = not one" });
+  $("harmNote").innerHTML =
+    "<span class='red'>Wrong and harmful are different properties, and the sorted bars say so.</span> " +
+    "Scaling the route by 10 is not a derivative of anything and costs <strong>" +
+    ex(vr.scaleGap) + "</strong> &mdash; Adam divides by its own second moment, so the factor " +
+    "cancels. An off-by-one in the routing matrix scores <strong>" + f4(vr.byKey.shift.det) +
+    "</strong> and <em>no route at all</em> scores <strong>" + f4(vr.byKey["true"].det) +
+    "</strong>, which is the frozen-encoder null to " +
+    ex(Math.abs(vr.byKey["true"].det - SLOW.dep.nulls[1].det)) + " &mdash; and both of them " +
+    (vr.separated ? "still lose to" : "<em>beat</em>") + " the correct unclipped route at " +
+    "<strong>" + f4(vr.byKey.ste.det) + "</strong>. Meanwhile discarding the sign costs " +
+    f4(vr.byKey.absRoute.det) + " and flipping it costs " + f4(vr.byKey.signflip.det) + ". " +
+    "A test that ranks routes by how wrong the derivative is would order these badly; a test that " +
+    "ranks them by outcome cannot be run before the run.";
+}
+
+// ---------------------------------------------------------------- assertions
+function runChecks(){
+  if (!FAST || !FAST.der || !SLOW){
+    $("selftest").textContent = "the assertions run once the tables are built";
+    return;
+  }
+  var c = selfCheck({ task: B.task, der: FAST.der, exa: FAST.exa, dep: SLOW.dep, clip: SLOW.clip,
+                      "var": SLOW.vr, lev: FAST.lev, pool: POOL, CSlen: B.CS.length });
+  $("selftest").textContent =
+    "selfCheck()  " + num(c.pass) + " / " + num(c.total) + " checks passed" +
+    (c.lines.length ? "\n" + c.lines.join("\n") :
+     "\n\nthe true conditional normalises at every one of the enumerated inputs and the teacher's\n" +
+     "own excess is exactly zero while no model's is negative; a predictor that ignores x scores\n" +
+     "exactly the mutual information and a uniform one exactly log K minus the conditional\n" +
+     "entropy; the honest encoder gradient is exactly zero in reverse mode and in forward mode,\n" +
+     "and a central difference is exactly zero on a coordinate if and only if the perturbation\n" +
+     "flipped no code, both directions, every coordinate; the decoder's reverse mode matches\n" +
+     "forward-mode duals more sharply than it matches a central difference; the detach idiom is\n" +
+     "bit-identical to the routed gradient and leaves the forward value untouched, while the\n" +
+     "second idiom is exact too across the whole sweep; the code distribution sums to one, the\n" +
+     "score function has mean zero, the marginal and score forms of the exact gradient agree, and\n" +
+     "central differences of the relaxed loss confirm it; training on the honest gradient is the\n" +
+     "frozen-encoder run bit for bit and an infinite clip window is the plain estimator bit for\n" +
+     "bit; the fine-grid forward gap never exceeds half the grid step and the routed gradient\n" +
+     "approaches the clamped one; flipping the route negates the cosine exactly, the no-route\n" +
+     "variant is the null, and the plain descent test fails to catch every broken route while the\n" +
+     "relaxed-loss control and the cosine both do better; Adam's residual response to a mis-scaled\n" +
+     "route matches its closed form." +
+     (POOL ? "" : "\n\n(the ranker assertions run once the pool has been trained)"));
+}
+
+// ---------------------------------------------------------------- wiring
+$("runPool").addEventListener("click", function(){
+  var btn = this, o = opts();
+  btn.disabled = true;
+  $("poolStatus").textContent = "training the pool…";
+  setTimeout(function(){
+    var t0 = Date.now();
+    var pl = rankerStudy({ task: B.task, CS: B.CS, data: B.data, batch: B.cfg.batch,
+      steps: Math.max(40, Math.round(o.steps * 0.75)),
+      clips: [0.5, 1, 2, Infinity], lrs: [0.02, 0.05, 0.15], seeds: [1, 2, 3, 4, 5] });
+    POOL = pl;
+    $("auc").innerHTML = pl.scored.map(function(s, i){
+      var good = s.auc > 0.5;
+      return "<tr" + (i === 0 ? " class='hl'" : "") + "><td style='white-space:normal'>" + s.name +
+        "</td><td>" + s.train + "</td><td class='" + cls(good) + "'>" + f3(s.auc) +
+        "</td><td class='" + cls(good) + "'>" + (s.auc >= 0.5 ? "+" : "−") +
+        f3(Math.abs(s.auc - 0.5)) + "</td><td class='" + cls(s.within > 0.5) + "'>" +
+        f3(s.within) + "</td><td>" + num(s.pairs) + "</td></tr>";
+    }).join("");
+    $("aucSVG").innerHTML = aucChart(pl.scored);
+    var cos = pl.scored.filter(function(s){ return /cosine/.test(s.name); })[0];
+    var step = pl.scored.filter(function(s){ return /one step/.test(s.name); })[0];
+    var tl = pl.scored.filter(function(s){ return /training loss/.test(s.name); })[0];
+    var sg = pl.scored.filter(function(s){ return /sign agreement/.test(s.name); })[0];
+    $("aucNote").innerHTML =
+      "Over <strong>" + pl.n + "</strong> trained configurations spanning an excess range of " +
+      f4(pl.spread) + ", agreement with the exact gradient at initialisation ranks final quality " +
+      "at <strong class='" + cls(cos.auc > 0.5) + "'>" + f3(cos.auc) + "</strong> against a " +
+      "coin's 0.500" + (cos.auc < 0.5 ? " &mdash; <em>below</em> chance" : "") + ", and " +
+      "per-coordinate sign agreement at <strong class='" + cls(sg.auc > 0.5) + "'>" + f3(sg.auc) +
+      "</strong>. <span class='red'>The control is the sharp end:</span> hold the window and the " +
+      "rate fixed so the diagnostic only arbitrates comparisons where it is the one thing that " +
+      "moved, and the cosine scores <strong class='" + cls(cos.within > 0.5) + "'>" +
+      f3(cos.within) + "</strong> over " + num(cos.withinPairs) + " pairs. It is not that the " +
+      "number is noisy &mdash; it is anti-correlated across cells and blank inside one, because " +
+      "the configurations whose route most resembles the exact derivative are the unclipped ones, " +
+      "which is exactly why they lose. The usual step test scores <strong class='" +
+      cls(step.auc > 0.5) + "'>" + f3(step.auc) + "</strong>. The training loss you were watching " +
+      "anyway scores <strong class='ok'>" + f3(tl.auc) + "</strong>.";
+    $("poolStatus").textContent = "done in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    btn.disabled = false;
+    runChecks();
+  }, 30);
+});
+
+function recompute(){
+  $("mainStatus").textContent = "enumerating the input space…";
+  setTimeout(function(){
+    var t0 = Date.now();
+    renderFast();
+    POOL = null;
+    $("auc").innerHTML = "";
+    $("aucSVG").innerHTML = "";
+    $("aucNote").innerHTML = "";
+    $("poolStatus").textContent = "not run yet for these settings";
+    $("mainStatus").textContent = "checking the gradients…";
+    setTimeout(function(){
+      renderGrads();
+      $("mainStatus").textContent = "training…";
+      setTimeout(function(){
+        renderTrain();
+        $("mainStatus").textContent = "rebuilt in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+        runChecks();
+      }, 20);
+    }, 20);
+  }, 20);
+}
+
+["sM", "sC", "sL", "sT", "sN", "sS"].forEach(function(id){
+  $(id).addEventListener("input", function(){
+    showOpts();
+    $("mainStatus").textContent = "release to recompute";
+  });
+  $(id).addEventListener("change", recompute);
+});
+
+var tabs = $("tabs").querySelectorAll("button");
+for (var ti = 0; ti < tabs.length; ti++){
+  tabs[ti].addEventListener("click", function(){
+    var name = this.getAttribute("data-tab");
+    for (var k = 0; k < tabs.length; k++) tabs[k].className = tabs[k] === this ? "tab-active" : "";
+    ["look", "understand", "build"].forEach(function(s){
+      $(s).className = (s === "look" ? "panel" : "panel light") + (s === name ? "" : " hidden");
+    });
+    window.scrollTo(0, 0);
+  });
+}
+
+recompute();
+</script>
+</body>
+</html>

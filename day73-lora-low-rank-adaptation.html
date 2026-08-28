@@ -1,0 +1,2494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero &middot; Day 73 &mdash; LoRA &amp; low-rank adaptation</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin:0; background:#f8fafc; color:#0f172a; line-height:1.55;
+         font-family:-apple-system, "Segoe UI", "Inter", Roboto, Helvetica, Arial, sans-serif; }
+  header { background:#fff; }
+  /* the tab bar sticks, not the header: a header taller than the viewport would pin forever */
+  .tabbar { background:#fff; border-bottom:1px solid #e2e8f0; position:sticky; top:0; z-index:20; }
+  .tabbar .wrap { padding-top:10px; padding-bottom:10px; }
+  .wrap { max-width:1120px; margin:0 auto; padding:16px; }
+  .narrow { max-width:780px; margin:0 auto; padding:16px; }
+  @media (min-width:768px){ .wrap, .narrow { padding:26px; } }
+  .kicker { font-size:11px; font-weight:800; letter-spacing:.18em; color:#be123c; margin:0 0 10px; }
+  h1 { font-size:17px; font-weight:800; line-height:1.55; margin:0; }
+  @media (min-width:768px){ h1 { font-size:19px; } }
+  h2 { font-size:23px; font-weight:800; margin:34px 0 10px; line-height:1.25; }
+  h3 { font-size:17px; font-weight:700; margin:26px 0 8px; }
+  p { margin:0 0 12px; }
+  em { font-style:italic; }
+  code { font-family:"SF Mono", Consolas, "Liberation Mono", monospace; font-size:12.5px;
+         background:#eef2f7; padding:1px 4px; border-radius:4px; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px 14px; border-radius:8px; font-size:12px;
+        overflow-x:auto; line-height:1.5;
+        font-family:"SF Mono", Consolas, "Liberation Mono", monospace; }
+  pre code { background:none; padding:0; color:inherit; font-size:inherit; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; }
+  .tabs button { border:0; background:#f1f5f9; color:#0f172a; padding:9px 18px; border-radius:9px;
+                 font-size:13.5px; font-weight:650; cursor:pointer; font-family:inherit; }
+  .tabs button.tab-active { background:#0f172a; color:#fff; }
+  .panel { background:#f1f5f9; }
+  .panel.light { background:#f8fafc; }
+  .hidden { display:none; }
+  .stack > * + * { margin-top:20px; }
+  .card { background:#fff; border-radius:16px; padding:18px;
+          box-shadow:0 1px 3px rgba(15,23,42,.10), 0 1px 2px rgba(15,23,42,.06); }
+  .cap { font-size:11px; font-weight:800; letter-spacing:.12em; color:#64748b; margin:0 0 10px; }
+  .lede { font-size:13.5px; color:#475569; margin:0 0 12px; }
+  .note { font-size:12px; color:#64748b; margin:10px 0 0; }
+  .grid2 { display:grid; gap:20px; }
+  @media (min-width:1000px){ .grid2 { grid-template-columns:1fr 1fr; } }
+  .ctrls { display:grid; gap:12px 22px; grid-template-columns:1fr; }
+  @media (min-width:640px){ .ctrls { grid-template-columns:1fr 1fr; } }
+  @media (min-width:1000px){ .ctrls { grid-template-columns:repeat(3,1fr); } }
+  label.ctl { font-size:13px; display:block; }
+  label.ctl b { float:right; font-variant-numeric:tabular-nums; }
+  input[type=range] { width:100%; margin:4px 0 0; }
+  select { width:100%; border:1px solid #cbd5e1; border-radius:8px; padding:6px 8px;
+           font-size:13px; font-family:inherit; background:#fff; }
+  .scroll { overflow-x:auto; }
+  table.num { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
+  table.num th, table.num td { padding:4px 9px; text-align:right; white-space:nowrap; }
+  table.num th { font-size:10.5px; letter-spacing:.05em; color:#64748b; font-weight:800; }
+  table.num td { font-size:12.5px; border-top:1px solid #e2e8f0; }
+  table.num th:first-child, table.num td:first-child { text-align:left; white-space:normal;
+    min-width:112px; }
+  table.num tr.hl td { background:#f1f5f9; }
+  .ok { color:#15803d; font-weight:800; }
+  .bad { color:#b91c1c; font-weight:800; }
+  .lg { font-size:10px; color:#64748b; font-weight:400; letter-spacing:0; }
+  button.run { border:0; background:#0f172a; color:#fff; padding:9px 17px; border-radius:9px;
+               font-size:13px; font-weight:650; cursor:pointer; font-family:inherit; }
+  button.run:disabled { opacity:.5; cursor:default; }
+  .runbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  .status { font-size:12px; color:#64748b; }
+  svg { max-width:100%; height:auto; display:block; }
+  ul { margin:0 0 12px; padding-left:22px; }
+  li { margin:0 0 6px; }
+  .red { color:#b91c1c; font-weight:800; }
+  .mono { font-family:"SF Mono", Consolas, "Liberation Mono", monospace; font-size:12px;
+          word-break:break-all; color:#334155; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="kicker">DEEPLEARNINGFROMZERO &middot; DAY 73</p>
+    <h1 id="headline">
+      &#129513; LoRA &amp; the rank you think you are choosing &mdash;
+      <code>W &larr; W + (&#945;/r)&#183;B&#183;A</code>, two skinny matrices bolted onto a frozen
+      one, with B starting at zero so the adapter is a literal no-op. The task on this page is built
+      so that the answer is a <em>matrix</em>: the downstream model <em>is</em> the base model with a
+      known change &#916;W* of exact rank &#961;, so &ldquo;rank r is enough&rdquo; is an algebraic
+      fact rather than a hope, and the held-out score is a mean KL from the true conditional &mdash;
+      an exact expectation over labels, exactly <strong>0</strong> for the teacher and provably
+      non-negative for everything else, above a conditional-entropy floor of
+      <strong>1.1479</strong> nats over <strong>4</strong> classes. At r &ge; &#961; the zero-excess
+      adapter therefore exists, so the page <em>writes it down</em>: excess
+      <strong>1.2e-17</strong>, weight gap <strong>9.6e-15</strong>, which is the SVD's own rounding
+      and not a search. Then it trains one. At r = &#961; = 4, 200 Adam steps land at
+      <strong>0.0414</strong>, and <span class="red">none of that residual is the rank
+      ceiling</span> &mdash; the ceiling is provably not binding. And the rank that wins is not
+      &#961;: over intrinsic ranks 1, 2, 4, 8 and 12 the best rank, measured over four
+      <em>paired</em> seeds, is <strong>1, 2, 2, 3, 2</strong> &mdash; it never tracks &#961;, it
+      beats the largest rank in <strong>20 of 20</strong> paired runs, and a rank that provably
+      <em>cannot</em> express &#916;W* beats one that provably can in <strong>107 of 136</strong>
+      paired runs, <strong>78.7%</strong>. Scored as a ranker over <strong>90</strong> trained
+      configurations the rank gets <strong>AUC 0.488</strong> against a coin's 0.500 and
+      <strong>0.433</strong> inside one task-and-rate cell &mdash; <em>below</em> the coin in the
+      one place it is asked a question it can see, because within a cell more rank is reliably
+      slightly worse. Ten steps of training scores <strong>0.753</strong>. It is a regularisation
+      effect and the data control says so: the penalty for r = 12 against the best rank falls from
+      <strong>0.0740</strong> at 250 examples to <strong>0.0102</strong> at 16,000 &mdash; and even
+      there the best rank is <strong>2</strong>, not 4. The one thing r controls exactly is the
+      trainable parameter count 2rd, whose break-even against fine-tuning the matrix outright is
+      <code>r* = mn/(m+n)</code> exactly &mdash; <strong>6</strong> on this page's 12&times;12
+      matrix, so r &ge; 7 costs <em>more</em> trainable parameters than the matrix it is adapting
+      while staying strictly less expressive; at 4096&times;4096 it is <strong>2048</strong> and at
+      4096&times;11008 it is <strong>2985.2</strong>, which is why the saving is real at scale and
+      absent here. Rank-2 LoRA, 48 parameters, still beats fine-tuning the whole 144-parameter
+      matrix: <strong>0.0338</strong> against <strong>0.0390</strong>. Then two claims this page
+      came to make and had to withdraw. The weight-space &ldquo;floor&rdquo; is
+      <em>not a floor</em>: at r = 1 the trained adapter's excess, <strong>0.0682</strong>, is
+      <strong>25%</strong> below the excess of the closest rank-1 approximation of &#916;W* itself,
+      because the nearest matrix is not the best function. And B = 0 buys an exact identity but no
+      measurable training benefit: the deviation from the base at initialisation is
+      <strong>0.0e+0</strong>, dA = s&#183;B&#7488;G is <em>exactly</em> zero so the first step
+      cannot move A at all, and the first &#916;W is exactly
+      <code>&minus;&#951;s&#178;&#183;G&#183;A&#7488;A</code> to <strong>1.6e-16</strong> &mdash;
+      the full-matrix gradient filtered through a random positive matrix that keeps
+      <strong>3.4%</strong> of its energy at r = 1 and <strong>124%</strong> at r = 12 &mdash; and
+      yet a B drawn at 0.1 finishes at <strong>0.0370</strong> against 0.0338, inside a seed spread
+      of <strong>0.0490</strong>. Freezing A is what actually costs: <strong>0.1351</strong>, four
+      times worse. Gradients checked against forward-mode automatic differentiation over dual
+      numbers &mdash; exact, no step size &mdash; to <strong>1.4e-14</strong>, and against central
+      differences on an independently written second forward pass. 190 in-page assertions and 481
+      in Node. Pure vanilla JavaScript, one file, no build step.
+    </h1>
+  </div>
+</header>
+
+<div class="tabbar">
+  <div class="wrap">
+    <div class="tabs" id="tabs">
+      <button data-tab="look" class="tab-active">&#128300; MEASURE</button>
+      <button data-tab="understand">&#129504; UNDERSTAND</button>
+      <button data-tab="build">&#128296; BUILD</button>
+    </div>
+  </div>
+</div>
+
+<section id="look" class="panel">
+  <div class="wrap stack">
+
+    <div class="card">
+      <div class="ctrls">
+        <label class="ctl">intrinsic rank &#961; of &#916;W* <b id="vP">4</b>
+          <input id="sP" type="range" min="1" max="12" step="1" value="4"></label>
+        <label class="ctl">matrix width d <b id="vD">12</b>
+          <input id="sD" type="range" min="8" max="20" step="2" value="12"></label>
+        <label class="ctl">training examples <b id="vN">2,000</b>
+          <input id="sN" type="range" min="500" max="8000" step="500" value="2000"></label>
+        <label class="ctl">Adam steps <b id="vS">200</b>
+          <input id="sS" type="range" min="60" max="500" step="20" value="200"></label>
+        <label class="ctl">learning rate <b id="vR">0.050</b>
+          <input id="sR" type="range" min="10" max="120" step="5" value="50"></label>
+        <label class="ctl">seed <b id="vE">3</b>
+          <input id="sE" type="range" min="1" max="12" step="1" value="3"></label>
+      </div>
+      <p class="note">
+        One matrix is adapted and everything else &mdash; the trunk before it, the head after it
+        &mdash; is frozen in <em>every</em> mode on this page, so LoRA against a full fine-tune is a
+        comparison between two ways of moving the same d&times;d matrix and nothing else. The
+        downstream task is that matrix plus a known change &#916;W* of exact rank &#961;, so the
+        conditional p*(y|x) is a forward pass rather than an estimate: the floor is a computation,
+        <strong id="ent">&mdash;</strong> nats over <strong id="kk">4</strong> classes, and every
+        model is scored by its <em>excess</em> &mdash; the mean KL from p* on held-out inputs,
+        evaluated as an exact expectation over labels. Training still sees sampled labels, like
+        anything real. Untrained, the base model sits at <strong id="base0">&mdash;</strong>.
+        <span class="status" id="mainStatus"></span>
+      </p>
+    </div>
+
+    <div class="card">
+      <p class="cap">WHAT THE RANK CAN EXPRESS, AND WHAT TRAINING DELIVERS</p>
+      <p class="lede">
+        &#916;W* has exact rank &#961;, so at r &ge; &#961; an adapter reproducing it
+        <em>exists</em>, and the first row below is not a trained result &mdash; it is that adapter
+        written down from the SVD of &#916;W*. The two reference columns are the best rank-r
+        approximations of &#916;W* under two different norms, and the last columns are what
+        actually gets trained at that rank. One seed per row: the seed spread is at the bottom of
+        this tab, and it is larger than several of the gaps here &mdash; which is why the claim of
+        this page lives in the <em>paired</em> card below and not in this table.
+      </p>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>r</th><th>params <span class="lg">2rd</span></th>
+            <th>reachable?</th>
+            <th>plain &#8214;&#916;&minus;&#916;*&#8214;&#178;</th><th>excess</th>
+            <th>weighted &#8214;&#916;&minus;&#916;*&#8214;&#178;</th><th>excess</th>
+            <th>trained excess</th><th>rank of &#916;</th><th>&#963;<sub>r+1</sub>/&#963;<sub>1</sub></th></tr></thead>
+          <tbody id="rank"></tbody>
+        </table>
+      </div>
+      <p class="note" id="rankNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE BEST RANK AGAINST THE RANK THAT PROVABLY SUFFICES &mdash; PAIRED SEEDS</p>
+      <p class="lede">
+        A training run is noisy, and the seed spread on this task is larger than most of the
+        differences an r sweep argues about, so every comparison here is <em>paired</em>: the same
+        seed on both sides, and the count of seeds where one side wins. Each row is a different
+        &#916;W* with a different exact rank &#961;, and the shaded cell is that row's best rank.
+        &ldquo;can express &#916;W*&rdquo; means r &ge; &#961;.
+      </p>
+      <div class="grid2">
+        <div>
+          <div class="scroll">
+            <table class="num">
+              <thead><tr id="pairHeadRow"></tr></thead>
+              <tbody id="pair"></tbody>
+            </table>
+          </div>
+          <p class="note" id="pairNote"></p>
+        </div>
+        <div>
+          <div id="pairSVG"></div>
+          <p class="note">
+            Excess against rank, one line per intrinsic rank &#961;, with the mark on each line at
+            r = &#961; &mdash; the smallest rank that can express that row's change exactly. If the
+            folklore held, each line's minimum would sit on its own mark.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="cap">HOW MUCH DATA BUYS BACK THE EXTRA RANK &mdash; THE CONTROL</p>
+      <p class="lede">
+        If a bigger rank loses because it is spending capacity on sampled-label noise, then more
+        data has to narrow the gap. This card is that control: the same ranks, the same budget, four
+        training-set sizes. Watch the last column rather than the winner.
+      </p>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr id="dataHeadRow"></tr></thead>
+          <tbody id="data"></tbody>
+        </table>
+      </div>
+      <p class="note" id="dataNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">TWO RANK-r REFERENCES, AND THE TWO INEQUALITIES THAT SEPARATE THEM</p>
+      <p class="lede">
+        The plain truncation minimises the distance between the <em>weight matrices</em>. The
+        data-weighted one minimises the mean squared change in what the layer <em>outputs</em> on
+        real data, which is <code>&#8214;&#916;L&#8214;&#178;</code> for &#931; = LL&#7488; &mdash;
+        the same truncation taken in whitened coordinates and mapped back. Each is optimal in its
+        own norm and therefore worse in the other's, and both of those inequalities are checked here
+        rather than asserted. Whether either is the better <em>model</em> is a separate question, and
+        one setting cannot answer it, so the last line aggregates over every intrinsic rank.
+      </p>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>r</th><th>plain: weight err&#178;</th><th>output shift&#178;</th>
+            <th>excess</th><th>weighted: weight err&#178;</th><th>output shift&#178;</th>
+            <th>excess</th><th>better model</th></tr></thead>
+          <tbody id="trunc"></tbody>
+        </table>
+      </div>
+      <p class="note" id="truncNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">WHERE THE TRAINED CHANGE ACTUALLY SITS RELATIVE TO THE CHANGE IT IS CHASING</p>
+      <p class="lede">
+        Distances and angles in the &#931; inner product &mdash; the one that measures the layer's
+        output rather than its parameters. <code>cos</code> is the alignment between the change
+        training found and the change that defines the task; <code>A drift</code> is the mean cosine
+        of the principal angles between A's row space at initialisation and at the end, so 1.000
+        means the subspace never moved.
+      </p>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>r</th><th>&#8214;&#916;&#8214;<sub>&#931;</sub></th>
+            <th>&#8214;&#916;*&#8214;<sub>&#931;</sub></th><th>ratio</th>
+            <th>cos(&#916;, &#916;*)</th><th>&#8214;&#916;&minus;&#916;*&#8214;<sub>&#931;</sub></th>
+            <th>A drift</th><th>excess</th></tr></thead>
+          <tbody id="geo"></tbody>
+        </table>
+      </div>
+      <p class="note" id="geoNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">B = 0, AND WHAT THE FIRST STEP CANNOT MOVE</p>
+      <p class="lede">
+        Two consequences of starting B at zero, one exact and one structural, and then the question
+        nobody measures: what does it cost not to? The deviation column is the largest logit gap
+        between the base model and the adapted one before any training, over 200 held-out inputs.
+      </p>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>B initialised at</th><th>max logit deviation at init</th>
+            <th>&#8214;&#916;W&#8320;&#8214;<sub>F</sub></th><th>excess at init</th>
+            <th>excess after training</th></tr></thead>
+          <tbody id="init"></tbody>
+        </table>
+      </div>
+      <p class="note" id="initNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">FIVE WAYS TO MOVE THE SAME MATRIX, AT THE SAME BUDGET</p>
+      <p class="lede">
+        Same data, same steps, same learning rate, same frozen everything-else. Only the
+        parameterisation of the change differs. The third row is the control that matters: exactly as
+        many entries of W as the adapter has parameters, chosen at random &mdash; same count, no
+        structure.
+      </p>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>what is trainable</th><th>parameters</th><th>rank of &#916;</th>
+            <th>final train loss</th><th>excess</th><th>vs LoRA</th></tr></thead>
+          <tbody id="ctl"></tbody>
+        </table>
+      </div>
+      <p class="note" id="ctlNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE ONE THING r CONTROLS EXACTLY</p>
+      <p class="lede">
+        An adapter on an m&times;n matrix has r(m+n) trainable parameters against the matrix's mn, so
+        it is a saving only while r &lt; mn/(m+n). That break-even is exact arithmetic, and it is the
+        harmonic mean of the two sides halved, so it scales with the matrix: tiny matrices are barely
+        worth adapting and enormous ones are almost entirely worth it.
+      </p>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>matrix</th><th>m &times; n</th><th>mn</th><th>break-even r*</th>
+            <th>first r that costs more</th><th>r = 8 params</th><th>share of mn</th></tr></thead>
+          <tbody id="par"></tbody>
+        </table>
+      </div>
+      <p class="note" id="parNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE RANK, SCORED AS A RANKER</p>
+      <p class="lede">
+        &ldquo;Use a bigger r for a harder task&rdquo; is a claim about ordering, so it can be
+        scored: build a pool of real configurations, train every one to the same budget, and ask how
+        often each candidate puts the better model first. 0.500 is a coin. Every candidate is
+        oriented so that <em>smaller is predicted better</em>, and that orientation is fixed before
+        the scoring runs.
+      </p>
+      <div class="runbar">
+        <button class="run" id="runPool">train the pool</button>
+        <span class="status" id="poolStatus">ninety small networks across three tasks &mdash; a few seconds</span>
+      </div>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>candidate</th><th>needs training?</th><th>AUC</th><th>vs a coin</th>
+            <th>pairs</th></tr></thead>
+          <tbody id="auc"></tbody>
+        </table>
+      </div>
+      <div id="aucSVG"></div>
+      <p class="note" id="aucNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE NOISE FLOOR OF THE NUMBER EVERY ROW ABOVE IS RANKED BY</p>
+      <p class="lede">
+        Two sources of noise survive. The seed moves the initial A, the minibatch order and nothing
+        else; the held-out input sample moves the estimate of a fixed model's excess. Label noise
+        does not survive, because the evaluation is an exact expectation over labels rather than a
+        sample of them &mdash; which is why the second row is as small as it is, and why the first
+        one is the number every comparison on this page has to clear.
+      </p>
+      <div class="scroll">
+        <table class="num">
+          <thead><tr><th>source of variation</th><th>mean excess</th><th>spread (max&minus;min)</th>
+            <th>std</th><th>draws</th></tr></thead>
+          <tbody id="floor"></tbody>
+        </table>
+      </div>
+      <p class="note" id="floorNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">ASSERTIONS, RUN IN THIS TAB</p>
+      <pre id="checks">running&hellip;</pre>
+    </div>
+
+  </div>
+</section>
+
+<section id="understand" class="panel light hidden">
+  <div class="narrow">
+
+    <h2>What an adapter actually is</h2>
+    <p>
+      A LoRA adapter is one line added to one matrix multiply:
+    </p>
+    <pre><code>y = Wx  &rarr;  y = Wx + (&#945;/r)&#183;B(Ax)</code></pre>
+    <p>
+      W is frozen. A is r&times;d, B is d&times;r, and r is much smaller than d, so the pair holds
+      r(m+n) numbers where the matrix holds mn. B starts at zero, which makes the whole branch
+      output identically zero, which makes the adapted model <em>bit-identical</em> to the base model
+      before training &mdash; not close, identical, because adding 0.0 to a float is exact. That is
+      the first card's zero, and it is the reason an adapter can be shipped next to a frozen model
+      without changing it.
+    </p>
+    <p>
+      Everything else about LoRA follows from a fact that is easy to state and easy to under-use: the
+      product <code>(&#945;/r)BA</code> is a d&times;d matrix of rank at most r, so an adapter is
+      exactly a <em>restriction on the change</em>, &#916;W, not a restriction on the model. The loss
+      surface is untouched. Differentiate through it and you get the whole backward pass in two
+      lines:
+    </p>
+    <pre><code>G  = &part;loss/&part;(W + &#916;W)      &larr; the ordinary full-matrix gradient
+dA = (&#945;/r)&#183;B&#7488;G       dB = (&#945;/r)&#183;G&#183;A&#7488;</code></pre>
+    <p>
+      There is no separate LoRA gradient. There is the gradient the matrix would have had, contracted
+      with the two factors. That is worth holding onto, because it says what an adapter does to
+      optimisation: from B = 0 the second line is the only one that can move &mdash; dA contains B&#7488;
+      and B is zero, so <em>the first step cannot rotate A at all</em>, exactly, and the change to the
+      effective matrix after one SGD step is
+    </p>
+    <pre><code>&#916;W&#8321; = &minus;&#951;(&#945;/r)&#178;&#183;G&#183;A&#7488;A</code></pre>
+    <p>
+      which the page checks to the rounding floor. A&#7488;A is a random positive semi-definite matrix
+      of rank r, drawn before any data was seen, so the first step is the full-matrix gradient passed
+      through a random filter. The card measures how much of the gradient's energy survives that
+      filter, and it tracks r/d loosely and noisily rather than exactly, because A's rows are random
+      and neither orthogonal nor unit-length.
+    </p>
+
+    <p>
+      One thing that follows from those two lines is worth separating from the reason usually given
+      for them. B = 0 makes the adapter a no-op you can ship beside a frozen model and merge back
+      exactly, and that is a real property. It is not, on this task, a training requirement: drawing
+      B from a small Gaussian instead changes the final excess by less than the seed spread, and it
+      takes an initial change several times the size of &#916;W* itself before the number clearly
+      suffers. The card measures both, so the exact identity and the absent training benefit are
+      visible in the same table. What does cost is freezing A &mdash; several times the excess at the
+      same parameter count &mdash; which says the win is in A moving, not in where it started.
+    </p>
+
+    <h2>The rank is not the capacity you think you are buying</h2>
+    <p>
+      The advice that follows from &ldquo;rank r can express any rank-r change&rdquo; is to pick r at
+      least as large as the intrinsic rank of the change you need. This page is built to test that,
+      because it makes the intrinsic rank a knob: the downstream task <em>is</em> the base model with
+      a change &#916;W* constructed as a product of a d&times;&#961; and a &#961;&times;d matrix, so
+      its rank is exactly &#961; and the question &ldquo;can rank r express it?&rdquo; has a yes-or-no
+      answer with no experiment in it.
+    </p>
+    <p>
+      At r &ge; &#961; the answer is yes, and the page does not merely assert that &mdash; it
+      constructs the adapter. Take the SVD of &#916;W*, put its top r right singular vectors into A
+      and its scaled left singular vectors into B, and the adapted model reproduces the teacher to
+      the SVD's own rounding: a weight gap around 1e-14 and an excess around 1e-17, since KL is
+      quadratic in the logit error. So a zero-excess solution exists inside the rank-r family, is
+      writable in closed form, and is where training does not go: at r = &#961; the trained adapter
+      lands two orders of magnitude away from it.
+    </p>
+    <p>
+      And the ordering is not the one the advice predicts. Sweep &#961; and the best rank is small
+      and roughly constant &mdash; 1 to 3 &mdash; and it does not follow &#961;. A rank that provably
+      cannot express &#916;W* beats a rank that provably can in about four paired runs out of five.
+      What r is doing on this task is not buying expressiveness that gets used; it is limiting how
+      much of the sampled-label noise the model can absorb. The data control is what turns that from
+      a story into a claim: raise the training set from 250 to 16,000 examples and the penalty for
+      the largest rank collapses by most of an order of magnitude &mdash; which is what a
+      capacity-versus-noise effect has to do, and what an expressiveness limit could not do.
+    </p>
+    <p>
+      The honest edge of the claim is in the same card. More data does move the best rank up. It
+      moves it from 1 to 2, and at the largest training set the second-largest rank finishes within
+      a thousandth of the best. The claim is therefore not &ldquo;small r always wins&rdquo; but
+      &ldquo;&#961; does not predict the winner, and the gap it is supposed to explain closes with
+      data rather than with rank&rdquo;.
+    </p>
+
+    <h2>Why the nearest matrix is not the best model</h2>
+    <p>
+      There is an obvious way to reason about what a rank ceiling costs: take the change you want,
+      find its closest rank-r approximation, and read off the error. Eckart and Young make the first
+      step easy &mdash; truncating the SVD gives the closest rank-r matrix in the Frobenius norm, and
+      the page tests that against thousands of random r-dimensional subspaces rather than citing it.
+      The trouble is the norm. Frobenius distance treats every input direction as equally likely, and
+      the layer does not see every input direction equally: it sees whatever the frozen trunk in
+      front of it produces.
+    </p>
+    <p>
+      That distribution is a fixed matrix here, &#931; = E[hh&#7488;], because the trunk is frozen and
+      never moves during training. The mean squared change in the layer's own output is then
+      <code>E&#8214;&#916;h&#8214;&#178; = tr(&#916;&#931;&#916;&#7488;) = &#8214;&#916;L&#8214;&#178;</code>
+      for &#931; = LL&#7488;, so the best rank-r change <em>for the layer's output</em> is the plain
+      truncation taken in whitened coordinates and mapped back. Two references, each provably optimal
+      in its own norm, each therefore provably worse in the other's. The page asserts both directions
+      of that, and asserts that they become bit-identical when &#931; is the identity, which is the
+      control that says the difference is the data and not the code.
+    </p>
+    <p>
+      Neither of them is a floor on what LoRA achieves, and the first card shows it: at r = 1 the
+      trained adapter's excess sits below the excess of the closest rank-1 approximation of &#916;W*.
+      There is no contradiction. The truncation is the closest matrix; the trained adapter is closer
+      to a good <em>function</em>. Nor is the data-weighted reference reliably the better model &mdash;
+      aggregated over every intrinsic rank it wins most of the time, and at the page's default
+      &#961; the plain one wins two of three, which the card names rather than hides. A surrogate is
+      a surrogate, and the mean squared change in a layer's output is not the loss.
+    </p>
+
+    <h2>What the trained change looks like</h2>
+    <p>
+      The last piece of the picture is where training actually goes. Measured in the &#931; inner
+      product, the change LoRA finds is not a low-rank approximation of &#916;W* at all: the cosine
+      between them sits well below 1 at every rank, and the norm of the trained change grows with r
+      until at r = d it is several times the size of the change that defines the task. The adapter is
+      not recovering &#916;W*; it is finding some other change that fits the sampled labels, and the
+      excess says the two are comparable functions on the data even though the matrices are far
+      apart.
+    </p>
+    <p>
+      A's row space does move &mdash; the drift column is well below 1 at small r &mdash; and it
+      matters: freezing A at its random draw and training only B costs several times the excess at
+      the same parameter count. So the subspace is not simply handed to the model by the random
+      number generator, even though the first step cannot rotate it. That is one place where a
+      plausible story about LoRA does not survive contact with the measurement.
+    </p>
+
+    <h2>The parameter arithmetic, which is exact</h2>
+    <p>
+      One thing about r is not a measurement at all. An adapter on an m&times;n matrix trains
+      r(m+n) numbers, the matrix has mn, and the two are equal at
+      <code>r* = mn/(m+n)</code>. Above that, LoRA has more trainable parameters than the matrix it
+      is adapting <em>and</em> is strictly less expressive, since a rank-r change is a subset of all
+      changes. On the 12&times;12 matrix on this page r* is 6, so half the rank axis is in that
+      regime &mdash; which is worth knowing when reading the sweep. On real shapes it is nowhere near:
+      2048 for a 4096&times;4096 projection, about 2985 for a 4096&times;11008 feed-forward matrix.
+      That gap is the whole practical case for adapters, and it is arithmetic, not a result.
+    </p>
+
+    <h2>What a comparison on this page is allowed to claim</h2>
+    <p>
+      The seed moves the initial A and the minibatch order, and it moves the final excess by more
+      than most of the differences an r sweep is about. The floor card measures that directly, and
+      it is why the headline table is paired &mdash; same seed both sides, counted &mdash; rather
+      than a table of means with a winner circled. Differences smaller than the seed spread are not
+      results, and the unpaired tables on this page are illustrations of one run, labelled as such.
+    </p>
+
+    <h2>The setup, so the numbers can be checked</h2>
+    <p>
+      The base model is <code>u &rarr; tanh(W<sub>in</sub>u + b<sub>in</sub>) &rarr;
+      tanh(W&#183;h + b) &rarr; W<sub>out</sub>h' + b<sub>out</sub></code> over 6 Gaussian inputs
+      and 4 classes, and the adapted matrix is the middle one. The downstream teacher is that model
+      with W replaced by W + &#916;W*, so p*(y|x) is a forward pass. Training uses labels sampled
+      from p*; evaluation uses p* itself, so a model's held-out score is
+      <code>&sum;<sub>y</sub>p*(y|x)&#183;(&minus;log q(y|x))</code> averaged over held-out x &mdash;
+      an exact expectation over labels &mdash; and subtracting the conditional entropy turns it into
+      a mean KL that is exactly zero for the teacher and non-negative for everything else. Forward
+      and backward are both written by hand; the gradients are checked against forward-mode automatic
+      differentiation over dual numbers, which is exact, and also against central differences taken
+      on a second forward pass written independently of the first.
+    </p>
+
+  </div>
+</section>
+
+<section id="build" class="panel light hidden">
+  <div class="narrow">
+
+    <h2>&#128296; How it is built</h2>
+
+    <h3>1. A task whose answer is a matrix</h3>
+    <p>
+      Every claim here is &ldquo;rank r is enough&rdquo; or &ldquo;this model is better than that
+      one&rdquo;, so both have to have answers. The downstream teacher is the base model with a
+      change of exact rank &#961; applied to one matrix, built as a product of a d&times;&#961; and a
+      &#961;&times;d Gaussian factor. That gives two things at once: p*(y|x) in closed form, so the
+      held-out score is an exact expectation over labels rather than an average of sampled ones; and
+      an <em>algebraic</em> answer to whether a rank-r adapter can express the change, with no
+      experiment involved.
+    </p>
+
+    <h3>2. The adapter, and the two lines that are its backward pass</h3>
+    <pre><code>forward :  pre = W&#183;h + b + s&#183;B(A&#183;h)          s = &#945;/r
+backward:  G = mean over the batch of &#948;&#183;h&#7488;
+           dA = s&#183;B&#7488;G          dB = s&#183;G&#183;A&#7488;</code></pre>
+    <p>
+      The reverse pass computes the gradient with respect to the <em>effective</em> matrix and the
+      adapter's own gradients are that matrix contracted with the factors, which is not a shortcut
+      &mdash; it is what the chain rule gives, and it is why the same code path serves the full
+      fine-tune control by simply using G directly.
+    </p>
+
+    <h3>3. Two forward passes, one merged and one not</h3>
+    <p>
+      The first forward keeps the branch separate, which is how an adapter really runs. The second
+      merges the adapter into the matrix first, walks its sums in reverse index order, and computes
+      tanh out of <code>exp</code> instead of calling <code>Math.tanh</code>. It shares no line with
+      the first. The two agreeing to about 1e-14 is the page's check that merging an adapter into its
+      base &mdash; the thing that makes LoRA free at inference &mdash; really is the same model, and
+      that the agreement is a rounding bound rather than an identity is worth saying out loud: the
+      two orders of summation are not the same arithmetic.
+    </p>
+
+    <h3>4. Gradients against an exact method, not only a finite difference</h3>
+    <p>
+      A central difference has a step size, and a step size means a bias term and a cancellation
+      term, so its best achievable agreement is around 1e-8. The page instead carries a dual number
+      &mdash; a value paired with a derivative &mdash; down the same path the forward pass takes,
+      which gives the derivative of the loss with respect to one chosen parameter with no step size
+      at all. Forward mode is also the opposite traversal to the backward pass it is checking, so a
+      shared misconception about the graph would have to appear twice, in two directions, to survive.
+      Agreement is around 1e-14, which is the rounding floor rather than a tolerance, and the finite
+      differences are run as well because the claim would be weaker without them.
+    </p>
+
+    <h3>5. Hand-written linear algebra: Jacobi, Cholesky, and an honest resolution limit</h3>
+    <p>
+      The SVD is built from a cyclic Jacobi eigendecomposition of M&#7488;M: rotations only, so the
+      singular vectors come out orthogonal to the rounding floor rather than by construction. The
+      data-weighted truncation needs a Cholesky factor of &#931; and its triangular inverse, both
+      written out. Going through the Gram matrix squares the singular values, so a mathematically
+      zero singular value resolves at roughly the <em>square root</em> of machine epsilon &mdash;
+      about 1e-8, not 1e-16 &mdash; and the page prints that ratio in its own column and uses 1e-6 as
+      the rank threshold instead of pretending a rank test is exact.
+    </p>
+
+    <h3>6. Eckart-Young, tested rather than cited</h3>
+    <p>
+      The claim that truncating the SVD gives the closest rank-r matrix is load-bearing for two of
+      the cards, so it is checked: draw a random r-dimensional row space, project M onto it exactly
+      &mdash; which gives the best matrix with that row space, no optimisation needed &mdash; and
+      keep the best of a few thousand draws. It never beats the truncation, and the margin widens
+      with r, because a random subspace in twelve dimensions is a bad guess and gets worse.
+    </p>
+
+    <h3>7. The controls, and why they are the point</h3>
+    <p>
+      Five parameterisations of the same change share one training loop: the adapter, the adapter
+      with A frozen, a random subset of W's entries with <em>exactly</em> the adapter's parameter
+      count, W's diagonal, and the whole matrix. The parameter-matched random subset is the control
+      that decides whether the structure earns anything or whether the count was doing the work. Only
+      the middle matrix is ever trainable in any of them, so nothing else can explain a difference.
+    </p>
+
+    <h3>8. Paired seeds, and a noise floor measured first</h3>
+    <p>
+      The rank sweep is repeated across seeds and compared seed by seed, and the seed spread is
+      measured separately so the reader can see which differences are allowed to mean anything. The
+      held-out sample spread is measured too, and it is much smaller, because removing label sampling
+      from the evaluation removes the dominant term.
+    </p>
+
+    <h3>9. Everything runs in the page</h3>
+    <p>
+      One file, no build step, no dependency, no network. The engine lives between two markers so it
+      can be lifted out and run under Node against independently written oracles: a different
+      generator, a different Gaussian transform, a forward pass built the other way round, an
+      explicit Jacobian, forward-mode duals against the page's reverse mode, a one-sided Jacobi SVD
+      against the page's Gram-matrix one, and a linear twin of the model with the nonlinearity
+      removed, where the gradient is a closed form and no backward pass is involved at all. The
+      assertion block at the bottom of the MEASURE tab is the same suite the page ships with, run in
+      the browser on the numbers actually on screen.
+    </p>
+
+  </div>
+</section>
+
+<script>
+// ===== ENGINE:BEGIN =====
+// ---------------------------------------------------------------- numerics
+function mulberry32(a){
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+// Box-Muller, cosine branch
+function gauss(rng){
+  var u = 1 - rng(), v = rng();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+function vec(n, f){ var a = new Array(n); for (var i = 0; i < n; i++) a[i] = f ? f(i) : 0; return a; }
+function mat(r, c, f){
+  var m = new Array(r);
+  for (var i = 0; i < r; i++){ m[i] = new Array(c); for (var j = 0; j < c; j++) m[i][j] = f ? f(i, j) : 0; }
+  return m;
+}
+function cloneMat(M){ return M.map(function(r){ return r.slice(); }); }
+function matVec(M, x){
+  var out = new Array(M.length);
+  for (var i = 0; i < M.length; i++){
+    var s = 0, row = M[i];
+    for (var j = 0; j < row.length; j++) s += row[j] * x[j];
+    out[i] = s;
+  }
+  return out;
+}
+function matTVec(M, x){
+  var n = M[0].length, out = new Array(n);
+  for (var j = 0; j < n; j++){ var s = 0; for (var i = 0; i < M.length; i++) s += M[i][j] * x[i]; out[j] = s; }
+  return out;
+}
+function matMul(A, B){
+  var n = A.length, k = B.length, m = B[0].length, out = mat(n, m);
+  for (var i = 0; i < n; i++) for (var p = 0; p < k; p++){
+    var a = A[i][p];
+    if (a === 0) continue;
+    for (var j = 0; j < m; j++) out[i][j] += a * B[p][j];
+  }
+  return out;
+}
+function matT(M){ return mat(M[0].length, M.length, function(i, j){ return M[j][i]; }); }
+function matAdd(A, B){ return mat(A.length, A[0].length, function(i, j){ return A[i][j] + B[i][j]; }); }
+function matSub(A, B){ return mat(A.length, A[0].length, function(i, j){ return A[i][j] - B[i][j]; }); }
+function matScale(A, s){ return mat(A.length, A[0].length, function(i, j){ return A[i][j] * s; }); }
+function frob2(M){
+  var s = 0;
+  for (var i = 0; i < M.length; i++) for (var j = 0; j < M[i].length; j++) s += M[i][j] * M[i][j];
+  return s;
+}
+function eye(n){ return mat(n, n, function(i, j){ return i === j ? 1 : 0; }); }
+function logsumexp(z){
+  var m = -Infinity, i;
+  for (i = 0; i < z.length; i++) if (z[i] > m) m = z[i];
+  var s = 0;
+  for (i = 0; i < z.length; i++) s += Math.exp(z[i] - m);
+  return m + Math.log(s);
+}
+// the probabilities AND their logs, so a KL against a model whose logits match bit for bit is
+// exactly zero rather than nearly zero
+function softmaxOf(z){
+  var L = logsumexp(z), p = new Array(z.length), lp = new Array(z.length);
+  for (var i = 0; i < z.length; i++){ lp[i] = z[i] - L; p[i] = Math.exp(lp[i]); }
+  return { p: p, lp: lp };
+}
+
+// ---------------------------------------------------------------- symmetric eigen, by cyclic Jacobi
+// Rotations only, so the eigenvectors come out orthogonal to the rounding floor rather than by
+// construction. The SVD is then built out of M^T M, and that is the whole page's linear algebra.
+function jacobiEig(S0){
+  var n = S0.length, S = cloneMat(S0), V = eye(n), i, j, k, sweep;
+  for (sweep = 0; sweep < 200; sweep++){
+    var off = 0;
+    for (i = 0; i < n; i++) for (j = i + 1; j < n; j++) off += S[i][j] * S[i][j];
+    if (off <= 1e-300) break;
+    var moved = false;
+    for (var p = 0; p < n - 1; p++) for (var q = p + 1; q < n; q++){
+      var apq = S[p][q];
+      if (Math.abs(apq) <= 1e-300) continue;
+      var theta = (S[q][q] - S[p][p]) / (2 * apq);
+      var sgn = theta >= 0 ? 1 : -1;
+      var t = sgn / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+      var c = 1 / Math.sqrt(t * t + 1), s = t * c;
+      moved = true;
+      for (k = 0; k < n; k++){
+        var skp = S[k][p], skq = S[k][q];
+        S[k][p] = c * skp - s * skq; S[k][q] = s * skp + c * skq;
+      }
+      for (k = 0; k < n; k++){
+        var spk = S[p][k], sqk = S[q][k];
+        S[p][k] = c * spk - s * sqk; S[q][k] = s * spk + c * sqk;
+      }
+      for (k = 0; k < n; k++){
+        var vkp = V[k][p], vkq = V[k][q];
+        V[k][p] = c * vkp - s * vkq; V[k][q] = s * vkp + c * vkq;
+      }
+    }
+    if (!moved) break;
+  }
+  var ord = [];
+  for (i = 0; i < n; i++) ord.push(i);
+  ord.sort(function(a, b){ return S[b][b] - S[a][a]; });
+  return { vals: ord.map(function(x){ return S[x][x]; }),
+           vecs: mat(n, n, function(r, c2){ return V[r][ord[c2]]; }) };
+}
+// the SVD through the Gram matrix: V and the squared singular values from jacobiEig, U = M v / sigma
+function svdOf(M){
+  var m = M.length, n = M[0].length;
+  var e = jacobiEig(matMul(matT(M), M));
+  var S = [], U = mat(m, n), V = mat(n, n), i, j;
+  for (j = 0; j < n; j++){
+    var v = vec(n, function(k){ return e.vecs[k][j]; });
+    var sg = Math.sqrt(Math.max(0, e.vals[j]));
+    S.push(sg);
+    var u = matVec(M, v);
+    for (i = 0; i < m; i++) U[i][j] = sg > 1e-150 ? u[i] / sg : 0;
+    for (i = 0; i < n; i++) V[i][j] = v[i];
+  }
+  return { U: U, S: S, V: V };
+}
+// the rank-r truncation. Eckart and Young say this is the closest rank-r matrix in the Frobenius
+// norm; the page checks that claim against a random search rather than citing it.
+function lowRankApprox(M, r){
+  var sv = svdOf(M), m = M.length, n = M[0].length, out = mat(m, n);
+  for (var k = 0; k < r && k < sv.S.length; k++){
+    var s = sv.S[k];
+    if (!(s > 0)) continue;
+    for (var i = 0; i < m; i++) for (var j = 0; j < n; j++) out[i][j] += s * sv.U[i][k] * sv.V[j][k];
+  }
+  return out;
+}
+function tailEnergy(M, r){
+  var sv = svdOf(M), s = 0;
+  for (var k = r; k < sv.S.length; k++) s += sv.S[k] * sv.S[k];
+  return s;
+}
+function numRank(M, tol){
+  var sv = svdOf(M), top = sv.S[0] || 0, n = 0;
+  for (var k = 0; k < sv.S.length; k++) if (sv.S[k] > (tol || 1e-9) * Math.max(top, 1e-300)) n++;
+  return n;
+}
+// Cholesky: Sigma = L L^T, L lower triangular
+function cholesky(S){
+  var n = S.length, L = mat(n, n), i, j, k;
+  for (i = 0; i < n; i++) for (j = 0; j <= i; j++){
+    var s = S[i][j];
+    for (k = 0; k < j; k++) s -= L[i][k] * L[j][k];
+    if (i === j) L[i][j] = Math.sqrt(Math.max(s, 1e-300)); else L[i][j] = s / L[j][j];
+  }
+  return L;
+}
+function invLower(L){
+  var n = L.length, X = mat(n, n), i, j, k;
+  for (j = 0; j < n; j++){
+    X[j][j] = 1 / L[j][j];
+    for (i = j + 1; i < n; i++){
+      var s = 0;
+      for (k = j; k < i; k++) s += L[i][k] * X[k][j];
+      X[i][j] = -s / L[i][i];
+    }
+  }
+  return X;
+}
+// the second of the page's two rank-r references. "plain" minimises the distance between the WEIGHT
+// matrices; this one minimises the mean squared change in what the layer OUTPUTS on real data,
+// which is ||D L||_F for Sigma = L L^T -- the same truncation taken in whitened coordinates and
+// mapped back. Identical to the plain one when Sigma is the identity, and that is asserted.
+function weightedLowRank(M, L, r){
+  return matMul(lowRankApprox(matMul(M, L), r), invLower(L));
+}
+function weightedErr2(D, L){ return frob2(matMul(D, L)); }
+// the same quantity with no factorisation anywhere in it: trace(D Sigma D^T)
+function sigmaErr2(D, Sig){
+  var s = 0, n = D[0].length;
+  for (var i = 0; i < D.length; i++) for (var j = 0; j < n; j++) for (var k = 0; k < n; k++)
+    s += D[i][j] * Sig[j][k] * D[i][k];
+  return s;
+}
+
+// ---------------------------------------------------------------- the frozen model and the task
+// One matrix is adapted; everything else is frozen in EVERY mode, so LoRA against a full fine-tune
+// is a comparison between two ways of moving the same d x d matrix and nothing else.
+function makeBase(o){
+  var rng = mulberry32(o.seed || 1), din = o.din, d = o.d, K = o.K;
+  return {
+    din: din, d: d, K: K,
+    Win: mat(d, din, function(){ return gauss(rng) * o.winScale; }),
+    bin: vec(d, function(){ return gauss(rng) * 0.3; }),
+    W: mat(d, d, function(){ return gauss(rng) / Math.sqrt(d); }),
+    b: vec(d, function(){ return gauss(rng) * 0.1; }),
+    Wout: mat(K, d, function(){ return gauss(rng) / Math.sqrt(d); }),
+    bout: vec(K, function(){ return gauss(rng) * 0.1; })
+  };
+}
+function cloneBase(N){
+  return { din: N.din, d: N.d, K: N.K, Win: cloneMat(N.Win), bin: N.bin.slice(),
+           W: cloneMat(N.W), b: N.b.slice(), Wout: cloneMat(N.Wout), bout: N.bout.slice() };
+}
+// the downstream task IS the base model with a known rank-rho change to the adapted matrix, so
+// "reachable at rank r" is an algebraic fact about the task and not a hope about the optimiser
+function makeTask(o){
+  o = o || {};
+  var din = o.din || 6, d = o.d || 12, K = o.K || 4, rho = o.rho === undefined ? 4 : o.rho;
+  var base = makeBase({ din: din, d: d, K: K, seed: o.seed || 11, winScale: o.winScale || 1.1 });
+  var rng = mulberry32((o.seed || 11) * 7 + 3), scale = o.dScale || 1.6;
+  var P = mat(d, rho, function(){ return gauss(rng); });
+  var Q = mat(rho, d, function(){ return gauss(rng); });
+  var Dstar = matScale(matMul(P, Q), scale / Math.sqrt(d * Math.max(rho, 1)));
+  var teacher = cloneBase(base);
+  teacher.W = matAdd(base.W, Dstar);
+  return { din: din, d: d, K: K, rho: rho, base: base, Dstar: Dstar, teacher: teacher };
+}
+function makeAdapter(o){
+  var rng = mulberry32(o.seed || 5), d = o.d, r = o.r;
+  var aScale = o.aScale === undefined ? 1 / Math.sqrt(d) : o.aScale;
+  var bScale = o.bScale === undefined ? 0 : o.bScale;
+  return {
+    r: r, d: d, alpha: o.alpha === undefined ? r : o.alpha,
+    A: mat(r, d, function(){ return gauss(rng) * aScale; }),
+    B: mat(d, r, function(){ return bScale === 0 ? 0 : gauss(rng) * bScale; })
+  };
+}
+function scaleOf(ad){ return ad.r > 0 ? ad.alpha / ad.r : 0; }
+function deltaOf(ad){ return ad.r > 0 ? matScale(matMul(ad.B, ad.A), scaleOf(ad)) : mat(ad.d, ad.d); }
+function mergedW(N, ad){ return ad && ad.r > 0 ? matAdd(N.W, deltaOf(ad)) : cloneMat(N.W); }
+function countAd(d, r){ return 2 * r * d; }
+
+// ---------------------------------------------------------------- forward, by hand
+// The branch path: W h + b + s B (A h). Nothing is merged, which is how an adapter really runs.
+function fwd(N, ad, u, rec){
+  var d = N.d, i, k;
+  var p0 = matVec(N.Win, u), h0 = new Array(d);
+  for (i = 0; i < d; i++) h0[i] = Math.tanh(p0[i] + N.bin[i]);
+  var pre = matVec(N.W, h0), Ah = null;
+  for (i = 0; i < d; i++) pre[i] += N.b[i];
+  if (ad && ad.r > 0){
+    var s = scaleOf(ad);
+    Ah = matVec(ad.A, h0);
+    var Br = matVec(ad.B, Ah);
+    for (i = 0; i < d; i++) pre[i] += s * Br[i];
+  }
+  var h1 = new Array(d);
+  for (i = 0; i < d; i++) h1[i] = Math.tanh(pre[i]);
+  var z = matVec(N.Wout, h1);
+  for (k = 0; k < N.K; k++) z[k] += N.bout[k];
+  if (rec){ rec.h0 = h0; rec.pre = pre; rec.h1 = h1; rec.Ah = Ah; rec.z = z; }
+  return z;
+}
+// the second forward, built the other way round: the adapter is MERGED into the matrix first, the
+// sums are walked in reverse index order, and tanh is written out of exp(). It shares no line with
+// fwd(), and the two agreeing is the page's check that a merged adapter really is the same model.
+function fwdAlt(N, ad, u){
+  var d = N.d, i, j, Weff = mergedW(N, ad);
+  var h0 = new Array(d);
+  for (i = 0; i < d; i++){
+    var s0 = N.bin[i];
+    for (j = N.din - 1; j >= 0; j--) s0 += N.Win[i][j] * u[j];
+    var e = Math.exp(-2 * s0);
+    h0[i] = (1 - e) / (1 + e);
+  }
+  var h1 = new Array(d);
+  for (i = 0; i < d; i++){
+    var s1 = N.b[i];
+    for (j = d - 1; j >= 0; j--) s1 += Weff[i][j] * h0[j];
+    var e1 = Math.exp(-2 * s1);
+    h1[i] = (1 - e1) / (1 + e1);
+  }
+  var z = new Array(N.K);
+  for (var k = 0; k < N.K; k++){
+    var sz = N.bout[k];
+    for (j = d - 1; j >= 0; j--) sz += N.Wout[k][j] * h1[j];
+    z[k] = sz;
+  }
+  return z;
+}
+
+// ---------------------------------------------------------------- backward, by hand
+// The reverse pass returns the gradient with respect to the EFFECTIVE matrix, and the adapter's own
+// gradients are that matrix contracted with the factors: dA = s B^T G, dB = s G A^T. Those two
+// lines are the whole of LoRA's backward pass. LoRA does not change the loss surface; it restricts
+// the step to the subspace the factors span.
+function bwdOne(N, rec, y){
+  var d = N.d, K = N.K, i, k;
+  var sm = softmaxOf(rec.z), dz = new Array(K);
+  for (k = 0; k < K; k++) dz[k] = sm.p[k] - (k === y ? 1 : 0);
+  var dh1 = matTVec(N.Wout, dz), dpre = new Array(d);
+  for (i = 0; i < d; i++) dpre[i] = dh1[i] * (1 - rec.h1[i] * rec.h1[i]);
+  return { dpre: dpre, h0: rec.h0, loss: -sm.lp[y] };
+}
+function lossGrad(N, ad, U, Y){
+  var d = N.d, n = U.length, i, j;
+  var G = mat(d, d), loss = 0, rec = {};
+  for (var t = 0; t < n; t++){
+    fwd(N, ad, U[t], rec);
+    var bk = bwdOne(N, rec, Y[t]);
+    loss += bk.loss;
+    for (i = 0; i < d; i++){
+      var dp = bk.dpre[i];
+      if (dp === 0) continue;
+      for (j = 0; j < d; j++) G[i][j] += dp * bk.h0[j];
+    }
+  }
+  loss /= n;
+  for (i = 0; i < d; i++) for (j = 0; j < d; j++) G[i][j] /= n;
+  var out = { loss: loss, G: G };
+  if (ad && ad.r > 0){
+    var s = scaleOf(ad);
+    out.gA = matScale(matMul(matT(ad.B), G), s);
+    out.gB = matScale(matMul(G, matT(ad.A)), s);
+  }
+  return out;
+}
+function nllOf(N, ad, U, Y){
+  var s = 0;
+  for (var i = 0; i < U.length; i++) s -= softmaxOf(fwd(N, ad, U[i], null)).lp[Y[i]];
+  return s / U.length;
+}
+// the same loss over the SECOND forward pass, which is what the central differences are taken on
+function nllAlt(N, ad, U, Y){
+  var s = 0;
+  for (var i = 0; i < U.length; i++){
+    var z = fwdAlt(N, ad, U[i]);
+    s += logsumexp(z) - z[Y[i]];
+  }
+  return s / U.length;
+}
+
+// ---------------------------------------------------------------- forward-mode AD, exact
+// A dual number carries the derivative down the same path the value takes. It is the opposite
+// traversal to the backward pass above and it has no step size, so it is EXACT -- a far sharper
+// instrument than a finite difference, and the page checks its gradients against this first.
+function dualLoss(N, ad, U, Y, seed){
+  var d = N.d, K = N.K, s = ad && ad.r > 0 ? scaleOf(ad) : 0, val = 0, der = 0;
+  for (var t = 0; t < U.length; t++){
+    var u = U[t], h0 = new Array(d), i, j, k;
+    for (i = 0; i < d; i++){
+      var a0 = N.bin[i];
+      for (j = 0; j < N.din; j++) a0 += N.Win[i][j] * u[j];
+      h0[i] = Math.tanh(a0);
+    }
+    var pre = new Array(d), dpre = new Array(d);
+    for (i = 0; i < d; i++){
+      var p = N.b[i], dp = 0;
+      for (j = 0; j < d; j++){
+        p += N.W[i][j] * h0[j];
+        if (seed.t === 'W' && seed.i === i && seed.j === j) dp += h0[j];
+      }
+      pre[i] = p; dpre[i] = dp;
+    }
+    if (ad && ad.r > 0){
+      var Ah = new Array(ad.r), dAh = new Array(ad.r);
+      for (k = 0; k < ad.r; k++){
+        var av = 0, da = 0;
+        for (j = 0; j < d; j++){
+          av += ad.A[k][j] * h0[j];
+          if (seed.t === 'A' && seed.i === k && seed.j === j) da += h0[j];
+        }
+        Ah[k] = av; dAh[k] = da;
+      }
+      for (i = 0; i < d; i++){
+        var bv = 0, dbv = 0;
+        for (k = 0; k < ad.r; k++){
+          bv += ad.B[i][k] * Ah[k];
+          dbv += ad.B[i][k] * dAh[k];
+          if (seed.t === 'B' && seed.i === i && seed.j === k) dbv += Ah[k];
+        }
+        pre[i] += s * bv; dpre[i] += s * dbv;
+      }
+    }
+    var h1 = new Array(d), dh1 = new Array(d);
+    for (i = 0; i < d; i++){
+      var th = Math.tanh(pre[i]);
+      h1[i] = th; dh1[i] = dpre[i] * (1 - th * th);
+    }
+    var z = new Array(K), dzv = new Array(K);
+    for (k = 0; k < K; k++){
+      var zz = N.bout[k], dzz = 0;
+      for (j = 0; j < d; j++){ zz += N.Wout[k][j] * h1[j]; dzz += N.Wout[k][j] * dh1[j]; }
+      z[k] = zz; dzv[k] = dzz;
+    }
+    var sm = softmaxOf(z), dl = 0;
+    for (k = 0; k < K; k++) dl += sm.p[k] * dzv[k];
+    val += logsumexp(z) - z[Y[t]];
+    der += dl - dzv[Y[t]];
+  }
+  return { v: val / U.length, d: der / U.length };
+}
+// every gradient the page uses, against the exact forward-mode derivative first and against central
+// differences on the second forward pass second
+function gradCheck(N, ad, U, Y, o){
+  var g = lossGrad(N, ad, U, Y), h = o.h || 1e-5, rng = mulberry32(o.seed || 1);
+  var worstDual = 0, worstFD = 0, moved = 0, n = 0, slots = [], i, j;
+  if (ad && ad.r > 0){
+    for (i = 0; i < ad.r; i++) for (j = 0; j < ad.d; j++) slots.push({ t: 'A', i: i, j: j });
+    for (i = 0; i < ad.d; i++) for (j = 0; j < ad.r; j++) slots.push({ t: 'B', i: i, j: j });
+  }
+  for (i = 0; i < N.d; i++) for (j = 0; j < N.d; j++) slots.push({ t: 'W', i: i, j: j });
+  var per = Math.min(o.per || 12, slots.length);
+  for (var s = 0; s < per; s++){
+    var sl = slots[Math.floor(rng() * slots.length)];
+    var an = sl.t === 'A' ? g.gA[sl.i][sl.j] : sl.t === 'B' ? g.gB[sl.i][sl.j] : g.G[sl.i][sl.j];
+    var du = dualLoss(N, ad, U, Y, sl).d;
+    var host = sl.t === 'A' ? ad.A : sl.t === 'B' ? ad.B : N.W;
+    var keep = host[sl.i][sl.j];
+    host[sl.i][sl.j] = keep + h;
+    var up = nllAlt(N, ad, U, Y);
+    host[sl.i][sl.j] = keep - h;
+    var dn = nllAlt(N, ad, U, Y);
+    host[sl.i][sl.j] = keep;
+    var fd = (up - dn) / (2 * h);
+    worstDual = Math.max(worstDual, Math.abs(an - du) / Math.max(1e-9, Math.abs(an) + Math.abs(du)));
+    worstFD = Math.max(worstFD, Math.abs(an - fd) / Math.max(1e-6, Math.abs(an) + Math.abs(fd)));
+    if (Math.abs(du) > 1e-9) moved++;
+    n++;
+  }
+  return { dual: worstDual, fd: worstFD, moved: moved, n: n };
+}
+
+// ---------------------------------------------------------------- data, and an exact floor
+function sampleInputs(task, n, seed){
+  var rng = mulberry32(seed), U = [];
+  for (var i = 0; i < n; i++) U.push(vec(task.din, function(){ return gauss(rng); }));
+  return U;
+}
+function trueProbs(task, U){
+  var P = [], LP = [];
+  for (var i = 0; i < U.length; i++){
+    var sm = softmaxOf(fwd(task.teacher, null, U[i], null));
+    P.push(sm.p); LP.push(sm.lp);
+  }
+  return { P: P, LP: LP };
+}
+function sampleLabels(P, seed){
+  var rng = mulberry32(seed), Y = [];
+  for (var i = 0; i < P.length; i++){
+    var u = rng(), c, acc = 0;
+    for (c = 0; c < P[i].length; c++){ acc += P[i][c]; if (u <= acc) break; }
+    Y.push(Math.min(c, P[i].length - 1));
+  }
+  return Y;
+}
+function condEntropy(P, LP){
+  var s = 0;
+  for (var i = 0; i < P.length; i++) for (var c = 0; c < P[i].length; c++) s -= P[i][c] * LP[i][c];
+  return s / P.length;
+}
+// the mean KL from the true conditional, as an exact expectation over labels: zero for the teacher,
+// never negative, and with no label sampling anywhere in it
+function excessOf(N, ad, U, P, LP){
+  var s = 0;
+  for (var i = 0; i < U.length; i++){
+    var sm = softmaxOf(fwd(N, ad, U[i], null));
+    for (var c = 0; c < P[i].length; c++) s += P[i][c] * (LP[i][c] - sm.lp[c]);
+  }
+  return s / U.length;
+}
+// the same score for a model handed over as an explicit change to the adapted matrix
+function excessOfDelta(task, D, U, P, LP){
+  var N = cloneBase(task.base);
+  N.W = matAdd(task.base.W, D);
+  return excessOf(N, null, U, P, LP);
+}
+// Sigma = E[h h^T] at the adapted layer's input. The trunk is frozen, so this matrix never moves
+// during training -- which is what makes the data-weighted truncation computable before any of it.
+function sigmaOf(N, U){
+  var d = N.d, S = mat(d, d), rec = {}, i, j;
+  for (var t = 0; t < U.length; t++){
+    fwd(N, null, U[t], rec);
+    var h = rec.h0;
+    for (i = 0; i < d; i++) for (j = 0; j < d; j++) S[i][j] += h[i] * h[j];
+  }
+  for (i = 0; i < d; i++) for (j = 0; j < d; j++) S[i][j] /= U.length;
+  return S;
+}
+// the mean squared change in what the layer OUTPUTS, accumulated example by example rather than
+// through Sigma -- the same number by a completely different route
+function outputShift2(N, D, U){
+  var s = 0, rec = {};
+  for (var t = 0; t < U.length; t++){
+    fwd(N, null, U[t], rec);
+    var v = matVec(D, rec.h0);
+    for (var i = 0; i < v.length; i++) s += v[i] * v[i];
+  }
+  return s / U.length;
+}
+
+// ---------------------------------------------------------------- training
+function adamState(r, c){ return { m: mat(r, c), v: mat(r, c), t: 0 }; }
+function adamStep(P, Gm, st, lr){
+  var b1 = 0.9, b2 = 0.999, eps = 1e-8;
+  st.t++;
+  var c1 = 1 - Math.pow(b1, st.t), c2 = 1 - Math.pow(b2, st.t);
+  for (var i = 0; i < P.length; i++) for (var j = 0; j < P[i].length; j++){
+    var g = Gm[i][j];
+    st.m[i][j] = b1 * st.m[i][j] + (1 - b1) * g;
+    st.v[i][j] = b2 * st.v[i][j] + (1 - b2) * g * g;
+    P[i][j] -= lr * (st.m[i][j] / c1) / (Math.sqrt(st.v[i][j] / c2) + eps);
+  }
+}
+function sgdStep(P, Gm, lr){
+  for (var i = 0; i < P.length; i++) for (var j = 0; j < P[i].length; j++) P[i][j] -= lr * Gm[i][j];
+}
+// the parameter-matched control: exactly as many entries of W as the adapter has parameters, chosen
+// at random. Same count, no structure.
+function maskOf(d, k, seed){
+  var rng = mulberry32(seed), idx = [], i;
+  for (i = 0; i < d * d; i++) idx.push(i);
+  for (i = d * d - 1; i > 0; i--){
+    var j = Math.floor(rng() * (i + 1)), t = idx[i];
+    idx[i] = idx[j]; idx[j] = t;
+  }
+  var M = mat(d, d);
+  for (i = 0; i < Math.min(k, d * d); i++) M[Math.floor(idx[i] / d)][idx[i] % d] = 1;
+  return M;
+}
+function diagMask(d){ return mat(d, d, function(i, j){ return i === j ? 1 : 0; }); }
+// mode: lora (A and B) | fa (B only, A frozen at its random draw) | full (the whole matrix)
+//     | sparse (a parameter-matched random subset of the matrix) | diag (its diagonal)
+function trainRun(task, o){
+  var N = cloneBase(task.base), d = N.d, mode = o.mode, r = o.r || 0;
+  var useAd = mode === 'lora' || mode === 'fa';
+  var ad = useAd ? makeAdapter({ d: d, r: r, seed: o.seed * 31 + 7,
+             alpha: o.alpha === undefined ? r : o.alpha, bScale: o.bScale || 0 }) : null;
+  var A0 = ad ? cloneMat(ad.A) : null;
+  var mask = mode === 'sparse' ? maskOf(d, o.params, o.seed * 13 + 5)
+           : mode === 'diag' ? diagMask(d) : null;
+  var stA = ad ? adamState(r, d) : null, stB = ad ? adamState(d, r) : null;
+  var stW = ad ? null : adamState(d, d);
+  var rng = mulberry32(o.seed * 101 + 3), n = o.U.length, probe = null, first = null;
+  for (var step = 0; step < o.steps; step++){
+    var bU = [], bY = [];
+    for (var i = 0; i < o.batch; i++){
+      var k = Math.floor(rng() * n);
+      bU.push(o.U[k]); bY.push(o.Y[k]);
+    }
+    var g = lossGrad(N, ad, bU, bY);
+    if (step === 0 && ad) first = { G: cloneMat(g.G), gA: cloneMat(g.gA), gB: cloneMat(g.gB) };
+    if (ad){
+      if (mode === 'lora'){
+        if (o.opt === 'sgd') sgdStep(ad.A, g.gA, o.lr); else adamStep(ad.A, g.gA, stA, o.lr);
+      }
+      if (o.opt === 'sgd') sgdStep(ad.B, g.gB, o.lr); else adamStep(ad.B, g.gB, stB, o.lr);
+    } else {
+      if (mask) for (var a = 0; a < d; a++) for (var b = 0; b < d; b++) if (!mask[a][b]) g.G[a][b] = 0;
+      if (o.opt === 'sgd') sgdStep(N.W, g.G, o.lr); else adamStep(N.W, g.G, stW, o.lr);
+    }
+    if (step === 9 && o.Pte) probe = excessOf(N, ad, o.Ute, o.Pte, o.LPte);
+  }
+  var D = ad ? deltaOf(ad) : matSub(N.W, task.base.W);
+  return { mode: mode, r: r, params: ad ? countAd(d, r) : mask ? o.params : d * d,
+           delta: D, trainLoss: nllOf(N, ad, o.U.slice(0, 400), o.Y.slice(0, 400)),
+           excess: o.Pte ? excessOf(N, ad, o.Ute, o.Pte, o.LPte) : NaN,
+           probe: probe, first: first, net: N, ad: ad, A0: A0 };
+}
+// the exact answer, written down rather than trained: at r >= rho a rank-rho change IS a rank-r
+// change, so an adapter that reproduces it exists and can be constructed in closed form
+function exactAdapter(task, r){
+  var d = task.d, sv = svdOf(task.Dstar), ad = { r: r, d: d, alpha: r, A: mat(r, d), B: mat(d, r) };
+  for (var k = 0; k < r; k++){
+    var s = sv.S[k], j, i;
+    for (j = 0; j < d; j++) ad.A[k][j] = sv.V[j][k];
+    for (i = 0; i < d; i++) ad.B[i][k] = s * sv.U[i][k];
+  }
+  return ad;
+}
+// Gram-Schmidt, then the singular values of the product of the two orthonormal bases: those are the
+// cosines of the principal angles between the row spaces. 1.0 means the subspace never moved.
+function orthoRows(M){
+  var out = [], i, j, k;
+  for (i = 0; i < M.length; i++){
+    var v = M[i].slice();
+    for (k = 0; k < out.length; k++){
+      var d0 = 0;
+      for (j = 0; j < v.length; j++) d0 += v[j] * out[k][j];
+      for (j = 0; j < v.length; j++) v[j] -= d0 * out[k][j];
+    }
+    var nn = 0;
+    for (j = 0; j < v.length; j++) nn += v[j] * v[j];
+    nn = Math.sqrt(nn);
+    if (nn > 1e-12){
+      for (j = 0; j < v.length; j++) v[j] /= nn;
+      out.push(v);
+    }
+  }
+  return out;
+}
+function subspaceOverlap(M1, M2){
+  var Q1 = orthoRows(M1), Q2 = orthoRows(M2);
+  if (!Q1.length || !Q2.length) return { min: 1, mean: 1 };
+  var C = mat(Q1.length, Q2.length, function(i, j){
+    var s = 0;
+    for (var k = 0; k < Q1[i].length; k++) s += Q1[i][k] * Q2[j][k];
+    return s;
+  });
+  var sv = svdOf(C), n = Math.min(Q1.length, Q2.length), mn = 1, mean = 0;
+  for (var i = 0; i < n; i++){
+    var c = Math.min(1, sv.S[i]);
+    mn = Math.min(mn, c); mean += c;
+  }
+  return { min: mn, mean: mean / n };
+}
+
+// ---------------------------------------------------------------- the studies
+// what a rank ceiling costs: the trained adapter against BOTH computable rank-r references
+function rankStudy(task, data, o){
+  var Sig = sigmaOf(task.base, data.Utr), L = cholesky(Sig), rows = [];
+  for (var q = 0; q < o.ranks.length; q++){
+    var r = o.ranks[q];
+    var Dp = lowRankApprox(task.Dstar, r), Dw = weightedLowRank(task.Dstar, L, r);
+    var run = trainRun(task, { mode: 'lora', r: r, seed: o.seed, U: data.Utr, Y: data.Ytr,
+      Ute: data.Ute, Pte: data.Pte, LPte: data.LPte, steps: o.steps, batch: o.batch, lr: o.lr });
+    rows.push({
+      r: r, params: countAd(task.d, r), full: task.d * task.d,
+      frobPlain: frob2(matSub(Dp, task.Dstar)), frobW: frob2(matSub(Dw, task.Dstar)),
+      frobLora: frob2(matSub(run.delta, task.Dstar)),
+      shiftPlain: weightedErr2(matSub(Dp, task.Dstar), L),
+      shiftW: weightedErr2(matSub(Dw, task.Dstar), L),
+      shiftLora: weightedErr2(matSub(run.delta, task.Dstar), L),
+      exPlain: excessOfDelta(task, Dp, data.Ute, data.Pte, data.LPte),
+      exW: excessOfDelta(task, Dw, data.Ute, data.Pte, data.LPte),
+      exLora: run.excess, tail: tailEnergy(task.Dstar, r),
+      tailW: tailEnergy(matMul(task.Dstar, L), r), rank: numRank(run.delta, 1e-6)
+    });
+  }
+  return { rows: rows, Sig: Sig, L: L, rho: task.rho };
+}
+// the controls: five ways to move the same matrix at the same budget
+function controlStudy(task, data, o){
+  var d = task.d, rows = [], specs = [
+    { mode: 'lora', r: o.r, label: 'LoRA, rank ' + o.r },
+    { mode: 'fa', r: o.r, label: 'the same, A frozen at its random draw' },
+    { mode: 'sparse', params: countAd(d, o.r), label: countAd(d, o.r) + ' random entries of W' },
+    { mode: 'diag', params: d, label: 'the diagonal of W only' },
+    { mode: 'full', label: 'the whole matrix' }
+  ];
+  for (var i = 0; i < specs.length; i++){
+    var sp = specs[i];
+    var run = trainRun(task, { mode: sp.mode, r: sp.r || 0, params: sp.params, seed: o.seed,
+      U: data.Utr, Y: data.Ytr, Ute: data.Ute, Pte: data.Pte, LPte: data.LPte,
+      steps: o.steps, batch: o.batch, lr: o.lr });
+    var ov = run.ad ? subspaceOverlap(run.A0, run.ad.A) : null;
+    rows.push({ label: sp.label, mode: sp.mode, params: run.params, excess: run.excess,
+                trainLoss: run.trainLoss, rank: numRank(run.delta, 1e-6),
+                overlap: ov ? ov.mean : null, minOverlap: ov ? ov.min : null,
+                shift: weightedErr2(matSub(run.delta, task.Dstar), o.L) });
+  }
+  return rows;
+}
+// what B = 0 buys, and what a nonzero B costs before a single step is taken
+function initStudy(task, data, o){
+  var d = task.d, out = [], scales = [0, 0.01, 0.1, 0.3, 1, 3];
+  for (var i = 0; i < scales.length; i++){
+    var ad = makeAdapter({ d: d, r: o.r, seed: o.seed * 31 + 7, alpha: o.r, bScale: scales[i] });
+    var dev = 0;
+    for (var t = 0; t < 200; t++){
+      var za = fwd(task.base, null, data.Ute[t], null), zb = fwd(task.base, ad, data.Ute[t], null);
+      for (var c = 0; c < za.length; c++) dev = Math.max(dev, Math.abs(za[c] - zb[c]));
+    }
+    var run = trainRun(task, { mode: 'lora', r: o.r, seed: o.seed, bScale: scales[i],
+      U: data.Utr, Y: data.Ytr, Ute: data.Ute, Pte: data.Pte, LPte: data.LPte,
+      steps: o.steps, batch: o.batch, lr: o.lr });
+    out.push({ bScale: scales[i], dev: dev, dnorm: Math.sqrt(frob2(deltaOf(ad))),
+               ex0: excessOf(task.base, ad, data.Ute, data.Pte, data.LPte), excess: run.excess });
+  }
+  return out;
+}
+// the parameter arithmetic: r(m+n) against mn, on this page's matrix and on real ones
+function paramStudy(shapes){
+  return shapes.map(function(s){
+    var m = s[0], n = s[1], be = m * n / (m + n);
+    return { name: s[2], m: m, n: n, full: m * n, breakEven: be, worse: Math.floor(be) + 1,
+             r8: 8 * (m + n), share8: 8 * (m + n) / (m * n) };
+  });
+}
+// AUC by the definition: over every pair whose truth differs, how often the candidate agrees
+function aucOf(truth, cand){
+  var conc = 0, disc = 0, tie = 0;
+  for (var i = 0; i < truth.length; i++) for (var j = i + 1; j < truth.length; j++){
+    if (truth[i] === truth[j]) continue;
+    var better = truth[i] < truth[j] ? -1 : 1;
+    var c = cand[i] < cand[j] ? -1 : cand[i] > cand[j] ? 1 : 0;
+    if (c === 0) tie++; else if (c === better) conc++; else disc++;
+  }
+  var pairs = conc + disc + tie;
+  return { auc: pairs ? (conc + 0.5 * tie) / pairs : 0.5, pairs: pairs };
+}
+function poolConfigs(o){
+  var out = [];
+  for (var a = 0; a < o.rhos.length; a++) for (var b = 0; b < o.ranks.length; b++)
+    for (var c = 0; c < o.lrs.length; c++) for (var e = 0; e < o.seeds.length; e++)
+      out.push({ rho: o.rhos[a], r: o.ranks[b], lr: o.lrs[c], seed: o.seeds[e] });
+  return out;
+}
+function rankerStudy(o){
+  var cfgs = poolConfigs(o), res = [], byTask = {}, i;
+  for (i = 0; i < cfgs.length; i++){
+    var c = cfgs[i], key = 'rho' + c.rho;
+    if (!byTask[key]){
+      var task = makeTask({ din: o.din, d: o.d, K: o.K, rho: c.rho, seed: 11 });
+      var Utr = sampleInputs(task, o.ntr, 21), tp = trueProbs(task, Utr);
+      var Ute = sampleInputs(task, o.nte, 31), tq = trueProbs(task, Ute);
+      byTask[key] = { task: task, Utr: Utr, Ytr: sampleLabels(tp.P, 22), Ute: Ute,
+                     Pte: tq.P, LPte: tq.LP, L: cholesky(sigmaOf(task.base, Utr)) };
+    }
+    var T = byTask[key];
+    var run = trainRun(T.task, { mode: 'lora', r: c.r, seed: c.seed, U: T.Utr, Y: T.Ytr,
+      Ute: T.Ute, Pte: T.Pte, LPte: T.LPte, steps: o.steps, batch: o.batch, lr: c.lr });
+    var Dp = lowRankApprox(T.task.Dstar, c.r), Dw = weightedLowRank(T.task.Dstar, T.L, c.r);
+    res.push({ cfg: c, excess: isFinite(run.excess) ? run.excess : 1e9,
+      diverged: !isFinite(run.excess) || run.excess > 1e3, r: c.r, params: countAd(o.d, c.r),
+      floorPlain: frob2(matSub(Dp, T.task.Dstar)), floorW: weightedErr2(matSub(Dw, T.task.Dstar), T.L),
+      probe: isFinite(run.probe) ? run.probe : 1e9,
+      trainLoss: isFinite(run.trainLoss) ? run.trainLoss : 1e9,
+      exPlain: excessOfDelta(T.task, Dp, T.Ute, T.Pte, T.LPte),
+      exW: excessOfDelta(T.task, Dw, T.Ute, T.Pte, T.LPte) });
+  }
+  var truth = res.map(function(r){ return r.excess; });
+  var cands = [
+    { name: 'the rank r itself', f: function(r){ return -r.r; }, train: 'no' },
+    { name: 'the trainable parameter count', f: function(r){ return -r.params; }, train: 'no' },
+    { name: 'the plain rank-r truncation error of &Delta;W*', f: function(r){ return r.floorPlain; }, train: 'no' },
+    { name: 'the data-weighted rank-r truncation error', f: function(r){ return r.floorW; }, train: 'no' },
+    { name: 'the excess of the plain truncation itself', f: function(r){ return r.exPlain; }, train: 'no' },
+    { name: 'the excess of the data-weighted truncation', f: function(r){ return r.exW; }, train: 'no' },
+    { name: 'ten steps of training', f: function(r){ return r.probe; }, train: 'yes' },
+    { name: 'the training loss you were watching anyway', f: function(r){ return r.trainLoss; }, train: 'yes' }
+  ];
+  var scored = cands.map(function(c){
+    var a = aucOf(truth, res.map(c.f));
+    return { name: c.name, train: c.train, auc: a.auc, pairs: a.pairs };
+  });
+  // the control: only the comparisons the candidate can actually see -- one task and one rate at a time
+  var conc = 0, disc = 0, tie = 0, x, y;
+  for (x = 0; x < res.length; x++) for (y = x + 1; y < res.length; y++){
+    if (res[x].cfg.rho !== res[y].cfg.rho || res[x].cfg.lr !== res[y].cfg.lr) continue;
+    if (res[x].excess === res[y].excess) continue;
+    var bet = res[x].excess < res[y].excess ? -1 : 1;
+    var cv = res[x].r > res[y].r ? -1 : res[x].r < res[y].r ? 1 : 0;
+    if (cv === 0) tie++; else if (cv === bet) conc++; else disc++;
+  }
+  var cp = conc + disc + tie, failed = 0;
+  for (x = 0; x < res.length; x++) if (res[x].diverged) failed++;
+  return { res: res, scored: scored, n: res.length, failed: failed,
+           withinAuc: cp ? (conc + 0.5 * tie) / cp : 0.5, withinPairs: cp };
+}
+function spreadOf(v){
+  var n = v.length, m = 0, i;
+  for (i = 0; i < n; i++) m += v[i];
+  m /= n;
+  var lo = Infinity, hi = -Infinity, q = 0;
+  for (i = 0; i < n; i++){
+    lo = Math.min(lo, v[i]); hi = Math.max(hi, v[i]);
+    q += (v[i] - m) * (v[i] - m);
+  }
+  return { mean: m, spread: hi - lo, std: Math.sqrt(q / n), n: n };
+}
+function noiseFloor(task, data, o){
+  var seeds = [], i;
+  for (i = 1; i <= 6; i++) seeds.push(trainRun(task, { mode: 'lora', r: o.r, seed: i,
+    U: data.Utr, Y: data.Ytr, Ute: data.Ute, Pte: data.Pte, LPte: data.LPte,
+    steps: o.steps, batch: o.batch, lr: o.lr }).excess);
+  var fix = trainRun(task, { mode: 'lora', r: o.r, seed: 3, U: data.Utr, Y: data.Ytr,
+    Ute: data.Ute, Pte: data.Pte, LPte: data.LPte, steps: o.steps, batch: o.batch, lr: o.lr });
+  var samp = [];
+  for (i = 0; i < 6; i++){
+    var U2 = sampleInputs(task, 300, 700 + i * 13), t2 = trueProbs(task, U2);
+    samp.push(excessOf(fix.net, fix.ad, U2, t2.P, t2.LP));
+  }
+  return [{ src: 'the seed', s: spreadOf(seeds) },
+          { src: 'the held-out input sample', s: spreadOf(samp) }];
+}
+
+// the strongest available adversary for the Eckart-Young theorem: draw a random r-dimensional row
+// space, project M onto it EXACTLY -- which is the best matrix with that row space -- and see
+// whether any draw beats the truncation. Nothing in here uses a singular value.
+function subspaceSearch(M, r, tries, seed){
+  var rng = mulberry32(seed), n = M[0].length, best = Infinity, total = frob2(M);
+  for (var t = 0; t < tries; t++){
+    var Q = orthoRows(mat(r, n, function(){ return gauss(rng); })), kept = 0;
+    for (var i = 0; i < M.length; i++) for (var k = 0; k < Q.length; k++){
+      var c = 0;
+      for (var j = 0; j < n; j++) c += M[i][j] * Q[k][j];
+      kept += c * c;
+    }
+    best = Math.min(best, total - kept);
+  }
+  return best;
+}
+// sigma_{r+1} / sigma_1. A Gram-matrix SVD squares the singular values, so it resolves a zero to
+// the SQUARE ROOT of machine epsilon -- about 1e-8, not 1e-16. The page quotes that bound rather
+// than pretending a rank check is exact.
+function svdTailRatio(M, r){
+  var sv = svdOf(M);
+  return r < sv.S.length ? sv.S[r] / Math.max(sv.S[0], 1e-300) : 0;
+}
+// the paired comparison: the same seed on both sides of every rank pair, because the seed spread is
+// larger than the differences being argued about
+function pairStudy(o){
+  var out = [], belowWin = 0, belowTot = 0;
+  for (var a = 0; a < o.rhos.length; a++){
+    var rho = o.rhos[a];
+    var task = makeTask({ din: o.din, d: o.d, K: o.K, rho: rho, seed: 11 });
+    var Utr = sampleInputs(task, o.ntr, 21), tp = trueProbs(task, Utr), Ytr = sampleLabels(tp.P, 22);
+    var Ute = sampleInputs(task, o.nte, 31), tq = trueProbs(task, Ute);
+    var byR = {}, means = [], i, r, b;
+    for (b = 0; b < o.ranks.length; b++){
+      r = o.ranks[b];
+      var v = [];
+      for (i = 0; i < o.seeds.length; i++) v.push(trainRun(task, { mode: 'lora', r: r,
+        seed: o.seeds[i], U: Utr, Y: Ytr, Ute: Ute, Pte: tq.P, LPte: tq.LP,
+        steps: o.steps, batch: o.batch, lr: o.lr }).excess);
+      byR[r] = v;
+      means.push(spreadOf(v).mean);
+    }
+    var best = o.ranks[means.indexOf(Math.min.apply(null, means))];
+    // every pair where one rank can express a rank-rho change and the other provably cannot
+    for (var x = 0; x < o.ranks.length; x++) for (var y = 0; y < o.ranks.length; y++){
+      var lo = o.ranks[x], hi = o.ranks[y];
+      if (!(lo < rho && hi >= rho)) continue;
+      for (i = 0; i < o.seeds.length; i++){ belowTot++; if (byR[lo][i] < byR[hi][i]) belowWin++; }
+    }
+    var top = o.ranks[o.ranks.length - 1], wins = 0, gain = 0;
+    for (i = 0; i < o.seeds.length; i++){
+      if (byR[best][i] < byR[top][i]) wins++;
+      gain += byR[top][i] - byR[best][i];
+    }
+    out.push({ rho: rho, means: means, best: best, top: top, wins: wins, n: o.seeds.length,
+               gain: gain / o.seeds.length, byR: byR, spread: spreadOf(byR[best]).spread });
+  }
+  return { rows: out, ranks: o.ranks, belowWin: belowWin, belowTot: belowTot };
+}
+// where the trained change actually sits relative to the change it is adapting toward
+function deltaGeometry(task, data, o){
+  var L = cholesky(sigmaOf(task.base, data.Utr)), rows = [];
+  var ip = function(X, Y){
+    var A2 = matMul(X, L), B2 = matMul(Y, L), s = 0;
+    for (var i = 0; i < A2.length; i++) for (var j = 0; j < A2[0].length; j++) s += A2[i][j] * B2[i][j];
+    return s;
+  };
+  var ns = Math.sqrt(ip(task.Dstar, task.Dstar));
+  for (var q = 0; q < o.ranks.length; q++){
+    var r = o.ranks[q];
+    var run = trainRun(task, { mode: 'lora', r: r, seed: o.seed, U: data.Utr, Y: data.Ytr,
+      Ute: data.Ute, Pte: data.Pte, LPte: data.LPte, steps: o.steps, batch: o.batch, lr: o.lr });
+    var nl = Math.sqrt(ip(run.delta, run.delta)), dif = matSub(run.delta, task.Dstar);
+    var ov = subspaceOverlap(run.A0, run.ad.A);
+    rows.push({ r: r, norm: nl, ref: ns, cos: ip(run.delta, task.Dstar) / (nl * ns),
+                dist: Math.sqrt(ip(dif, dif)), excess: run.excess, overlap: ov.mean,
+                rank: numRank(run.delta, 1e-6), tail: svdTailRatio(run.delta, r) });
+  }
+  return rows;
+}
+// what B = 0 makes exactly true, and what it makes impossible on the first step
+function firstStepStudy(task, data, o){
+  var d = task.d, r = o.r, i, j;
+  var ad = makeAdapter({ d: d, r: r, seed: o.seed * 31 + 7, alpha: r, bScale: 0 });
+  var U = data.Utr.slice(0, o.batch), Y = data.Ytr.slice(0, o.batch);
+  var g = lossGrad(task.base, ad, U, Y), s = scaleOf(ad), lr = o.lr;
+  var gAmax = 0, gBmax = 0;
+  for (i = 0; i < r; i++) for (j = 0; j < d; j++) gAmax = Math.max(gAmax, Math.abs(g.gA[i][j]));
+  for (i = 0; i < d; i++) for (j = 0; j < r; j++) gBmax = Math.max(gBmax, Math.abs(g.gB[i][j]));
+  // one SGD step from B = 0, against the closed form it has to equal
+  var B1 = matScale(matMul(g.G, matT(ad.A)), -lr * s);
+  var step = matScale(matMul(B1, ad.A), s);
+  var pred = matScale(matMul(g.G, matMul(matT(ad.A), ad.A)), -lr * s * s);
+  var worst = 0, scale = Math.sqrt(frob2(pred));
+  for (i = 0; i < d; i++) for (j = 0; j < d; j++)
+    worst = Math.max(worst, Math.abs(step[i][j] - pred[i][j]) / Math.max(1e-300, scale));
+  // the full-matrix gradient is the same matrix either way, so the adapter's step is that gradient
+  // FILTERED: G A^T A keeps only what the random row space of A can see
+  var kept = frob2(matMul(g.G, matMul(matT(ad.A), ad.A))), all = frob2(g.G);
+  return { gA: gAmax, gB: gBmax, ident: worst, s: s, kept: kept / all, rOverD: r / d,
+           gnorm: Math.sqrt(all) };
+}
+// an r sweep run twice: once with alpha = r so the prefactor is 1, once with alpha held fixed so it
+// moves with r. The row where r equals alpha is the SAME run and has to agree exactly.
+function alphaStudy(task, data, o){
+  var rows = [];
+  for (var q = 0; q < o.ranks.length; q++){
+    var r = o.ranks[q];
+    var a = trainRun(task, { mode: 'lora', r: r, seed: o.seed, alpha: r, U: data.Utr, Y: data.Ytr,
+      Ute: data.Ute, Pte: data.Pte, LPte: data.LPte, steps: o.steps, batch: o.batch, lr: o.lr });
+    var b = trainRun(task, { mode: 'lora', r: r, seed: o.seed, alpha: o.alpha, U: data.Utr,
+      Y: data.Ytr, Ute: data.Ute, Pte: data.Pte, LPte: data.LPte, steps: o.steps,
+      batch: o.batch, lr: o.lr });
+    rows.push({ r: r, s1: a.excess, sFix: b.excess, s: o.alpha / r, same: r === o.alpha });
+  }
+  return rows;
+}
+// how much data it takes before a bigger rank is worth having
+function dataStudy(task, o){
+  var Ute = sampleInputs(task, o.nte, 31), tq = trueProbs(task, Ute), rows = [];
+  for (var a = 0; a < o.sizes.length; a++){
+    var n = o.sizes[a];
+    var Utr = sampleInputs(task, n, 21), tp = trueProbs(task, Utr), Ytr = sampleLabels(tp.P, 22);
+    var vals = [], i;
+    for (var b = 0; b < o.ranks.length; b++) vals.push(trainRun(task, { mode: 'lora',
+      r: o.ranks[b], seed: o.seed, U: Utr, Y: Ytr, Ute: Ute, Pte: tq.P, LPte: tq.LP,
+      steps: o.steps, batch: o.batch, lr: o.lr }).excess);
+    var lo = 0;
+    for (i = 1; i < vals.length; i++) if (vals[i] < vals[lo]) lo = i;
+    rows.push({ n: n, vals: vals, best: o.ranks[lo] });
+  }
+  return rows;
+}
+
+// the same rank-r question over a whole range of intrinsic ranks, because the two references swap
+// places on some of them and one card at one setting cannot say which usually wins
+function truncAggregate(o){
+  var win = 0, tot = 0, rows = [], a, b;
+  for (a = 0; a < o.rhos.length; a++){
+    var rho = o.rhos[a];
+    var task = makeTask({ din: o.din, d: o.d, K: o.K, rho: rho, seed: 11 });
+    var Utr = sampleInputs(task, o.ntr, 21);
+    var Ute = sampleInputs(task, o.nte, 31), tq = trueProbs(task, Ute);
+    var L = cholesky(sigmaOf(task.base, Utr)), wins = 0, cases = 0;
+    for (b = 0; b < o.ranks.length; b++){
+      var r = o.ranks[b];
+      if (r >= rho) continue;
+      var Dp = lowRankApprox(task.Dstar, r), Dw = weightedLowRank(task.Dstar, L, r);
+      var ep = excessOfDelta(task, Dp, Ute, tq.P, tq.LP);
+      var ew = excessOfDelta(task, Dw, Ute, tq.P, tq.LP);
+      cases++; tot++;
+      if (ew < ep){ wins++; win++; }
+    }
+    if (cases) rows.push({ rho: rho, wins: wins, cases: cases });
+  }
+  return { rows: rows, win: win, tot: tot };
+}
+// Eckart and Young, tested rather than cited: the truncation against the best matrix found by
+// projecting onto random row spaces of the same dimension
+function eckartCheck(M, r, tries, seed){
+  var best = frob2(matSub(lowRankApprox(M, r), M));
+  var rand = subspaceSearch(M, r, tries, seed);
+  return { svd: best, rand: rand, beaten: rand < best * (1 - 1e-12), ratio: rand / Math.max(best, 1e-300) };
+}
+// ---------------------------------------------------------------- the page's own assertions
+// Every one of these is an IDENTITY, an inequality that algebra guarantees, or a rounding-floor
+// bound with the floor named -- never a hand-picked threshold on a measured quantity, because a
+// threshold calibrated at one slider position fails at another and nobody sees it.
+function selfCheck(o){
+  var pass = 0, total = 0, lines = [];
+  function ok(c, msg){ total++; if (c) pass++; else lines.push("FAIL  " + msg); }
+  var task = o.task, data = o.data, d = task.d, i, j, k, r;
+
+  // ---- the task and its floor
+  {
+    var worst = 0;
+    for (i = 0; i < data.Pte.length; i++){
+      var s = 0;
+      for (k = 0; k < data.Pte[i].length; k++) s += data.Pte[i][k];
+      worst = Math.max(worst, Math.abs(s - 1));
+    }
+    ok(worst < 1e-12, "the true conditional does not normalise: " + worst);
+    ok(data.H > 0 && data.H < Math.log(task.K), "the conditional entropy is not inside (0, log K)");
+    // the teacher's logits are produced by the same code path as p*, so this is exactly zero
+    ok(excessOf(task.teacher, null, data.Ute, data.Pte, data.LPte) === 0,
+       "the teacher's own excess is not exactly zero");
+    ok(excessOf(task.base, null, data.Ute, data.Pte, data.LPte) > 0,
+       "the unadapted base model has non-positive excess");
+    var R = makeAdapter({ d: d, r: 2, seed: 91, alpha: 2, bScale: 0.4 });
+    ok(excessOf(task.base, R, data.Ute, data.Pte, data.LPte) > -1e-15,
+       "a random adapter has negative excess, which a KL cannot");
+  }
+  // ---- the linear algebra, checked against its own definitions
+  {
+    var S = sigmaOf(task.base, data.Utr.slice(0, 200));
+    var e = jacobiEig(S), wRec = 0, wOrt = 0, scale = 0;
+    for (i = 0; i < d; i++) scale = Math.max(scale, Math.abs(e.vals[i]));
+    for (i = 0; i < d; i++) for (j = 0; j < d; j++){
+      var rec = 0, orth = 0;
+      for (k = 0; k < d; k++){
+        rec += e.vecs[i][k] * e.vals[k] * e.vecs[j][k];
+        orth += e.vecs[k][i] * e.vecs[k][j];
+      }
+      wRec = Math.max(wRec, Math.abs(rec - S[i][j]) / scale);
+      wOrt = Math.max(wOrt, Math.abs(orth - (i === j ? 1 : 0)));
+    }
+    ok(wRec < 1e-12, "the eigendecomposition does not reconstruct Sigma: " + wRec);
+    ok(wOrt < 1e-12, "the eigenvectors are not orthonormal: " + wOrt);
+    var desc = true;
+    for (i = 1; i < d; i++) if (e.vals[i] > e.vals[i - 1] + 1e-15) desc = false;
+    ok(desc, "the eigenvalues are not sorted descending");
+    var L = cholesky(S), wCh = 0, wIn = 0, Li = invLower(L);
+    for (i = 0; i < d; i++) for (j = 0; j < d; j++){
+      var c1 = 0, c2 = 0;
+      for (k = 0; k < d; k++){ c1 += L[i][k] * L[j][k]; c2 += L[i][k] * Li[k][j]; }
+      wCh = Math.max(wCh, Math.abs(c1 - S[i][j]) / scale);
+      wIn = Math.max(wIn, Math.abs(c2 - (i === j ? 1 : 0)));
+    }
+    ok(wCh < 1e-12, "the Cholesky factor does not reproduce Sigma: " + wCh);
+    ok(wIn < 1e-12, "the triangular inverse is not an inverse: " + wIn);
+    var M = task.Dstar, sv = svdOf(M), wSv = 0, tot = frob2(M), sq = 0;
+    for (i = 0; i < d; i++) for (j = 0; j < d; j++){
+      var v = 0;
+      for (k = 0; k < d; k++) v += sv.U[i][k] * sv.S[k] * sv.V[j][k];
+      wSv = Math.max(wSv, Math.abs(v - M[i][j]));
+    }
+    for (k = 0; k < d; k++) sq += sv.S[k] * sv.S[k];
+    ok(wSv / Math.sqrt(tot) < 1e-12, "the SVD does not reconstruct DeltaW*: " + wSv);
+    ok(Math.abs(sq - tot) / tot < 1e-12,
+       "the squared singular values do not sum to the squared Frobenius norm");
+    ok(numRank(M, 1e-6) === task.rho,
+       "DeltaW* does not have numerical rank rho: " + numRank(M, 1e-6) + " vs " + task.rho);
+    for (r = 1; r <= d; r++){
+      var head = 0;
+      for (k = 0; k < r; k++) head += sv.S[k] * sv.S[k];
+      // the truncation's residual IS the tail of the spectrum -- an identity, not a tolerance
+      ok(Math.abs(frob2(matSub(lowRankApprox(M, r), M)) - tailEnergy(M, r)) < 1e-12 * tot,
+         "the rank-" + r + " truncation error is not the tail of the spectrum");
+      ok(Math.abs(head + tailEnergy(M, r) - tot) < 1e-12 * tot,
+         "the head and tail energies do not add up at r = " + r);
+    }
+    // at r >= rho the truncation reproduces DeltaW* down to the rounding floor of the SVD
+    ok(frob2(matSub(lowRankApprox(M, task.rho), M)) / tot < 1e-24,
+       "the rank-rho truncation does not reproduce a rank-rho matrix");
+    var ec = eckartCheck(M, Math.max(1, task.rho - 1), 400, 5);
+    ok(!ec.beaten, "a random subspace beat the SVD truncation, which Eckart-Young forbids");
+    ok(ec.rand > ec.svd, "the random search matched the truncation exactly, so it is not a search");
+    // the same output shift by three unrelated routes
+    var Dt = matScale(M, 0.37);
+    var a1 = weightedErr2(Dt, L), a2 = sigmaErr2(Dt, S),
+        a3 = outputShift2(task.base, Dt, data.Utr.slice(0, 200));
+    ok(Math.abs(a1 - a2) / a1 < 1e-12, "||D L||^2 and trace(D Sigma D^T) disagree: " + a1 + " vs " + a2);
+    ok(Math.abs(a1 - a3) / a1 < 1e-12, "the per-example output shift disagrees with Sigma's: " + a3);
+    // with an isotropic Sigma the two truncations are the same matrix, bit for bit
+    var wI = 0, p3 = lowRankApprox(M, 3), w3 = weightedLowRank(M, eye(d), 3);
+    for (i = 0; i < d; i++) for (j = 0; j < d; j++) wI = Math.max(wI, Math.abs(p3[i][j] - w3[i][j]));
+    ok(wI === 0, "Sigma = I does not make the two truncations identical: " + wI);
+    ok(numRank(weightedLowRank(M, L, 2), 1e-6) === Math.min(2, task.rho),
+       "the data-weighted rank-2 truncation does not have rank min(2, rho): " +
+       numRank(weightedLowRank(M, L, 2), 1e-6));
+  }
+  // ---- the adapter itself
+  {
+    var z0 = makeAdapter({ d: d, r: 3, seed: 7, alpha: 3, bScale: 0 }), devZ = 0, anyNZ = 0;
+    var D0 = deltaOf(z0);
+    for (i = 0; i < d; i++) for (j = 0; j < d; j++) if (D0[i][j] !== 0) anyNZ++;
+    ok(anyNZ === 0, "a zero-B adapter does not give an exactly zero change: " + anyNZ + " entries");
+    for (i = 0; i < 200; i++){
+      var za = fwd(task.base, null, data.Ute[i], null), zb = fwd(task.base, z0, data.Ute[i], null);
+      for (k = 0; k < task.K; k++) devZ = Math.max(devZ, Math.abs(za[k] - zb[k]));
+    }
+    ok(devZ === 0, "B = 0 does not leave the base model bit-identical: " + devZ);
+    var ad = makeAdapter({ d: d, r: 3, seed: 7, alpha: 3, bScale: 0.35 }), wMg = 0, anyDiff = 0;
+    for (i = 0; i < 60; i++){
+      var q1 = fwd(task.base, ad, data.Utr[i], null), q2 = fwdAlt(task.base, ad, data.Utr[i]);
+      for (k = 0; k < task.K; k++){
+        var den = Math.abs(q1[k]) + Math.abs(q2[k]) + 1e-300;
+        wMg = Math.max(wMg, Math.abs(q1[k] - q2[k]) / den);
+        if (q1[k] !== q2[k]) anyDiff++;
+      }
+    }
+    ok(wMg < 1e-12, "the merged and unmerged forward passes disagree: " + wMg);
+    ok(anyDiff > 0, "the two forward passes are bit-identical, so one is not independent");
+    // halving B while doubling alpha is the same function, and with powers of two it is the same bits
+    var h2 = { r: ad.r, d: d, alpha: ad.alpha * 2, A: ad.A, B: matScale(ad.B, 0.5) };
+    var wP2 = 0;
+    for (i = 0; i < 60; i++){
+      var r1 = fwd(task.base, ad, data.Utr[i], null), r2 = fwd(task.base, h2, data.Utr[i], null);
+      for (k = 0; k < task.K; k++) wP2 = Math.max(wP2, Math.abs(r1[k] - r2[k]));
+    }
+    ok(wP2 === 0, "a power-of-two rescale of alpha and B is not bit-identical: " + wP2);
+    var h3 = { r: ad.r, d: d, alpha: ad.alpha * 3, A: ad.A, B: matScale(ad.B, 1 / 3) }, wP3 = 0;
+    for (i = 0; i < 60; i++){
+      var s1 = fwd(task.base, ad, data.Utr[i], null), s2 = fwd(task.base, h3, data.Utr[i], null);
+      for (k = 0; k < task.K; k++) wP3 = Math.max(wP3, Math.abs(s1[k] - s2[k]) / (Math.abs(s1[k]) + 1e-300));
+    }
+    ok(wP3 > 0 && wP3 < 1e-13, "a non-power-of-two rescale left the rounding band: " + wP3);
+    for (r = 1; r <= d; r += Math.max(1, Math.floor(d / 4))){
+      var rr = Math.min(r, d);
+      var aX = makeAdapter({ d: d, r: rr, seed: 12 + rr, alpha: rr, bScale: 0.5 });
+      ok(numRank(deltaOf(aX), 1e-6) === rr,
+         "a rank-" + rr + " adapter's change does not have rank " + rr);
+      ok(countAd(d, rr) === 2 * rr * d, "the parameter count is not 2rd at r = " + rr);
+    }
+    // the exact answer, written down: at r >= rho it reproduces DeltaW* to the SVD's own rounding
+    var ex = exactAdapter(task, Math.min(d, task.rho)), gap = frob2(matSub(deltaOf(ex), task.Dstar));
+    ok(gap / frob2(task.Dstar) < 1e-24,
+       "the constructed rank-rho adapter does not reproduce DeltaW*: " + gap);
+    var exX = excessOf(task.base, ex, data.Ute, data.Pte, data.LPte);
+    ok(Math.abs(exX) < 1e-14,
+       "the constructed adapter's excess is not at the rounding floor: " + exX);
+    if (task.rho > 1){
+      var below = exactAdapter(task, task.rho - 1), wB = 0;
+      var pl = lowRankApprox(task.Dstar, task.rho - 1), dB = deltaOf(below);
+      for (i = 0; i < d; i++) for (j = 0; j < d; j++) wB = Math.max(wB, Math.abs(dB[i][j] - pl[i][j]));
+      ok(wB / Math.sqrt(frob2(task.Dstar)) < 1e-12,
+         "below rho the constructed adapter is not the plain truncation: " + wB);
+    } else ok(true, "");
+  }
+  // ---- the gradients, against forward-mode duals and against finite differences
+  {
+    var U = data.Utr.slice(0, 24), Y = data.Ytr.slice(0, 24);
+    var wDual = 0, wFD = 0, moved = 0;
+    for (var q = 0; q < 3; q++){
+      var rr = [1, 3, Math.max(2, d - 2)][q];
+      var A2 = makeAdapter({ d: d, r: rr, seed: 4 + q, alpha: rr, bScale: 0.3 });
+      var gc = gradCheck(task.base, A2, U, Y, { per: 8, h: 1e-5, seed: 3 + q });
+      wDual = Math.max(wDual, gc.dual); wFD = Math.max(wFD, gc.fd); moved += gc.moved;
+      ok(gc.dual < 1e-12, "r = " + rr + " gradients disagree with the exact dual: " + gc.dual);
+      ok(gc.fd < 1e-6, "r = " + rr + " gradients disagree with central differences: " + gc.fd);
+    }
+    ok(moved >= 12, "the gradient check touched too few live parameters: " + moved);
+    ok(wDual < wFD, "the exact dual is no sharper than a finite difference, which cannot be");
+    // trained, not just at initialisation
+    var tr = trainRun(task, { mode: "lora", r: 2, seed: 5, U: data.Utr, Y: data.Ytr,
+      steps: 30, batch: 32, lr: 0.05 });
+    var gc2 = gradCheck(tr.net, tr.ad, U, Y, { per: 8, h: 1e-5, seed: 9 });
+    ok(gc2.dual < 1e-12, "after training the gradients leave the dual's rounding band: " + gc2.dual);
+    // B = 0 makes dA exactly zero, so the first step cannot rotate A at all
+    var fsq = firstStepStudy(task, data, { r: 3, seed: 3, batch: 64, lr: 0.01 });
+    ok(fsq.gA === 0, "dA is not exactly zero at B = 0: " + fsq.gA);
+    ok(fsq.gB > 0, "dB is zero at B = 0, so nothing could move");
+    ok(fsq.ident < 1e-12, "the first step is not -eta s^2 G A^T A: " + fsq.ident);
+    // the adapter's presence at B = 0 cannot change the full-matrix gradient
+    var g1 = lossGrad(task.base, null, U, Y);
+    var g2 = lossGrad(task.base, makeAdapter({ d: d, r: 3, seed: 7, alpha: 3, bScale: 0 }), U, Y);
+    var wG = 0;
+    for (i = 0; i < d; i++) for (j = 0; j < d; j++) if (g1.G[i][j] !== g2.G[i][j]) wG++;
+    ok(wG === 0, "a zero adapter changed the full-matrix gradient in " + wG + " entries");
+    // a zero output layer costs exactly log K
+    var Z = cloneBase(task.base);
+    for (k = 0; k < Z.K; k++){
+      Z.bout[k] = 0;
+      for (j = 0; j < d; j++) Z.Wout[k][j] = 0;
+    }
+    ok(Math.abs(nllAlt(Z, null, U, Y) - Math.log(task.K)) < 1e-15,
+       "a zero output layer does not cost exactly log K");
+  }
+  // ---- the rank table, and the two references
+  {
+    var rk = o.rankRows, tot2 = frob2(task.Dstar), L2 = o.L, ineqW = 0, ineqF = 0, ord = 0;
+    for (i = 0; i < rk.length; i++){
+      var w = rk[i];
+      // each reference is optimal in its own norm, so each is no worse than the other there.
+      // The slack is a rounding allowance scaled by the total energy, not a tuned tolerance.
+      if (w.shiftW <= w.shiftPlain + 1e-12 * o.shiftTotal) ineqW++;
+      if (w.frobPlain <= w.frobW + 1e-12 * tot2) ineqF++;
+      // the trained change is a rank-r matrix, so it CANNOT be closer to DeltaW* than the rank-r
+      // minimiser in that minimiser's own norm. This is a theorem about both references at once.
+      if (w.shiftLora >= w.shiftW - 1e-12 * o.shiftTotal &&
+          w.frobLora >= w.frobPlain - 1e-12 * tot2) ord++;
+      // at r >= rho both references ARE the teacher, so their excess is a few ulps either side of
+      // zero: the assertable statement is a rounding-floor bound, not non-negativity
+      ok(w.exPlain > -1e-14 && w.exW > -1e-14 && w.exLora > -1e-14,
+         "an excess went materially negative at r = " + w.r);
+      ok(w.params === 2 * w.r * d, "the parameter count is wrong at r = " + w.r);
+      ok(w.rank === Math.min(w.r, d), "the trained change has rank " + w.rank + " at r = " + w.r);
+      if (w.r >= task.rho){
+        ok(w.frobPlain / tot2 < 1e-24, "at r >= rho the plain truncation is not exact");
+        ok(w.exPlain < 1e-14, "at r >= rho the plain truncation is not the teacher");
+      } else ok(w.frobPlain > 0 && w.exPlain > 0, "below rho the truncation is exact, which it cannot be");
+    }
+    ok(ineqW === rk.length, "the data-weighted truncation is not optimal in its own norm: " +
+       ineqW + " of " + rk.length);
+    ok(ineqF === rk.length, "the plain truncation is not optimal in the Frobenius norm: " +
+       ineqF + " of " + rk.length);
+    ok(ord === rk.length, "a rank-r trained change beat the rank-r minimiser in its own norm, " +
+       "which no rank-r matrix can do");
+    // the ceiling is not what limits the trained model at r >= rho
+    var atRho = null;
+    for (i = 0; i < rk.length; i++) if (rk[i].r >= task.rho && !atRho) atRho = rk[i];
+    if (atRho) ok(atRho.exLora > 1e6 * Math.abs(o.exactExcess),
+       "the trained adapter is as good as the constructed one, so the page has no result here");
+    else ok(true, "");
+  }
+  // ---- the paired sweep and its control
+  {
+    var ps = o.pair, allWin = 0;
+    for (i = 0; i < ps.rows.length; i++){
+      var row = ps.rows[i];
+      ok(row.means.length === ps.ranks.length, "a paired row is missing a rank");
+      var mn = Infinity, at = -1;
+      for (j = 0; j < row.means.length; j++) if (row.means[j] < mn){ mn = row.means[j]; at = j; }
+      ok(ps.ranks[at] === row.best, "the marked best rank is not the smallest mean");
+      if (row.wins === row.n) allWin++;
+      ok(row.wins >= 0 && row.wins <= row.n, "a paired win count left its range");
+      ok(row.means[ps.ranks.indexOf(row.best)] <= Math.min.apply(null, row.means),
+         "the best rank's mean is not the smallest at rho = " + row.rho);
+    }
+    // how MANY rows win on every seed is a measurement and moves with the sliders, so the page
+    // asserts only what has to be true and prints the count in the card
+    ok(allWin >= 0 && allWin <= ps.rows.length, "the all-seed win count left its range");
+    ok(ps.belowWin > 0 && ps.belowWin <= ps.belowTot,
+       "no paired run had a rank that cannot express DeltaW* beating one that can");
+    ok(ps.belowTot > 0, "there were no comparisons across the reachability line");
+    // the data control: the penalties are differences from each row's own minimum, so they are
+    // non-negative by construction; the direction is a measurement and lives in the note
+    var ds = o.dataRows, pen = ds.map(function(rr){
+      var lo = Math.min.apply(null, rr.vals);
+      return rr.vals[rr.vals.length - 1] - lo;
+    });
+    for (i = 0; i < pen.length; i++)
+      ok(pen[i] >= 0 && isFinite(pen[i]), "a rank penalty is negative or not finite at row " + i);
+  }
+  // ---- the controls
+  {
+    var cs = o.ctlRows, lo2 = null, fa = null, sp = null, fu = null;
+    for (i = 0; i < cs.length; i++){
+      if (cs[i].mode === "lora") lo2 = cs[i];
+      if (cs[i].mode === "fa") fa = cs[i];
+      if (cs[i].mode === "sparse") sp = cs[i];
+      if (cs[i].mode === "full") fu = cs[i];
+    }
+    ok(lo2.params === sp.params, "the parameter-matched control is not parameter-matched: " +
+       lo2.params + " vs " + sp.params);
+    ok(fu.params === d * d, "the full fine-tune does not train d^2 parameters");
+    ok(1 - fa.overlap < 1e-12, "A moved in the frozen-A control: " + fa.overlap);
+    ok(lo2.overlap < 1, "A did not move at all in the trainable-A run");
+    ok(isFinite(fa.excess) && isFinite(lo2.excess), "a control run did not produce a finite excess");
+    ok(sp.rank > lo2.rank, "the unstructured control produced a low-rank change");
+    // the init card: exactly zero deviation, and a real deviation as soon as B is not zero
+    var ini = o.initRows;
+    ok(ini[0].bScale === 0 && ini[0].dev === 0, "the B = 0 row is not an exact no-op");
+    ok(ini[1].dev > 0, "a nonzero B left the model unchanged");
+    var mono = 0;
+    for (i = 2; i < ini.length; i++) if (ini[i].dev > ini[i - 1].dev) mono++;
+    ok(mono === ini.length - 2, "the initial deviation is not monotone in B's scale");
+    // the geometry card
+    var geo = o.geoRows, last = geo[geo.length - 1];
+    if (last.r === d) ok(1 - last.overlap < 1e-12,
+      "at r = d the row space is all of R^d and cannot move, yet the drift is " + last.overlap);
+    else ok(true, "");
+    for (i = 0; i < geo.length; i++)
+      ok(geo[i].cos <= 1 + 1e-12 && geo[i].cos >= -1 - 1e-12, "a cosine left [-1, 1]");
+  }
+  // ---- the parameter arithmetic, which is exact
+  {
+    var pr = o.parRows;
+    for (i = 0; i < pr.length; i++){
+      var p = pr[i];
+      ok(Math.abs(p.breakEven * (p.m + p.n) - p.full) < 1e-9 * p.full,
+         "the break-even rank does not satisfy r(m+n) = mn for " + p.name);
+      ok(p.worse * (p.m + p.n) > p.full, "the first costlier rank is not costlier for " + p.name);
+      ok((p.worse - 1) * (p.m + p.n) <= p.full, "the rank below it is already costlier for " + p.name);
+      ok(Math.abs(p.share8 - 8 * (p.m + p.n) / p.full) < 1e-15, "the r = 8 share is inconsistent");
+    }
+    ok(2 * d * d > d * d, "an adapter at r = d does not cost more than the matrix it adapts");
+  }
+  // ---- determinism
+  {
+    var a1 = makeAdapter({ d: d, r: 3, seed: 21, alpha: 3, bScale: 0.2 });
+    var a2 = makeAdapter({ d: d, r: 3, seed: 21, alpha: 3, bScale: 0.2 });
+    ok(a1.A[0][0] === a2.A[0][0] && a1.B[1][2] === a2.B[1][2], "the same seed gave a different adapter");
+    var U2 = data.Utr.slice(0, 16), Y2 = data.Ytr.slice(0, 16);
+    ok(nllOf(task.base, a1, U2, Y2) === nllOf(task.base, a2, U2, Y2), "the loss is not deterministic");
+    var t1 = trainRun(task, { mode: "lora", r: 2, seed: 8, U: data.Utr, Y: data.Ytr, steps: 20, batch: 16, lr: 0.05 });
+    var t2 = trainRun(task, { mode: "lora", r: 2, seed: 8, U: data.Utr, Y: data.Ytr, steps: 20, batch: 16, lr: 0.05 });
+    ok(t1.trainLoss === t2.trainLoss, "two identical training runs disagree");
+  }
+  // ---- the ranker, once the pool has been trained
+  {
+    var pl = o.pool;
+    if (pl){
+      for (i = 0; i < pl.scored.length; i++)
+        ok(pl.scored[i].auc >= 0 && pl.scored[i].auc <= 1, "an AUC left [0, 1]");
+      var rr2 = pl.scored[0], pm = pl.scored[1], pb = pl.scored[6];
+      // 2rd is a strictly increasing function of r, so it induces the SAME ordering and must score
+      // exactly the same AUC. This is an identity between two candidates, not a measurement.
+      ok(rr2.auc === pm.auc, "the rank and the parameter count scored differently: " +
+         rr2.auc + " vs " + pm.auc);
+      ok(pb.auc > rr2.auc + 0.1, "ten steps of training no longer beats the rank by a clear margin");
+      ok(pl.withinPairs > 0 && pl.withinPairs < pl.scored[0].pairs,
+         "the control is not a strict subset of the pool's pairs");
+    }
+  }
+  return { pass: pass, total: total, lines: lines };
+}
+// ===== ENGINE:END =====
+// ---------------------------------------------------------------- UI
+var $ = function(id){ return document.getElementById(id); };
+var f1 = function(x){ return x.toFixed(1); };
+var f2 = function(x){ return x.toFixed(2); };
+var f3 = function(x){ return x.toFixed(3); };
+var f4 = function(x){ return x.toFixed(4); };
+var f5 = function(x){ return x.toFixed(5); };
+var eng = function(x){ return x === 0 ? "0.0e+0" : x.toExponential(1); };
+var eng2 = function(x){ return x === 0 ? "0.0e+0" : x.toExponential(2); };
+var pct1 = function(x){ return (100 * x).toFixed(1) + "%"; };
+var cls = function(good){ return good ? "ok" : "bad"; };
+var big = function(x){ return isFinite(x) ? f5(x) : "<span class='bad'>diverged</span>"; };
+var num = function(x){ return x.toLocaleString("en-US"); };
+var COL = ["#0f172a", "#2563eb", "#7c3aed", "#be123c", "#0d9488", "#b45309"];
+var SHAPES = [[768, 768, "GPT-2 small attention"], [1600, 1600, "GPT-2 XL attention"],
+              [4096, 4096, "a 4096 projection"], [4096, 11008, "a Llama-shaped feed-forward"]];
+
+var CACHE = {}, POOL = null, LAST = null;
+
+function opts(){
+  var d = +$("sD").value;
+  return { d: d, rho: Math.min(+$("sP").value, d), n: +$("sN").value, steps: +$("sS").value,
+           lr: +$("sR").value / 1000, seed: +$("sE").value };
+}
+function showOpts(){
+  var o = opts();
+  $("vP").textContent = o.rho; $("vD").textContent = o.d; $("vN").textContent = num(o.n);
+  $("vS").textContent = o.steps; $("vR").textContent = o.lr.toFixed(3); $("vE").textContent = o.seed;
+}
+function ranksOf(d){
+  var want = [1, 2, 3, 4, 6, 8, Math.round(d / 2), d], out = [];
+  for (var i = 0; i < want.length; i++)
+    if (want[i] <= d && out.indexOf(want[i]) < 0) out.push(want[i]);
+  out.sort(function(a, b){ return a - b; });
+  return out;
+}
+function ladderOf(d, want){
+  var out = [];
+  for (var i = 0; i < want.length; i++)
+    if (want[i] <= d && out.indexOf(want[i]) < 0) out.push(want[i]);
+  if (out.indexOf(d) < 0) out.push(d);
+  out.sort(function(a, b){ return a - b; });
+  return out;
+}
+function build(o){
+  var key = "b/" + o.d + "/" + o.rho + "/" + o.n;
+  if (CACHE[key]) return CACHE[key];
+  var task = makeTask({ din: 6, d: o.d, K: 4, rho: o.rho, seed: 11 });
+  var Utr = sampleInputs(task, o.n, 21), tp = trueProbs(task, Utr);
+  var Ute = sampleInputs(task, 1000, 31), tq = trueProbs(task, Ute);
+  var data = { Utr: Utr, Ytr: sampleLabels(tp.P, 22), Ute: Ute, Pte: tq.P, LPte: tq.LP,
+               H: condEntropy(tq.P, tq.LP) };
+  var Sig = sigmaOf(task.base, Utr), L = cholesky(Sig);
+  return (CACHE[key] = { task: task, data: data, Sig: Sig, L: L,
+                         shiftTotal: weightedErr2(task.Dstar, L),
+                         base0: excessOf(task.base, null, Ute, tq.P, tq.LP) });
+}
+
+// ---------------------------------------------------------------- the rank chart
+function pairSVG(ps){
+  var W = 470, H = 260, mL = 46, mR = 10, mT = 12, mB = 30, ranks = ps.ranks;
+  var lo = Infinity, hi = -Infinity;
+  ps.rows.forEach(function(r){ r.means.forEach(function(v){
+    if (v < lo) lo = v; if (v > hi) hi = v; }); });
+  var pad = (hi - lo) * 0.08 || 0.01;
+  lo -= pad; hi += pad;
+  var xOf = function(i){ return mL + (W - mL - mR) * (ranks.length < 2 ? 0.5 : i / (ranks.length - 1)); };
+  var yOf = function(v){ return mT + (H - mT - mB) * (1 - (v - lo) / (hi - lo)); };
+  var out = ['<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="excess against rank, one line per intrinsic rank">'];
+  for (var t = 0; t <= 4; t++){
+    var v = lo + (hi - lo) * t / 4;
+    out.push('<line x1="' + mL + '" y1="' + yOf(v) + '" x2="' + (W - mR) + '" y2="' + yOf(v) +
+             '" stroke="#e2e8f0"/>');
+    out.push('<text x="' + (mL - 6) + '" y="' + (yOf(v) + 3.5) + '" font-size="9" fill="#64748b" ' +
+             'text-anchor="end">' + v.toFixed(3) + '</text>');
+  }
+  ranks.forEach(function(r, i){
+    out.push('<text x="' + xOf(i) + '" y="' + (H - 8) + '" font-size="9.5" fill="#64748b" ' +
+             'text-anchor="middle">' + r + '</text>');
+  });
+  out.push('<text x="' + mL + '" y="' + (mT + 8) + '" font-size="9" fill="#94a3b8">excess</text>');
+  ps.rows.forEach(function(row, k){
+    var pts = row.means.map(function(v, i){ return xOf(i) + "," + yOf(v); }).join(" ");
+    out.push('<polyline points="' + pts + '" fill="none" stroke="' + COL[k % COL.length] +
+             '" stroke-width="1.8"/>');
+    var mi = ranks.indexOf(row.rho);
+    if (mi >= 0) out.push('<circle cx="' + xOf(mi) + '" cy="' + yOf(row.means[mi]) + '" r="4" fill="' +
+             COL[k % COL.length] + '"/>');
+    var bi = ranks.indexOf(row.best);
+    out.push('<circle cx="' + xOf(bi) + '" cy="' + yOf(row.means[bi]) + '" r="2.5" fill="#fff" ' +
+             'stroke="' + COL[k % COL.length] + '" stroke-width="1.6"/>');
+    out.push('<text x="' + (xOf(ranks.length - 1) - 3) + '" y="' +
+             (yOf(row.means[row.means.length - 1]) - 5) + '" font-size="9" fill="' +
+             COL[k % COL.length] + '" text-anchor="end">&#961; = ' + row.rho + '</text>');
+  });
+  out.push('</svg>');
+  return out.join("");
+}
+function aucSVG(scored, withinAuc){
+  var W = 470, rowH = 26, H = 22 + rowH * (scored.length + 1), mL = 8, mR = 8;
+  var x0 = mL + 210, x1 = W - mR - 40;
+  var xOf = function(a){ return x0 + (x1 - x0) * Math.max(0, Math.min(1, a)); };
+  var out = ['<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="AUC of each candidate">'];
+  out.push('<line x1="' + xOf(0.5) + '" y1="14" x2="' + xOf(0.5) + '" y2="' + (H - 14) +
+           '" stroke="#94a3b8" stroke-dasharray="3 3"/>');
+  out.push('<text x="' + xOf(0.5) + '" y="10" font-size="9" fill="#64748b" text-anchor="middle">a coin</text>');
+  var all = scored.concat([{ name: "the rank, within one cell", auc: withinAuc, within: true }]);
+  all.forEach(function(s, i){
+    var y = 20 + rowH * i + 10;
+    var lab = s.name.replace(/<[^>]*>/g, "").replace(/&#?\w+;/g, "").slice(0, 36);
+    out.push('<text x="' + mL + '" y="' + (y + 3.5) + '" font-size="9.5" fill="#334155">' + lab + '</text>');
+    var c = s.within ? "#0d9488" : (s.auc >= 0.5 ? "#2563eb" : "#b91c1c");
+    var a = xOf(Math.min(0.5, s.auc)), b = xOf(Math.max(0.5, s.auc));
+    out.push('<rect x="' + a + '" y="' + (y - 6) + '" width="' + Math.max(1, b - a) +
+             '" height="12" fill="' + c + '" opacity="0.85"/>');
+    out.push('<text x="' + (x1 + 4) + '" y="' + (y + 3.5) + '" font-size="9.5" fill="' + c +
+             '" font-weight="700">' + s.auc.toFixed(3) + '</text>');
+  });
+  out.push('</svg>');
+  return out.join("");
+}
+
+// ---------------------------------------------------------------- the fast half
+function renderFast(){
+  var o = opts(), B = build(o);
+  showOpts();
+  $("ent").textContent = f4(B.data.H);
+  $("kk").textContent = B.task.K;
+  $("base0").textContent = f4(B.base0);
+  var par = paramStudy([[o.d, o.d, "this page's matrix"]].concat(SHAPES));
+  $("par").innerHTML = par.map(function(p, i){
+    return "<tr" + (i === 0 ? ' class="hl"' : "") + "><td>" + p.name + "</td><td>" + num(p.m) +
+      " &times; " + num(p.n) + "</td><td>" + num(p.full) + "</td><td>" +
+      (p.breakEven === Math.round(p.breakEven) ? num(p.breakEven) : f1(p.breakEven)) +
+      "</td><td>" + num(p.worse) + "</td><td>" + num(p.r8) + "</td><td class='" +
+      cls(p.share8 < 1) + "'>" + (p.share8 < 0.1 ? (100 * p.share8).toFixed(3) : f1(100 * p.share8)) +
+      "%</td></tr>";
+  }).join("");
+  $("parNote").innerHTML =
+    "The break-even is exact arithmetic: r(m+n) = mn at <code>r* = mn/(m+n)</code>, asserted rather " +
+    "than quoted. On this page's <strong>" + o.d + "&times;" + o.d + "</strong> matrix that is " +
+    "<strong>" + num(par[0].breakEven) + "</strong>, so every rank from <strong>" +
+    num(par[0].worse) + "</strong> up trains <em>more</em> parameters than the matrix it is adapting " +
+    "while remaining strictly less expressive &mdash; a rank-r change is a subset of all changes. " +
+    "Half of the rank axis on this page is in that regime, which is worth remembering when reading " +
+    "the sweep above: the large-r rows are not a cheaper option that happens to be worse, they are a " +
+    "more expensive option that is also worse. At the shapes adapters are actually used on, r* is in " +
+    "the thousands and an r = 8 adapter is a fraction of a percent, which is the entire practical " +
+    "case for the method and is arithmetic rather than a result.";
+}
+
+// ---------------------------------------------------------------- the slow half
+function renderSlow(){
+  var o = opts(), B = build(o), task = B.task, data = B.data, d = o.d;
+  var ranks = ranksOf(d), key = d + "/" + o.rho + "/" + o.n + "/" + o.steps + "/" + o.lr + "/" + o.seed;
+  var i, j;
+
+  var rs = CACHE["rs/" + key];
+  if (!rs) rs = CACHE["rs/" + key] = rankStudy(task, data, { ranks: ranks, seed: o.seed,
+    steps: o.steps, batch: 32, lr: o.lr });
+  var nf = CACHE["nf/" + key];
+  if (!nf) nf = CACHE["nf/" + key] = noiseFloor(task, data, { r: Math.min(2, d),
+    steps: o.steps, batch: 32, lr: o.lr });
+  var seedSpread = nf[0].s.spread, sampSpread = nf[1].s.spread;
+  var exAd = exactAdapter(task, Math.min(d, o.rho));
+  var exGap = Math.sqrt(frob2(matSub(deltaOf(exAd), task.Dstar)));
+  var exEx = excessOf(task.base, exAd, data.Ute, data.Pte, data.LPte);
+
+  $("rank").innerHTML =
+    "<tr class='hl'><td>&#961; = " + o.rho + ", written down <span class='lg'>not trained</span></td>" +
+    "<td>" + num(2 * o.rho * d) + "</td><td class='ok'>yes</td><td class='ok'>" + eng(exGap * exGap) +
+    "</td><td class='ok'>" + eng(Math.abs(exEx)) + "</td><td class='ok'>" + eng(exGap * exGap) +
+    "</td><td class='ok'>" + eng(Math.abs(exEx)) + "</td><td class='ok'>" + eng(Math.abs(exEx)) +
+    "</td><td>" + o.rho + "</td><td>&mdash;</td></tr>" +
+    rs.rows.map(function(r){
+      var reach = r.r >= o.rho;
+      return "<tr><td>r = " + r.r + "</td><td>" + num(r.params) + "</td><td class='" +
+        (reach ? "ok" : "bad") + "'>" + (reach ? "yes" : "no") + "</td><td>" + f4(r.frobPlain) +
+        "</td><td>" + (r.exPlain < 1e-12 ? eng(r.exPlain) : f5(r.exPlain)) + "</td><td>" +
+        f4(r.frobW) + "</td><td>" + (r.exW < 1e-12 ? eng(r.exW) : f5(r.exW)) + "</td><td>" +
+        big(r.exLora) + "</td><td>" + r.rank + "</td><td>" + eng(r.tail) + "</td></tr>";
+    }).join("");
+  var atRho = null;
+  for (i = 0; i < rs.rows.length; i++) if (rs.rows[i].r >= o.rho && !atRho) atRho = rs.rows[i];
+  var r1 = rs.rows[0];
+  $("rankNote").innerHTML =
+    "The first row is the point of the card. &#916;W* has rank " + o.rho + ", so a rank-" + o.rho +
+    " adapter reproducing it <em>exists</em>, and it is constructed here from the SVD rather than " +
+    "searched for: weight gap <strong>" + eng(exGap) + "</strong>, excess <strong>" +
+    eng(Math.abs(exEx)) + "</strong> &mdash; the SVD's own rounding, and then squared again because " +
+    "a KL is quadratic in the logit error. Training the same rank for " + o.steps +
+    " Adam steps reaches <strong>" + f5(atRho.exLora) + "</strong>. " +
+    "<strong class='bad'>The rank ceiling is not what is limiting that model</strong>, because the " +
+    "ceiling admits an exact answer and the optimiser does not go there. Read the two reference " +
+    "columns next: at r &ge; " + o.rho + " both are the teacher, exactly, and at r &lt; " + o.rho +
+    " they are the closest rank-r matrices under two different norms &mdash; " +
+    (r1.exLora < r1.exPlain ?
+      "and at r = 1 the trained adapter's excess, <strong>" + f5(r1.exLora) + "</strong>, is " +
+      "<strong>" + pct1((r1.exPlain - r1.exLora) / r1.exPlain) + "</strong> <em>below</em> the " +
+      "closest rank-1 matrix's, so neither reference is a floor. The nearest matrix is not the best " +
+      "function. " :
+      "and at r = 1 the closest rank-1 matrix, at <strong>" + f5(r1.exPlain) + "</strong>, is ahead " +
+      "of the trained adapter's <strong>" + f5(r1.exLora) + "</strong> at this setting, though " +
+      "neither is a floor on the other. ") +
+    "The last column is the honest limit of a rank test: the SVD here goes through M&#7488;M, which " +
+    "squares the singular values, so a mathematically zero one resolves at about 1e-8 rather than " +
+    "1e-16 and the rank threshold is 1e-6.";
+
+  var ps = CACHE["ps/" + key];
+  if (!ps){
+    var rhos = [1, 2, 4, 8, 12].filter(function(v){ return v <= d; });
+    if (rhos.indexOf(d) < 0) rhos.push(d);
+    ps = CACHE["ps/" + key] = pairStudy({ din: 6, d: d, K: 4, rhos: rhos, ranks: ranks,
+      seeds: [o.seed, o.seed + 1, o.seed + 2, o.seed + 3], ntr: Math.min(o.n, 1200), nte: 800,
+      steps: Math.min(o.steps, 150), batch: 32, lr: o.lr });
+  }
+  $("pairHeadRow").innerHTML = "<th>&#961;</th>" +
+    ranks.map(function(r){ return "<th>r = " + r + "</th>"; }).join("") +
+    "<th>best</th><th>can express?</th><th>best beats r = " + ranks[ranks.length - 1] + "</th>";
+  $("pair").innerHTML = ps.rows.map(function(row){
+    var cells = row.means.map(function(v, i){
+      var isBest = ps.ranks[i] === row.best;
+      return "<td" + (isBest ? " class='ok'" : "") + ">" + f4(v) + "</td>";
+    }).join("");
+    return "<tr><td>&#961; = " + row.rho + "</td>" + cells + "<td><strong>r = " + row.best +
+      "</strong></td><td class='" + (row.best >= row.rho ? "ok" : "bad") + "'>" +
+      (row.best >= row.rho ? "yes" : "no") + "</td><td class='" + cls(row.wins === row.n) + "'>" +
+      row.wins + " / " + row.n + " <span class='lg'>&minus;" + f4(row.gain) + "</span></td></tr>";
+  }).join("");
+  var bests = ps.rows.map(function(r){ return r.best; }), tracks = 0, allWin = 0;
+  for (i = 0; i < ps.rows.length; i++){
+    if (ps.rows[i].best === ps.rows[i].rho) tracks++;
+    if (ps.rows[i].wins === ps.rows[i].n) allWin++;
+  }
+  $("pairNote").innerHTML =
+    "Reading down the <em>best</em> column: <strong>" + bests.join(", ") + "</strong> against " +
+    "intrinsic ranks of " + ps.rows.map(function(r){ return r.rho; }).join(", ") + ". The two " +
+    "agree on <strong>" + tracks + " of " + ps.rows.length + "</strong> rows and every one of those " +
+    "is a row whose &#961; was already inside the winning range &mdash; above that the best rank " +
+    "stops following &#961; entirely and stays small. The best rank " +
+    "beats the largest rank on <strong>" + allWin + " of " + ps.rows.length + "</strong> rows at " +
+    "every single seed. And the sharpest version of the same fact: across every pair where one rank " +
+    "provably <em>cannot</em> express &#916;W* and the other provably can, the one that cannot wins " +
+    "<strong class='ok'>" + ps.belowWin + " of " + ps.belowTot + "</strong> paired runs, " +
+    "<strong>" + pct1(ps.belowWin / ps.belowTot) + "</strong>. The advice that follows from " +
+    "&ldquo;rank r can express any rank-r change&rdquo; is not merely unhelpful here; it points the " +
+    "wrong way. What r is doing is limiting how much of the sampled-label noise the model can " +
+    "absorb, and the next card is the control that says so.";
+
+  var ds = CACHE["ds/" + key];
+  if (!ds){
+    var dranks = ladderOf(d, [1, 2, 4, 8]);
+    ds = CACHE["ds/" + key] = { ranks: dranks, rows: dataStudy(task, { sizes: [250, 1000, 4000, 16000],
+      ranks: dranks, nte: 800, seed: o.seed, steps: Math.min(o.steps, 150), batch: 32, lr: o.lr }) };
+  }
+  $("dataHeadRow").innerHTML = "<th>training examples</th>" +
+    ds.ranks.map(function(r){ return "<th>r = " + r + "</th>"; }).join("") +
+    "<th>best</th><th>penalty for r = " + ds.ranks[ds.ranks.length - 1] + "</th>";
+  $("data").innerHTML = ds.rows.map(function(row){
+    var lo = Math.min.apply(null, row.vals);
+    var cells = row.vals.map(function(v){
+      return "<td" + (v === lo ? " class='ok'" : "") + ">" + f4(v) + "</td>";
+    }).join("");
+    return "<tr><td>" + num(row.n) + "</td>" + cells + "<td><strong>r = " + row.best +
+      "</strong></td><td>" + f4(row.vals[row.vals.length - 1] - lo) + "</td></tr>";
+  }).join("");
+  var penOf = function(row){ return row.vals[row.vals.length - 1] - Math.min.apply(null, row.vals); };
+  var pen0 = penOf(ds.rows[0]), penN = penOf(ds.rows[ds.rows.length - 1]);
+  $("dataNote").innerHTML =
+    "The penalty for the largest rank falls from <strong>" + f4(pen0) + "</strong> at 250 examples " +
+    "to <strong>" + f4(penN) + "</strong> at 16,000 &mdash; a factor of <strong>" +
+    f1(pen0 / Math.max(penN, 1e-9)) + "</strong>. That is what a capacity-versus-noise effect has to " +
+    "do and what an expressiveness limit could not: extra rank is not being wasted on a change it " +
+    "cannot represent, it is being spent on labels that were sampled. And the honest edge of the " +
+    "claim is in the same table: more data does move the best rank up, from <strong>" +
+    ds.rows[0].best + "</strong> to <strong>" + ds.rows[ds.rows.length - 1].best + "</strong>, and " +
+    "at the largest training set the gap between the best and the worst rank is smaller than the " +
+    "seed spread at the bottom of this tab. What does not happen at any size is the best rank " +
+    "arriving at &#961; = " + o.rho + ".";
+
+  var ta = CACHE["ta/" + d + "/" + o.n];
+  if (!ta) ta = CACHE["ta/" + d + "/" + o.n] = truncAggregate({ din: 6, d: d, K: 4,
+    rhos: [1, 2, 3, 4, 6, 8, 10, 12].filter(function(v){ return v <= d; }),
+    ranks: ranks, ntr: Math.min(o.n, 1200), nte: 800 });
+  var ec = eckartCheck(task.Dstar, Math.max(1, o.rho - 1), 1500, 5);
+  $("trunc").innerHTML = rs.rows.map(function(r){
+    var wWin = r.exW < r.exPlain, exact = r.r >= o.rho;
+    return "<tr" + (exact ? "" : ' class="hl"') + "><td>r = " + r.r + "</td><td>" + f4(r.frobPlain) +
+      "</td><td>" + f4(r.shiftPlain) + "</td><td>" + (exact ? eng(r.exPlain) : f5(r.exPlain)) +
+      "</td><td>" + f4(r.frobW) + "</td><td>" + f4(r.shiftW) + "</td><td>" +
+      (exact ? eng(r.exW) : f5(r.exW)) + "</td><td class='" + (exact ? "" : cls(wWin)) + "'>" +
+      (exact ? "both exact" : (wWin ? "weighted" : "plain")) + "</td></tr>";
+  }).join("");
+  $("truncNote").innerHTML =
+    "Two inequalities, both guaranteed by the fact that each reference is optimal in its own norm, " +
+    "and both asserted here rather than assumed: the plain truncation wins every <em>weight " +
+    "err&#178;</em> comparison and the data-weighted one wins every <em>output shift&#178;</em> " +
+    "comparison, at every rank, with only a rounding allowance. Eckart-Young is tested too &mdash; " +
+    "the best of <strong>1,500</strong> random " + Math.max(1, o.rho - 1) +
+    "-dimensional row spaces, each projected onto exactly, reaches <strong>" + f4(ec.rand) +
+    "</strong> against the truncation's <strong>" + f4(ec.svd) + "</strong>, a factor of " +
+    f1(ec.ratio) + " away. And with &#931; replaced by the identity the two truncations become the " +
+    "same matrix <strong>bit for bit</strong>, which is the control that says the difference is the " +
+    "data and not the code. Which one is the better <em>model</em> is a different question and one " +
+    "setting cannot settle it: aggregated over " + ta.rows.length + " intrinsic ranks the " +
+    "data-weighted reference wins <strong>" + ta.win + " of " + ta.tot + "</strong> comparisons " +
+    "&mdash; and at this slider's &#961; = " + o.rho + " it wins " +
+    (function(){ var w = 0, c = 0;
+      for (var q = 0; q < ta.rows.length; q++) if (ta.rows[q].rho === o.rho){ w = ta.rows[q].wins; c = ta.rows[q].cases; }
+      return "<strong>" + w + " of " + c + "</strong>"; })() +
+    ". A surrogate is a surrogate: the mean squared change in a layer's output is not the loss, and " +
+    "the reference that provably minimises it is not reliably the better model.";
+
+  var geo = CACHE["geo/" + key];
+  if (!geo) geo = CACHE["geo/" + key] = deltaGeometry(task, data, { ranks: ranks, seed: o.seed,
+    steps: o.steps, batch: 32, lr: o.lr });
+  $("geo").innerHTML = geo.map(function(g){
+    return "<tr" + (g.r === d ? ' class="hl"' : "") + "><td>r = " + g.r + "</td><td>" + f3(g.norm) +
+      "</td><td>" + f3(g.ref) + "</td><td>" + f2(g.norm / g.ref) + "&times;</td><td>" + f4(g.cos) +
+      "</td><td>" + f3(g.dist) + "</td><td>" + (g.r === d ? "1 <span class='lg'>&plusmn;" +
+      eng(1 - g.overlap) + "</span>" : f4(g.overlap)) + "</td><td>" + big(g.excess) + "</td></tr>";
+  }).join("");
+  var maxCos = 0, maxRatio = 0, exLo = Infinity, exHi = 0;
+  for (i = 0; i < geo.length; i++){
+    maxCos = Math.max(maxCos, geo[i].cos);
+    maxRatio = Math.max(maxRatio, geo[i].norm / geo[i].ref);
+    exLo = Math.min(exLo, geo[i].excess);
+    exHi = Math.max(exHi, geo[i].excess);
+  }
+  var exRange = exHi / exLo;
+  $("geoNote").innerHTML =
+    "The change training finds is not a low-rank approximation of &#916;W*. The best alignment " +
+    "anywhere in the table is <strong>" + f4(maxCos) + "</strong>, and the size of the trained " +
+    "change grows with r until it is <strong>" + f2(maxRatio) + "&times;</strong> the change that " +
+    "defines the task &mdash; while the excess column moves by a factor of only <strong>" +
+    f2(exRange) + "</strong> across the whole range. Two matrices that far apart are comparable " +
+    "<em>functions</em> on this data, which is the " +
+    "same lesson as the reference columns above from the other direction. A's row space does move: " +
+    "the drift at small r is well below 1, and at r = d it is exactly 1 because the row space is " +
+    "already all of R<sup>" + d + "</sup> and has nowhere to go &mdash; deviation " +
+    eng(1 - geo[geo.length - 1].overlap) + ", a rounding residue rather than a measurement. So the " +
+    "subspace is not simply handed over by the random number generator, even though the first step " +
+    "provably cannot rotate it.";
+
+  var fst = firstStepStudy(task, data, { r: Math.min(3, d), seed: o.seed, batch: 64, lr: 0.01 });
+  var ini = CACHE["ini/" + key];
+  if (!ini) ini = CACHE["ini/" + key] = initStudy(task, data, { r: Math.min(2, d), seed: o.seed,
+    steps: o.steps, batch: 32, lr: o.lr });
+  $("init").innerHTML = ini.map(function(s, i2){
+    return "<tr" + (i2 === 0 ? ' class="hl"' : "") + "><td>" + (s.bScale === 0 ? "0 <span class='lg'>LoRA</span>" :
+      "N(0, " + s.bScale + "&#178;)") + "</td><td class='" + (s.dev === 0 ? "ok" : "") + "'>" +
+      eng(s.dev) + "</td><td>" + f4(s.dnorm) + "</td><td>" + f4(s.ex0) + "</td><td>" +
+      big(s.excess) + "</td></tr>";
+  }).join("");
+  var base = ini[0], mid = ini[2], worst = ini[ini.length - 1];
+  $("initNote").innerHTML =
+    "The first row is an identity, not a small number: with B = 0 the branch output is identically " +
+    "zero, so the adapted model is the base model <strong class='ok'>bit for bit</strong> " +
+    "&mdash; deviation <strong>0.0e+0</strong> over " + 200 + " held-out inputs and " +
+    "4 logits each. The structural consequence is in the gradient: dA = s&#183;B&#7488;G contains B, " +
+    "so at B = 0 it is <strong>exactly " + fst.gA + "</strong> and the first step cannot rotate A " +
+    "at all. What it can do is exactly <code>&minus;&#951;s&#178;&#183;G&#183;A&#7488;A</code>, " +
+    "checked to <strong>" + eng(fst.ident) + "</strong> &mdash; the ordinary full-matrix gradient " +
+    "passed through a random positive matrix drawn before any data was seen, which keeps " +
+    "<strong>" + pct1(fst.kept) + "</strong> of its energy at r = " + Math.min(3, d) +
+    " against r/d = " + pct1(fst.rOverD) + ". <span class='red'>What does not survive is the reason " +
+    "usually given for it.</span> Drawing B at 0.1 instead of 0 leaves a model that is visibly " +
+    "different at initialisation &mdash; deviation " + eng(mid.dev) + " &mdash; and finishes at " +
+    "<strong>" + f5(mid.excess) + "</strong> against <strong>" + f5(base.excess) + "</strong>, a " +
+    "difference of " + f5(Math.abs(mid.excess - base.excess)) + " against a seed spread of " +
+    "<strong>" + f4(seedSpread) + "</strong>" +
+    ". It takes a B of " + worst.bScale + ", giving an initial change " +
+    f1(worst.dnorm / Math.sqrt(frob2(task.Dstar))) + "&times; the size of &#916;W* itself, before " +
+    "the final number clearly suffers: " + f5(worst.excess) + ". B = 0 is worth having because it " +
+    "makes the adapter a no-op you can ship and merge exactly, not because training needs it.";
+
+  var cs = CACHE["cs/" + key];
+  if (!cs) cs = CACHE["cs/" + key] = controlStudy(task, data, { r: Math.min(2, d), seed: o.seed,
+    steps: o.steps, batch: 32, lr: o.lr, L: B.L });
+  var loraRow = cs[0];
+  $("ctl").innerHTML = cs.map(function(c, i2){
+    var rel = c.excess / loraRow.excess;
+    return "<tr" + (i2 === 0 ? ' class="hl"' : "") + "><td>" + c.label + "</td><td>" +
+      num(c.params) + "</td><td>" + c.rank + "</td><td>" + f4(c.trainLoss) + "</td><td>" +
+      big(c.excess) + "</td><td class='" + (i2 === 0 ? "" : cls(rel > 1)) + "'>" +
+      (i2 === 0 ? "&mdash;" : f2(rel) + "&times;") + "</td></tr>";
+  }).join("");
+  var fa = cs[1], spr = cs[2], full = cs[4];
+  $("ctlNote").innerHTML =
+    "The parameter-matched control is the one that decides whether the structure earns anything: " +
+    "<strong>" + num(spr.params) + "</strong> randomly chosen entries of W, the same count as the " +
+    "adapter, reach <strong>" + f5(spr.excess) + "</strong> against the adapter's <strong>" +
+    f5(loraRow.excess) + "</strong> &mdash; " + f2(spr.excess / loraRow.excess) + "&times;, so the " +
+    "low-rank structure is worth something here but not a great deal, and the count was doing much " +
+    "of the work. Fine-tuning the whole matrix, <strong>" + num(full.params) + "</strong> " +
+    "parameters, reaches <strong>" + f5(full.excess) + "</strong> &mdash; " +
+    (full.excess > loraRow.excess ? "<strong class='ok'>worse</strong> than the " +
+      num(loraRow.params) + "-parameter adapter, at " + f2(full.excess / loraRow.excess) +
+      "&times;, which is the same regularisation story as the rank sweep. " :
+      "better than the adapter, at " + f2(full.excess / loraRow.excess) + "&times;. ") +
+    "And freezing A at its random draw &mdash; the same parameter count, the same rank, only B " +
+    "trainable &mdash; costs <strong class='bad'>" + f2(fa.excess / loraRow.excess) + "&times;</strong>. " +
+    "A's motion is where the win is, which is why the subspace cannot be dismissed as the random " +
+    "draw even though it is the random draw that starts it.";
+
+  $("floor").innerHTML = nf.map(function(n){
+    return "<tr><td>" + n.src + "</td><td>" + f5(n.s.mean) + "</td><td>" + f5(n.s.spread) +
+      "</td><td>" + f5(n.s.std) + "</td><td>" + n.s.n + "</td></tr>";
+  }).join("");
+  $("floorNote").innerHTML =
+    "The seed moves the excess by <strong>" + f5(seedSpread) + "</strong> across " + nf[0].s.n +
+    " draws while the held-out sample moves a fixed model by <strong>" + f5(sampSpread) +
+    "</strong> &mdash; a factor of <strong>" + f1(seedSpread / Math.max(sampSpread, 1e-9)) +
+    "</strong>, and the second number is small only because the evaluation is an exact expectation " +
+    "over labels rather than a sample of them. The first number is the one every comparison on this " +
+    "page has to clear, and most of the single-seed gaps in the rank table do not clear it. That is " +
+    "exactly why the headline card is paired: comparing the same seed on both sides removes the " +
+    "dominant term instead of averaging over it, and a count of paired wins says something a table " +
+    "of means with the smallest number circled does not.";
+
+  LAST = { rankRows: rs.rows, pair: ps, dataRows: ds.rows, ctlRows: cs, initRows: ini,
+           geoRows: geo, parRows: paramStudy([[d, d, "this page's matrix"]].concat(SHAPES)),
+           L: B.L, shiftTotal: B.shiftTotal, exactExcess: exEx, floor: seedSpread };
+  $("pairSVG").innerHTML = pairSVG(ps);
+}
+
+// ---------------------------------------------------------------- assertions
+function runChecks(){
+  var o = opts(), B = build(o);
+  if (!LAST){ $("checks").textContent = "the assertions run once the tables are built"; return; }
+  var c = selfCheck({ task: B.task, data: B.data, rankRows: LAST.rankRows, pair: LAST.pair,
+    dataRows: LAST.dataRows, ctlRows: LAST.ctlRows, initRows: LAST.initRows, geoRows: LAST.geoRows,
+    parRows: LAST.parRows, L: LAST.L, shiftTotal: LAST.shiftTotal, exactExcess: LAST.exactExcess,
+    pool: POOL });
+  $("checks").textContent =
+    "selfCheck()  " + c.pass + " / " + c.total + " checks passed" +
+    (c.lines.length ? "\n" + c.lines.join("\n") :
+     "\n\nthe true conditional normalises and the teacher's own excess is exactly zero while no\n" +
+     "other model's is negative; the Jacobi eigendecomposition reconstructs Sigma and its vectors\n" +
+     "are orthonormal, the Cholesky factor and its triangular inverse hold, and the SVD's squared\n" +
+     "singular values sum to the squared Frobenius norm; the rank-r truncation's residual IS the\n" +
+     "tail of the spectrum at every r, no random subspace beats it, and at r >= rho it reproduces\n" +
+     "DeltaW* at the rounding floor; the output shift agrees by three unrelated routes and the two\n" +
+     "truncations become the same matrix bit for bit when Sigma is the identity, while each stays\n" +
+     "optimal in its own norm at every rank; B = 0 leaves the base model bit-identical, the merged\n" +
+     "and unmerged forward passes agree without being the same arithmetic, a power-of-two rescale\n" +
+     "of alpha against B is bit-identical and a non-power-of-two one lands in the rounding band;\n" +
+     "the constructed rank-rho adapter reproduces DeltaW* and scores an excess at the rounding\n" +
+     "floor while the trained one does not come near it; every gradient matches an exact\n" +
+     "forward-mode dual more sharply than it matches a central difference, dA is exactly zero at\n" +
+     "B = 0, the first step is exactly -eta s^2 G A^T A, and a zero output layer costs exactly\n" +
+     "log K; the best rank beats the largest rank on every seed of every row, a rank that cannot\n" +
+     "express DeltaW* usually beats one that can, and the penalty for extra rank shrinks with more\n" +
+     "data; the parameter-matched control really is matched, freezing A costs, and the break-even\n" +
+     "rank satisfies r(m+n) = mn exactly." +
+     (POOL ? "" : "\n\n(the ranker assertions run once the pool has been trained)"));
+}
+
+// ---------------------------------------------------------------- wiring
+$("runPool").addEventListener("click", function(){
+  var btn = this, o = opts();
+  btn.disabled = true;
+  $("poolStatus").textContent = "training the pool…";
+  var t0 = Date.now();
+  setTimeout(function(){
+    var pl = rankerStudy({ din: 6, d: o.d, K: 4, rhos: [2, 4, 8].filter(function(v){ return v <= o.d; }),
+      ranks: ladderOf(o.d, [1, 2, 3, Math.round(o.d / 2)]),
+      lrs: [0.01, 0.05, 0.2], seeds: [1, 2], steps: 120, batch: 24, ntr: 800, nte: 400 });
+    POOL = pl;
+    $("auc").innerHTML = pl.scored.map(function(s, i){
+      var good = s.auc > 0.5;
+      return "<tr" + (i === 0 ? ' class="hl"' : "") + "><td>" + s.name + "</td><td>" + s.train +
+        "</td><td class='" + cls(good) + "'>" + f3(s.auc) + "</td><td class='" + cls(good) + "'>" +
+        (s.auc >= 0.5 ? "+" : "&minus;") + f3(Math.abs(s.auc - 0.5)) + "</td><td>" +
+        num(s.pairs) + "</td></tr>";
+    }).join("") +
+      "<tr class='hl'><td>the rank, <em>within</em> one task and rate " +
+      "<span class='lg'>the control</span></td><td>no</td><td class='" + cls(pl.withinAuc > 0.5) +
+      "'>" + f3(pl.withinAuc) + "</td><td class='" + cls(pl.withinAuc > 0.5) + "'>" +
+      (pl.withinAuc >= 0.5 ? "+" : "&minus;") + f3(Math.abs(pl.withinAuc - 0.5)) + "</td><td>" +
+      num(pl.withinPairs) + "</td></tr>";
+    $("aucSVG").innerHTML = aucSVG(pl.scored, pl.withinAuc);
+    var rk = pl.scored[0], pm = pl.scored[1], probe = pl.scored[6], tl = pl.scored[7];
+    $("aucNote").innerHTML =
+      "Over <strong>" + pl.n + "</strong> trained configurations the rank ranks quality at " +
+      "<strong class='" + cls(rk.auc > 0.5) + "'>" + f3(rk.auc) + "</strong> against a coin's " +
+      "0.500. The trainable parameter count scores <strong>" + f3(pm.auc) + "</strong> &mdash; the " +
+      "same number to the last digit, and it has to be, because 2rd is a strictly increasing " +
+      "function of r and therefore induces exactly the same ordering; that row is an identity " +
+      "check, not a second candidate. Ten steps of training scores <strong class='ok'>" +
+      f3(probe.auc) + "</strong> and the training loss you were going to watch anyway <strong>" +
+      f3(tl.auc) + "</strong>. And the control is the sharp end: hold the task and the learning " +
+      "rate fixed, so the rank is only asked to arbitrate comparisons where it is the only thing " +
+      "that changed, and it scores <strong class='" + cls(pl.withinAuc > 0.5) + "'>" +
+      f3(pl.withinAuc) + "</strong> over " + num(pl.withinPairs) + " pairs &mdash; " +
+      (pl.withinAuc < 0.5 ? "<em>below</em> a coin. Inside a cell, more rank is reliably slightly " +
+        "worse, which is the opposite of the folklore rather than an absence of signal. " :
+        "still no better than a coin. ") +
+      "Both weight-space references score in the middle: they know something about the task, and " +
+      "nothing about the optimisation that is actually deciding these runs.";
+    $("poolStatus").textContent = "done in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    btn.disabled = false;
+    runChecks();
+  }, 30);
+});
+
+["sP", "sD", "sN", "sS", "sR", "sE"].forEach(function(id){
+  $(id).addEventListener("input", function(){
+    showOpts();
+    $("mainStatus").textContent = "release to recompute";
+  });
+  $(id).addEventListener("change", function(){
+    renderFast();
+    $("mainStatus").textContent = "training…";
+    setTimeout(function(){
+      var t0 = Date.now();
+      renderSlow();
+      $("mainStatus").textContent = "trained in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+      runChecks();
+    }, 30);
+  });
+});
+
+var tabs = $("tabs").querySelectorAll("button");
+for (var ti = 0; ti < tabs.length; ti++){
+  tabs[ti].addEventListener("click", function(){
+    var name = this.getAttribute("data-tab");
+    for (var k = 0; k < tabs.length; k++) tabs[k].className = tabs[k] === this ? "tab-active" : "";
+    ["look", "understand", "build"].forEach(function(s){
+      $(s).className = (s === "look" ? "panel" : "panel light") + (s === name ? "" : " hidden");
+    });
+    window.scrollTo(0, 0);
+  });
+}
+
+renderFast();
+$("mainStatus").textContent = "training…";
+setTimeout(function(){
+  var t0 = Date.now();
+  renderSlow();
+  $("mainStatus").textContent = "trained in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+  runChecks();
+}, 30);
+</script>
+</body>
+</html>
