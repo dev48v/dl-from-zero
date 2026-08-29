@@ -1,0 +1,1966 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero &middot; Day 75 &mdash; The softmax bottleneck</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin:0; background:#f8fafc; color:#0f172a; line-height:1.55;
+         font-family:-apple-system, "Segoe UI", "Inter", Roboto, Helvetica, Arial, sans-serif; }
+  header { background:#fff; }
+  /* the tab bar sticks, not the header: a header taller than the viewport would pin forever */
+  .tabbar { background:#fff; border-bottom:1px solid #e2e8f0; position:sticky; top:0; z-index:20; }
+  .tabbar .wrap { padding-top:10px; padding-bottom:10px; }
+  .wrap { max-width:1120px; margin:0 auto; padding:16px; }
+  .narrow { max-width:780px; margin:0 auto; padding:16px; }
+  @media (min-width:768px){ .wrap, .narrow { padding:26px; } }
+  .kicker { font-size:11px; font-weight:800; letter-spacing:.18em; color:#be123c; margin:0 0 10px; }
+  h1 { font-size:17px; font-weight:800; line-height:1.55; margin:0; }
+  @media (min-width:768px){ h1 { font-size:19px; } }
+  h2 { font-size:23px; font-weight:800; margin:34px 0 10px; line-height:1.25; }
+  h3 { font-size:17px; font-weight:700; margin:26px 0 8px; }
+  p { margin:0 0 12px; }
+  em { font-style:italic; }
+  code { font-family:"SF Mono", Consolas, "Liberation Mono", monospace; font-size:12.5px;
+         background:#eef2f7; padding:1px 4px; border-radius:4px; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px 14px; border-radius:8px; font-size:12px;
+        overflow-x:auto; line-height:1.5;
+        font-family:"SF Mono", Consolas, "Liberation Mono", monospace; }
+  pre code { background:none; padding:0; color:inherit; font-size:inherit; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; }
+  .tabs button { border:0; background:#f1f5f9; color:#0f172a; padding:9px 18px; border-radius:9px;
+                 font-size:13.5px; font-weight:650; cursor:pointer; font-family:inherit; }
+  .tabs button.tab-active { background:#0f172a; color:#fff; }
+  .panel { background:#f1f5f9; }
+  .panel.light { background:#f8fafc; }
+  .hidden { display:none; }
+  .stack > * + * { margin-top:20px; }
+  .card { background:#fff; border-radius:16px; padding:18px;
+          box-shadow:0 1px 3px rgba(15,23,42,.10), 0 1px 2px rgba(15,23,42,.06); }
+  .cap { font-size:11px; font-weight:800; letter-spacing:.12em; color:#64748b; margin:0 0 10px; }
+  .lede { font-size:13.5px; color:#475569; margin:0 0 12px; }
+  .note { font-size:12px; color:#64748b; margin:10px 0 0; }
+  .grid2 { display:grid; gap:20px; }
+  @media (min-width:1000px){ .grid2 { grid-template-columns:1fr 1fr; } }
+  .ctrls { display:grid; gap:12px 22px; grid-template-columns:1fr; }
+  @media (min-width:640px){ .ctrls { grid-template-columns:1fr 1fr; } }
+  @media (min-width:1000px){ .ctrls { grid-template-columns:repeat(3,1fr); } }
+  label.ctl { font-size:13px; display:block; }
+  label.ctl b { float:right; font-variant-numeric:tabular-nums; }
+  input[type=range] { width:100%; margin:4px 0 0; }
+  .scroll { overflow-x:auto; }
+  table.num { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
+  table.num th, table.num td { padding:4px 9px; text-align:right; white-space:nowrap; }
+  table.num th { font-size:10.5px; letter-spacing:.05em; color:#64748b; font-weight:800; }
+  table.num td { font-size:12.5px; border-top:1px solid #e2e8f0; }
+  table.num th:first-child, table.num td:first-child { text-align:left; white-space:normal;
+    min-width:112px; }
+  table.num tr.hl td { background:#f1f5f9; }
+  .ok { color:#15803d; font-weight:800; }
+  .bad { color:#b91c1c; font-weight:800; }
+  .lg { font-size:10px; color:#64748b; font-weight:400; letter-spacing:0; }
+  button.run { border:0; background:#0f172a; color:#fff; padding:9px 17px; border-radius:9px;
+               font-size:13px; font-weight:650; cursor:pointer; font-family:inherit; }
+  button.run:disabled { opacity:.5; cursor:default; }
+  .runbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  .status { font-size:12px; color:#64748b; }
+  svg { max-width:100%; height:auto; display:block; }
+  ul { margin:0 0 12px; padding-left:22px; }
+  li { margin:0 0 6px; }
+  .red { color:#b91c1c; font-weight:800; }
+  .mono { font-family:"SF Mono", Consolas, "Liberation Mono", monospace; font-size:12px;
+          word-break:break-all; color:#334155; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="kicker">DEEPLEARNINGFROMZERO &middot; DAY 75</p>
+    <h1 id="headline">
+      &#129513; The softmax bottleneck &mdash; a language model turns a hidden vector into
+      <code>V</code> logits through one matrix, so the whole matrix of logits it can produce has rank
+      at most the width of that vector, and the set of distributions it can represent is pinned by an
+      <em>integer</em>. The task here is built with a <em>chosen</em> log-odds spectrum over
+      <strong>12</strong> symbols and <strong>16</strong> enumerated contexts, so the obstruction is a
+      closed form rather than a fitted curve, and the score is a mean KL from the true conditional:
+      exactly <strong>0</strong> for the teacher, above a conditional-entropy floor of
+      <strong>1.9632</strong> nats. The capacity is not what is usually written down. It is the rank
+      of the <em>log-odds</em> matrix &mdash; <code>log p(y|c) &minus; log p(y&#8320;|c)</code>
+      &mdash; and the page checks that the choice of reference symbol is free by recomputing it in
+      all <strong>12</strong> gauges and getting the same integer every time.
+      <span class="red">THE headline:</span> that criterion is an integer and the thing it is trying
+      to predict is continuous. Over <strong>120</strong> trained configurations spanning an excess
+      range of <strong>8.7e-7</strong> to <strong>0.3292</strong>, the rank gap ranks final quality at
+      <strong>AUC 0.737</strong> against a coin's 0.500 &mdash; and inside one rank-and-width cell,
+      where it cannot vary by construction, it scores exactly <strong>0.500</strong> while the excess
+      still spans <strong>513&times;</strong>. The singular-value tail the criterion throws away
+      scores <strong>0.906</strong>, its fraction of the whole <strong>0.922</strong>, and the KL of
+      the truncated log-odds <strong>0.913</strong> &mdash; none of them needing a single training
+      step. <span class="red">The best model at a given width is written down, not searched for:</span>
+      Eckart&ndash;Young says the truncated SVD of the log-odds matrix is the optimum in logit space,
+      the page solves one linear system to put it inside a real tanh network, and the residual never
+      exceeds <strong>2.1e-15</strong> while the network's excess matches the direct computation to
+      <strong>1.1e-16</strong> across the whole ladder. <span class="red">And that optimum is not the best model:</span>
+      training beats it by <strong>39.2%</strong> at the default width and by
+      <strong>56.1%</strong> at the widest bottlenecked one, because the Frobenius norm of the logits
+      is not the loss. <span class="red">Nothing below the bottleneck helps:</span>
+      <strong>12.4&times;</strong> the parameters underneath it does not lower the floor at all
+      &mdash; the best of the five is a <strong>292</strong>-parameter network and the largest, at
+      2,056, is <strong>1.60&times;</strong> worse &mdash; and <strong>40&times;</strong> the
+      training budget moves it by <strong>2.14&times;</strong>, flat to 1.4% from 500 steps on.
+      <span class="red">The fix works and the control says do not reach for it here:</span> a
+      mixture of softmaxes at width 3 is <strong>18.1&times;</strong> better than one softmax at the
+      same width, and the cheapest single softmax that beats it &mdash; width 6, with
+      <strong>189 fewer</strong> parameters &mdash; is another <strong>51&times;</strong> better
+      than the mixture. The crossover is
+      arithmetic, taken from the parameter lists rather than a formula: one more unit of reachable
+      log-odds rank costs <strong>37</strong> parameters by widening and <strong>33.3</strong> by
+      mixing here, a wash, against <strong>51,026</strong> and <strong>770</strong> at GPT-2 small's
+      shape &mdash; <strong>66&times;</strong> the other way.
+      <span class="red">One claim this page came to make and had to narrow:</span> the criterion
+      everyone quotes, <code>rank(log P) &le; d + 1</code>, is necessary and not sufficient &mdash;
+      but it is wrong only when the all-ones vector leaves the row space of <code>log P</code>, and
+      on <strong>40 of 40</strong> randomly drawn tasks it does not, to <strong>4.1e-15</strong>.
+      Build the exception on purpose &mdash; no more contexts than rank &mdash; and the quoted rule
+      allows a width whose own truncation still costs <strong>0.0485</strong>.
+      Gradients checked at initialisation against forward-mode dual numbers to
+      <strong>9.6e-16</strong> of the largest gradient, where a central difference manages 3.8e-10.
+      <strong>492</strong> in-page assertions. Pure vanilla JavaScript, one file, no build step.
+    </h1>
+  </div>
+</header>
+
+<div class="tabbar">
+  <div class="wrap">
+    <div class="tabs" id="tabs">
+      <button data-tab="look" class="tab-active">&#128300; MEASURE</button>
+      <button data-tab="understand">&#129504; UNDERSTAND</button>
+      <button data-tab="build">&#128296; BUILD</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ MEASURE -->
+<section id="look" class="panel">
+  <div class="wrap stack">
+
+    <div class="card">
+      <p class="cap">THE SETTING</p>
+      <div class="ctrls">
+        <label class="ctl">contexts <b id="vN">16</b>
+          <input type="range" id="sN" min="0" max="4" step="1" value="3" /></label>
+        <label class="ctl">true log-odds rank <b id="vR">6</b>
+          <input type="range" id="sR" min="2" max="8" step="1" value="6" /></label>
+        <label class="ctl">spectrum decay <b id="vG">0.75</b>
+          <input type="range" id="sG" min="0" max="3" step="1" value="2" /></label>
+        <label class="ctl">head width d <b id="vD">3</b>
+          <input type="range" id="sD" min="1" max="8" step="1" value="3" /></label>
+        <label class="ctl">mixture components <b id="vK">1</b>
+          <input type="range" id="sK" min="1" max="4" step="1" value="1" /></label>
+        <label class="ctl">seed <b id="vS">1</b>
+          <input type="range" id="sS" min="1" max="6" step="1" value="1" /></label>
+      </div>
+      <p class="note" id="setup"></p>
+      <p class="note"><span class="status" id="mainStatus"></span></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE FLOOR AND THE NULLS</p>
+      <p class="lede">The context space is small enough to enumerate and the true conditional is known
+        in closed form, so the score is an <em>exact</em> expectation and not an estimate. Every
+        number below is a computation, and two of them are the answers a model that never looks at
+        its input would give.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>quantity</th><th>nats</th><th>what it is</th>
+        </tr></thead><tbody id="floor"></tbody></table>
+      </div>
+      <p class="note" id="floorNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">1 &middot; THE RANK THAT DECIDES</p>
+      <p class="lede">A width-<code>d</code> head computes <code>z = W h</code>, so stacking every
+        context gives a logit matrix of rank at most <code>d</code>. Adding a constant to a row
+        changes no probability, so what the model really controls is the matrix of
+        <em>log odds against a reference symbol</em> &mdash; and the reference is free, which the
+        page checks rather than asserts.</p>
+      <div class="grid2">
+        <div>
+          <p class="cap">THE SPECTRUM IT WAS BUILT WITH</p>
+          <div class="scroll">
+            <table class="num"><thead><tr>
+              <th>k</th><th>&sigma;<sub>k</sub> asked for</th><th>&sigma;<sub>k</sub> measured</th>
+              <th>the tail if d = k</th>
+            </tr></thead><tbody id="spec"></tbody></table>
+          </div>
+        </div>
+        <div>
+          <p class="cap">THE TWO CRITERIA</p>
+          <div class="scroll">
+            <table class="num"><thead><tr>
+              <th>quantity</th><th>value</th><th></th>
+            </tr></thead><tbody id="rank"></tbody></table>
+          </div>
+        </div>
+      </div>
+      <p class="note" id="rankNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">2 &middot; THE GRADIENTS, CHECKED WITHOUT A STEP SIZE</p>
+      <p class="lede">Everything trained below rests on a hand-written backward pass, so it is checked
+        against forward-mode differentiation over dual numbers &mdash; value and derivative carried
+        side by side, one seed per parameter, no step size anywhere, and the opposite traversal to a
+        backward pass. At <em>initialisation</em>: at convergence the true gradient has decayed to
+        nothing and a difference test measures its own floor instead of the code.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>model</th><th>parameters</th><th>loss, forward vs reverse</th>
+          <th>gradient vs forward mode</th><th>gradient vs a central difference</th>
+          <th>largest |g|</th>
+        </tr></thead><tbody id="grad"></tbody></table>
+      </div>
+      <p class="note" id="gradNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">3 &middot; WRITE THE BEST MODEL DOWN</p>
+      <p class="lede">There is nothing to search for. Eckart&ndash;Young says the best rank-<code>d</code>
+        approximation of a matrix is its truncated SVD, every rank-<code>&le;d</code> matrix with a
+        zero reference column is reachable by a width-<code>d</code> head, and the target was built
+        in that same gauge &mdash; so the truncation <em>is</em> the optimum in logit space. The page
+        puts it inside a real tanh network with one linear solve and then trains one anyway, to see
+        which wins.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>width d</th><th>&sigma;<sub>d+1</sub></th><th>Eckart-Young tail</th>
+          <th>KL of the truncation</th><th>the network built from it</th><th>gap</th>
+          <th>solve residual</th><th>trained</th><th>seed spread</th><th>training's gain</th>
+        </tr></thead><tbody id="lad"></tbody></table>
+      </div>
+      <p class="note" id="ladNote"></p>
+      <div class="grid2" style="margin-top:16px">
+        <div>
+          <p class="cap">EXCESS AGAINST WIDTH</p>
+          <div id="ladSVG"></div>
+        </div>
+        <div>
+          <p class="cap">WHAT THE OPTIMISER LEAVES ON THE TABLE</p>
+          <div class="scroll">
+            <table class="num"><thead><tr>
+              <th>at a width that can represent the task</th><th>excess</th>
+            </tr></thead><tbody id="exact"></tbody></table>
+          </div>
+          <p class="note" id="exactNote"></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="cap">4 &middot; WHAT IS NOT THE LIMIT</p>
+      <p class="lede">If the floor is a property of an integer, then the two things you would
+        normally reach for should not touch it. Both controls run at a width that is genuinely
+        bottlenecked &mdash; there is nothing to be insensitive to at a width that already
+        suffices.</p>
+      <div class="grid2">
+        <div>
+          <p class="cap">CAPACITY BELOW THE BOTTLENECK</p>
+          <div class="scroll">
+            <table class="num"><thead><tr>
+              <th>hidden units</th><th>parameters</th><th>excess</th><th>seed spread</th>
+            </tr></thead><tbody id="cap"></tbody></table>
+          </div>
+        </div>
+        <div>
+          <p class="cap">TRAINING BUDGET</p>
+          <div class="scroll">
+            <table class="num"><thead><tr>
+              <th>Adam steps</th><th>excess</th><th>vs the longest run</th>
+            </tr></thead><tbody id="capSteps"></tbody></table>
+          </div>
+        </div>
+      </div>
+      <p class="note" id="capNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">5 &middot; THE FIX, AND THE CONTROL THAT PRICES IT</p>
+      <p class="lede">A mixture of softmaxes takes the logarithm out of the low-rank part: the log of
+        a sum of <code>K</code> softmaxes is not a rank-<code>d</code> matrix, so components lift the
+        reachable log-odds rank without touching <code>d</code>. The only question that matters is
+        whether the same parameters spent on <em>width</em> would have done better.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>model</th><th>components</th><th>width</th><th>reachable log-odds rank</th>
+          <th>parameters</th><th>excess</th>
+        </tr></thead><tbody id="mix"></tbody></table>
+      </div>
+      <p class="note" id="mixNote"></p>
+      <div class="scroll" style="margin-top:14px">
+        <table class="num"><thead><tr>
+          <th>the price of one more unit of reachable rank</th><th>by widening</th>
+          <th>by mixing</th><th>which is cheaper</th>
+        </tr></thead><tbody id="price"></tbody></table>
+      </div>
+      <p class="note" id="priceNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">6 &middot; THE HOLE IN THE QUOTED CRITERION</p>
+      <p class="lede">The rule that gets quoted is about <code>rank(log P)</code>. The rule that
+        decides is about the log odds. They differ by exactly one when the all-ones vector lies in
+        the row space of <code>log P</code> &mdash; and it provably does not when there are no more
+        contexts than rank, which is a task the page can simply build.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>width d</th><th>the quoted rule</th><th>the log-odds rule</th>
+          <th>KL of the truncation</th><th>the network built from it</th><th>trained</th>
+        </tr></thead><tbody id="hole"></tbody></table>
+      </div>
+      <p class="note" id="holeNote"></p>
+      <div class="scroll" style="margin-top:14px">
+        <table class="num"><thead><tr>
+          <th>randomly drawn tasks with more contexts than rank</th><th>count</th><th></th>
+        </tr></thead><tbody id="agree"></tbody></table>
+      </div>
+      <p class="note" id="agreeNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">7 &middot; DOES ANY OF IT PREDICT THE OUTCOME?</p>
+      <p class="lede">Train a pool of configurations that differ in the spectrum, the true rank, the
+        width and the seed, then ask each candidate to rank them by final quality. A coin scores
+        0.500. The control holds the true rank and the width fixed, so a candidate is only asked to
+        arbitrate comparisons within one cell &mdash; which is exactly where an integer criterion has
+        nothing left to say.</p>
+      <div class="runbar">
+        <button class="run" id="runPool">train the pool</button>
+        <span class="status" id="poolStatus">not run yet</span>
+      </div>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>candidate</th><th>needs training</th><th>AUC</th><th>vs a coin</th>
+          <th>within one cell <span class="lg">the control</span></th><th>pairs</th>
+        </tr></thead><tbody id="auc"></tbody></table>
+      </div>
+      <div id="aucSVG" style="margin-top:12px"></div>
+      <p class="note" id="aucNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE PAGE CHECKING ITSELF</p>
+      <pre id="selftest">running&hellip;</pre>
+    </div>
+
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ UNDERSTAND -->
+<section id="understand" class="panel light hidden">
+  <div class="narrow">
+
+    <h2>One matrix, and everything it cannot say</h2>
+    <p>The last thing a language model does is turn a hidden vector into a score for every symbol in
+      the vocabulary. That is one matrix multiply: <code>z = W h</code>, with <code>h</code> of
+      width <code>d</code> and <code>W</code> of shape <code>V &times; d</code>. Stack the logits for
+      every context you might ever feed it and you get a matrix whose rank cannot exceed
+      <code>d</code>, no matter how deep, how nonlinear or how well trained everything underneath is.
+      A product of matrices cannot have more rank than its thinnest factor.</p>
+    <p>That is the whole mechanism. Everything else on the MEASURE tab is an attempt to find out what
+      it costs and whether anything you would normally look at can see it.</p>
+
+    <h2>The capacity is the rank of the log odds, not of log P</h2>
+    <p>Softmax is blind to a constant added to a row. Two logit matrices that differ by
+      <code>c&#8901;1&#7488;</code> give the same distribution, so what a head actually controls is
+      the matrix of <em>log odds against some reference symbol</em>,
+      <code>log p(y|c) &minus; log p(y&#8320;|c)</code>. The reachable set is exactly
+      &ldquo;rank at most <code>d</code>, with the reference column zero&rdquo;, and the target on
+      this page is built in that same gauge on purpose.</p>
+    <p>The reference symbol looks like a choice and is not one: the page recomputes the rank in all
+      twelve gauges and gets the same integer every time. That is worth checking rather than
+      believing, because it is what makes the phrase &ldquo;the log-odds rank&rdquo; well defined.</p>
+    <p>The rule that usually gets quoted is one step removed: <code>rank(log P) &le; d + 1</code>.
+      That version is <em>necessary</em>, and the extra one is not free capacity &mdash; it is spent
+      on the log partition function, one rank-one column that normalisation puts there and no model
+      can use for anything else. The two rules coincide exactly when the all-ones vector lies in the
+      row space of <code>log P</code>, and the page measures that distance: on forty randomly drawn
+      tasks it is at most 4.1e-15, which is why the loose version survives in print. Build the
+      exception on purpose &mdash; no more contexts than rank &mdash; and the quoted rule waves
+      through a width whose own truncation still costs 0.0485 nats.</p>
+
+    <h2>The obstruction is continuous, and &ldquo;rank&rdquo; is the wrong word for it</h2>
+    <p>Rank is an integer. A matrix whose seventh singular value is 1e-9 has rank seven and is, for
+      every purpose a model has, rank six. So a criterion phrased as a rank inequality is a step
+      function laid over something smooth, and the MEASURE tab prices that mismatch.</p>
+    <p>Over 120 trained configurations the rank gap ranks final quality at AUC 0.737, which is real
+      but blunt. Hold the true rank and the width fixed &mdash; the control &mdash; and it scores
+      exactly 0.500, because within one cell it is a constant. It is not noisy there; it is
+      <em>silent</em>, and the outcomes it has been asked to arbitrate still span 513&times;. The
+      continuous quantity the criterion discards, the tail of the singular spectrum below the cut,
+      scores 0.906, and as a fraction of the whole spectrum 0.922. Neither needs a training step.</p>
+    <p>This is the sense in which the softmax bottleneck is real and its usual statement is not
+      useful: the bottleneck is a fact about a matrix, and the number you want is how much of that
+      matrix falls off the edge, not whether anything does.</p>
+
+    <h2>The optimum in logit space is not the best model</h2>
+    <p>There is a genuine closed form here. Eckart&ndash;Young says the best rank-<code>d</code>
+      approximation of a matrix in the Frobenius norm is its truncated SVD, and because the reachable
+      set is exactly the rank-<code>d</code> matrices in this gauge, that truncation is the exact
+      optimum of a well-posed problem. The page does not stop at computing it: it solves one linear
+      system to put that bottleneck inside a real tanh network, and the network's excess matches the
+      direct computation to 1.1e-16 with a solve residual never above 2.1e-15. At any width that can
+      represent the task the truncation is the target itself and the built network scores 6.1e-17
+      &mdash; the optimum written down rather than searched for.</p>
+    <p>And then training beats it, by 39.2% at the default width and 56.1% at the widest bottlenecked
+      one. Nothing is wrong with Eckart&ndash;Young; it is optimal in the norm it is optimal in, and
+      the Frobenius norm of the logits is not the loss. A KL cares about where the probability mass
+      is, and it will happily accept a much larger logit error on symbols the true conditional has
+      already decided are unlikely. So the exact answer to the neighbouring question is a
+      <em>bound</em> on this one, and a loose one.</p>
+    <p>The same table also says what is <em>not</em> the limit at a sufficient width. The constructed
+      network scores 6.1e-17 and the trained one scores 7.45e-5 at the same width &mdash; twelve
+      orders of magnitude of pure optimiser. When a model at an adequate width underperforms, the ceiling is
+      not the thing to blame.</p>
+
+    <h2>Nothing below the bottleneck helps</h2>
+    <p>If a floor is set by an integer, the usual levers should not move it, and they do not. Twelve
+      times the parameters below the bottleneck does not lower it &mdash; the best of the five is one
+      of the two smallest networks, at 292 parameters, and the largest at 2,056 is 1.60&times; worse,
+      which is the optimiser having a harder time and not extra capacity paying off. Forty times the
+      training budget moves it by 2.14&times;, and from 500 steps on the curve is flat to 1.4%.</p>
+    <p>That is what makes the bottleneck an unpleasant failure: it produces a smooth converged-looking
+      curve at a wrong answer, and every diagnostic you would reach for &mdash; train longer, go
+      wider underneath &mdash; comes back saying the model is fine.</p>
+
+    <h2>The mixture works, and here you should not use it</h2>
+    <p>The published fix is a mixture of softmaxes: compute <code>K</code> bottleneck vectors, run
+      <code>K</code> softmaxes, and average them with context-dependent weights. The logarithm now
+      sits outside a sum, so the log-probability matrix is no longer low rank at all, and the
+      reachable log-odds rank rises to about <code>K&#8901;d</code> without <code>d</code> changing.
+      It works here: a mixture at width 3 is 18.1&times; better than one softmax at the same width.</p>
+    <p>The control is the honest half. The cheapest single softmax that beats that mixture is width 6,
+      with 189 <em>fewer</em> parameters, and it is a further 51&times; better. On this page more width simply wins, and the
+      reason is arithmetic rather than opinion: the page takes the price of one more unit of
+      reachable rank straight from its own parameter lists, and gets 37 parameters by widening
+      against 33.3 by mixing &mdash; a wash. Widening is cheap here because the vocabulary is twelve
+      symbols wide.</p>
+    <p>Put GPT-2 small's shape into the same two expressions and it inverts: 51,026 parameters per
+      rank by widening against 770 by mixing, a factor of 66. The mixture is not a better model, it
+      is a cheaper way to buy the same integer &mdash; and it only becomes worth buying that way when
+      the output matrix is large enough to make width expensive. A method whose case rests on a
+      price should be argued with a price.</p>
+
+    <h2>What to take away</h2>
+    <ul>
+      <li>The capacity of a softmax head is the rank of the log-odds matrix, and it is
+        <code>d</code>. The familiar <code>d + 1</code> is about <code>log P</code>, is necessary
+        rather than sufficient, and the extra dimension is spent on normalisation.</li>
+      <li>The criterion is an integer; the cost is continuous. Measure the tail of the spectrum, not
+        whether it is empty.</li>
+      <li>The best rank-<code>d</code> logits are a closed form, and they are not the best model.
+        Optimal in the wrong norm is still not optimal.</li>
+      <li>Capacity below the bottleneck and training budget do not move the floor, which is exactly
+        why a bottlenecked run looks healthy.</li>
+      <li>A mixture of softmaxes buys reachable rank without buying width. Whether that is a good
+        trade is a parameter count, and at a twelve-symbol vocabulary it is not.</li>
+    </ul>
+
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ BUILD -->
+<section id="build" class="panel light hidden">
+  <div class="narrow">
+
+    <h2>Building it, in the order the page does</h2>
+
+    <h3>1 &middot; Build the target in the gauge the model lives in</h3>
+    <p>The reachable set is exactly &ldquo;log-odds matrices of rank at most <code>d</code> whose
+      reference column is zero&rdquo;. So the target is built there directly: an orthonormal basis in
+      context space, another in symbol space whose first coordinate is zeroed, and a spectrum picked
+      by hand. That makes the singular values of the target a <em>choice</em> rather than a
+      measurement, and makes Eckart&ndash;Young apply on the nose.</p>
+    <pre><code>var Ub = orthoBasis(N, R, rnd, false);      // R directions over contexts
+var Wb = orthoBasis(V, R, rnd, true);      // R directions over symbols, first entry 0
+for (k = 0; k &lt; R; k++) s[k] = scale * Math.pow(decay, k);
+D[b][j] += s[k] * Ub[k][b] * Wb[k][j];     // first column exactly 0, spectrum exactly s</code></pre>
+    <p>Then <code>p*(y|c) = softmax(D row)</code>, and because the whole context space is enumerated,
+      the conditional entropy, the mutual information and every model's excess are exact
+      expectations. The teacher's own excess is 0 with no tolerance attached.</p>
+
+    <h3>2 &middot; Get the rank right, twice</h3>
+    <p>Rank questions are decided by small singular values, so the SVD is one-sided Jacobi &mdash;
+      plane rotations until every pair of columns is orthogonal &mdash; which computes small singular
+      values to high <em>relative</em> accuracy. The threshold is relative to the largest singular
+      value, never absolute.</p>
+    <pre><code>rank_softmax(A) = rank(A - A[:,j] 1&#7488;)     // the same integer for EVERY j
+rank_softmax(A) = rank(A) - (1&#7515; in rowspace(A) ? 1 : 0)</code></pre>
+    <p>Those two are computed by different routes &mdash; a re-gauged matrix through the SVD, and a
+      projection of the all-ones vector onto the row space &mdash; and the page asserts they agree,
+      in all twelve gauges. If they ever disagreed, the phrase &ldquo;the log-odds rank&rdquo; would
+      not mean anything.</p>
+
+    <h3>3 &middot; One model with a knob, not two models</h3>
+    <p>The single softmax and the mixture are the same forward pass with <code>K = 1</code> and
+      <code>K &gt; 1</code>. That is what makes the comparison a comparison, and it comes with a free
+      identity: a mixture of one softmax must be that softmax, bit for bit.</p>
+    <pre><code>for (i = 0; i &lt; V; i++){
+  var sp = 0;
+  for (k = 0; k &lt; K; k++) sp += pi[k] * sm[k][i];
+  p[i] = sp;                               // K = 1 -&gt; pi[0] === 1 -&gt; p === sm[0]
+}</code></pre>
+
+    <h3>4 &middot; A backward pass a mixture actually needs</h3>
+    <p>For a single softmax under cross entropy the gradient at the logits is the familiar
+      <code>p &minus; target</code>. A mixture breaks that shortcut: the incoming signal has to be
+      split across components by their weights first, and each component then carries its own softmax
+      Jacobian.</p>
+    <pre><code>dp[i]  = -pstar[i] / p[i] / N;                        // through the mixture
+dsk[i] = dp[i] * pi[k];                               // into component k
+dz[i]  = sm[k][i] * (dsk[i] - dot);                   // its own softmax Jacobian
+dg[k]  = pi[k] * (dpi[k] - pdot);                     // and into the gate</code></pre>
+
+    <h3>5 &middot; Check it with something exact, at initialisation</h3>
+    <p>A second forward pass is written over dual numbers &mdash; value and derivative together, one
+      seed per parameter, no step size anywhere &mdash; which traverses the graph in the opposite
+      direction to the backward pass. It agrees to 9.57e-16 relative to the largest gradient, while a
+      central difference manages 3.78e-10, and it reproduces the loss bit for bit. All of it at
+      initialisation: checking at convergence is how you get a false failure, because the true
+      gradient there is already smaller than any difference quotient can resolve.</p>
+
+    <h3>6 &middot; Write the optimum down instead of searching for it</h3>
+    <p>Truncate the target's SVD at <code>d</code>, scale the resulting bottleneck into
+      <code>(-1, 1)</code> so a <code>tanh</code> can produce it, take the inverse hyperbolic tangent,
+      and solve one least-squares system for the layer that has to hit it.</p>
+    <pre><code>Ht[b][k] = alpha * Ub[k][b];                 // the bottleneck we want
+W3[j][k] = s[k] * Wb[k][j] / alpha;          // the head that reads it
+tgt[b][k] = atanh(Ht[b][k]);
+X = lstsq([a | 1], tgt);                     // one solve, residual ~1e-15</code></pre>
+    <p>The result is a real network, not a formula: its excess matches the direct computation to
+      9.7e-17 at the default width. At a width that suffices it is 6.1e-17, twelve orders of
+      magnitude below what training reaches, which is how the page can say that at those widths the ceiling is not what is stopping
+      anyone.</p>
+
+    <h3>7 &middot; Controls that run where the claim lives</h3>
+    <p>Both &ldquo;what is not the limit&rdquo; controls clamp their width to a genuinely bottlenecked
+      one. A control that runs at a width which already suffices measures the optimiser and reports
+      it as a property of the bottleneck &mdash; the excess there is 1e-5 and its ratios are noise
+      with a decimal point in them.</p>
+    <pre><code>d = Math.max(1, Math.min(d, task.R - 1));    // in capacityStudy and mixtureStudy both</code></pre>
+
+    <h3>8 &middot; Assert identities, not thresholds</h3>
+    <p>The page's self-check is 492 assertions and the load-bearing ones are equalities: the target's
+      reference column is <code>=== 0</code>; every gauge returns the same integer; the rank of
+      <code>log P</code> is the log-odds rank plus a row-space indicator, both directions; the
+      truncation's tail and head add up to the whole; the constructed network is the truncation to
+      1e-12; a mixture of one softmax is its component with a gap of <code>=== 0</code>; the price of
+      a width is <code>=== V + hid + 1</code> taken from the parameter lists; and the rank gap's
+      within-cell AUC is <code>=== 0.5</code>, because a constant predictor ties every pair. A
+      threshold chosen to pass at one slider setting is a failure waiting for a different one.</p>
+
+    <h3>Where to go next</h3>
+    <ul>
+      <li>Set the decay to 0.9 and watch a rank-6 task refuse to be summarised by any single
+        integer.</li>
+      <li>Set the width to the true rank and see the truncation, the built network and the trained
+        one separate by four orders of magnitude.</li>
+      <li>Set contexts to 6 with rank 6 and watch the quoted criterion allow a width that cannot do
+        the job.</li>
+      <li>Train the pool and check whether the rank gap ever climbs above a coin inside one cell.</li>
+    </ul>
+
+  </div>
+</section>
+
+<script>
+// ===== ENGINE:BEGIN =====
+// Day 75 - the softmax bottleneck. Pure functions: no DOM, no clock, no Math.random.
+// A softmax head of width d turns a hidden vector into V logits through one matrix, so the LOGIT
+// MATRIX it can produce has rank at most d - and the distributions it can represent are pinned by
+// an integer. The task here is built with a KNOWN log-odds spectrum, so the obstruction is a closed
+// form (Eckart-Young) rather than a fitted curve, and the score is a mean KL from the true
+// conditional: exactly 0 for the teacher, above a conditional-entropy floor, over the whole
+// enumerated context space.
+
+function rng(seed){                                        // mulberry32
+  var a = (seed >>> 0) || 1;
+  return function(){
+    a = (a + 0x6D2B79F5) >>> 0;
+    var t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function gauss(rnd){                                       // Box-Muller, cosine branch
+  var u = 1 - rnd(), v = rnd();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+function zeros(r, c){
+  var M = [], i, j;
+  for (i = 0; i < r; i++){ M[i] = []; for (j = 0; j < c; j++) M[i][j] = 0; }
+  return M;
+}
+function copyM(M){ return M.map(function(r){ return r.slice(); }); }
+function frobN(M){
+  var s = 0, i, j;
+  for (i = 0; i < M.length; i++) for (j = 0; j < M[0].length; j++) s += M[i][j] * M[i][j];
+  return Math.sqrt(s);
+}
+
+// ---------------------------------------------------------------- one-sided Jacobi SVD
+// Orthogonalise the columns of a copy of M by plane rotations until every pair is orthogonal; the
+// surviving column norms ARE the singular values and the accumulated rotations are V. Chosen over a
+// bidiagonal method because it gets small singular values to high RELATIVE accuracy, which is
+// exactly what a rank question needs: the whole page turns on whether a number is 1e-16 or 1e-2.
+function svd(Min){
+  var m = Min.length, n = Min[0].length, i, j, k, sweep;
+  var A = copyM(Min), V = zeros(n, n);
+  for (i = 0; i < n; i++) V[i][i] = 1;
+  for (sweep = 0; sweep < 60; sweep++){
+    var off = 0;
+    for (i = 0; i < n - 1; i++) for (j = i + 1; j < n; j++){
+      var al = 0, be = 0, ga = 0;
+      for (k = 0; k < m; k++){ al += A[k][i] * A[k][i]; be += A[k][j] * A[k][j]; ga += A[k][i] * A[k][j]; }
+      if (Math.abs(ga) <= 1e-300) continue;
+      off += ga * ga / (al * be + 1e-300);
+      var ze = (be - al) / (2 * ga);
+      var t = (ze >= 0 ? 1 : -1) / (Math.abs(ze) + Math.sqrt(1 + ze * ze));
+      var c = 1 / Math.sqrt(1 + t * t), s = c * t;
+      for (k = 0; k < m; k++){ var a1 = A[k][i], a2 = A[k][j]; A[k][i] = c * a1 - s * a2; A[k][j] = s * a1 + c * a2; }
+      for (k = 0; k < n; k++){ var v1 = V[k][i], v2 = V[k][j]; V[k][i] = c * v1 - s * v2; V[k][j] = s * v1 + c * v2; }
+    }
+    if (off < 1e-30) break;
+  }
+  var sv = [], U = zeros(m, n);
+  for (j = 0; j < n; j++){
+    var nn = 0;
+    for (k = 0; k < m; k++) nn += A[k][j] * A[k][j];
+    sv[j] = Math.sqrt(nn);
+  }
+  var ord = [];
+  for (j = 0; j < n; j++) ord.push(j);
+  ord.sort(function(a, b){ return sv[b] - sv[a]; });
+  var S = [], VV = zeros(n, n);
+  for (j = 0; j < n; j++){
+    var src = ord[j];
+    S[j] = sv[src];
+    for (k = 0; k < n; k++) VV[k][j] = V[k][src];
+    if (S[j] > 0) for (k = 0; k < m; k++) U[k][j] = A[k][src] / S[j];
+  }
+  return { s: S, U: U, V: VV };
+}
+function rankOf(s, scale){                                 // a RELATIVE threshold, never absolute
+  var tol = (scale || (s[0] || 1)) * 1e-9, r = 0, i;
+  for (i = 0; i < s.length; i++) if (s[i] > tol) r++;
+  return r;
+}
+function lstsq(A, B){                                      // minimum-norm least squares, same SVD
+  var dd = svd(A), n = A[0].length, m = A.length, cols = B[0].length;
+  var tol = (dd.s[0] || 1) * 1e-12, X = zeros(n, cols), i, j, k;
+  for (j = 0; j < cols; j++) for (k = 0; k < n; k++){
+    if (dd.s[k] <= tol) continue;
+    var ut = 0;
+    for (i = 0; i < m; i++) ut += dd.U[i][k] * B[i][j];
+    var co = ut / dd.s[k];
+    for (i = 0; i < n; i++) X[i][j] += dd.V[i][k] * co;
+  }
+  return X;
+}
+function orthoBasis(n, k, rnd, zeroFirst){                 // modified Gram-Schmidt, run twice
+  var B = [], i, j, t, q;
+  for (j = 0; j < k; j++){
+    var v = [];
+    for (i = 0; i < n; i++) v[i] = gauss(rnd);
+    if (zeroFirst) v[0] = 0;
+    for (t = 0; t < 2; t++) for (q = 0; q < B.length; q++){
+      var dp = 0;
+      for (i = 0; i < n; i++) dp += v[i] * B[q][i];
+      for (i = 0; i < n; i++) v[i] -= dp * B[q][i];
+    }
+    var nr = 0;
+    for (i = 0; i < n; i++) nr += v[i] * v[i];
+    nr = Math.sqrt(nr);
+    for (i = 0; i < n; i++) v[i] /= nr;
+    B.push(v);
+  }
+  return B;
+}
+function rowSoftmax(Z){
+  var N = Z.length, V = Z[0].length, P = zeros(N, V), lse = [], b, j;
+  for (b = 0; b < N; b++){
+    var mx = -Infinity;
+    for (j = 0; j < V; j++) if (Z[b][j] > mx) mx = Z[b][j];
+    var sm = 0;
+    for (j = 0; j < V; j++) sm += Math.exp(Z[b][j] - mx);
+    lse[b] = mx + Math.log(sm);
+    for (j = 0; j < V; j++) P[b][j] = Math.exp(Z[b][j] - lse[b]);
+  }
+  return { P: P, lse: lse };
+}
+function meanKL(Pstar, Q){                                 // the score: an exact expectation
+  var N = Pstar.length, V = Pstar[0].length, s = 0, b, j;
+  for (b = 0; b < N; b++) for (j = 0; j < V; j++){
+    var p = Pstar[b][j];
+    if (p > 0) s += p * Math.log(p / Q[b][j]) / N;
+  }
+  return s;
+}
+function softmax1(z){
+  var mx = -Infinity, i, s = 0, o = [];
+  for (i = 0; i < z.length; i++) if (z[i] > mx) mx = z[i];
+  for (i = 0; i < z.length; i++){ o[i] = Math.exp(z[i] - mx); s += o[i]; }
+  for (i = 0; i < z.length; i++) o[i] /= s;
+  return o;
+}
+
+// ---------------------------------------------------------------- the task
+// The LOG-ODDS matrix against symbol 0 is built with a chosen singular spectrum and a first column
+// that is EXACTLY zero. That is the gauge the model lives in: a width-d head can produce any
+// rank-<=d logit matrix, and adding a constant to a row changes no probability, so the set of
+// reachable log-odds matrices is exactly {rank <= d, first column 0}. Building the target in the
+// same gauge is what makes Eckart-Young apply on the nose rather than approximately.
+function makeTask(cfg){
+  var rnd = rng(cfg.seed * 7919 + 101), i, j, k, b;
+  var N = cfg.N, V = cfg.V, R = Math.min(cfg.rho, N, V - 1);
+  var Ub = orthoBasis(N, R, rnd, false);
+  var Wb = orthoBasis(V, R, rnd, true);
+  var s = [];
+  for (k = 0; k < R; k++) s[k] = cfg.scale * Math.pow(cfg.decay, k);
+  var D = zeros(N, V);
+  for (k = 0; k < R; k++) for (b = 0; b < N; b++) for (j = 0; j < V; j++) D[b][j] += s[k] * Ub[k][b] * Wb[k][j];
+  var sm = rowSoftmax(D), P = sm.P, A = zeros(N, V), marg = [];
+  for (j = 0; j < V; j++) marg[j] = 0;
+  for (b = 0; b < N; b++) for (j = 0; j < V; j++){ A[b][j] = D[b][j] - sm.lse[b]; marg[j] += P[b][j] / N; }
+  var H = 0, MI = 0, minP = 1;
+  for (b = 0; b < N; b++) for (j = 0; j < V; j++){
+    var p = P[b][j];
+    if (p < minP) minP = p;
+    if (p > 0){ H -= p * Math.log(p) / N; MI += p * Math.log(p / marg[j]) / N; }
+  }
+  var sD = svd(D).s, dA = svd(A), sA = dA.s, rD = rankOf(sD, sD[0]);
+  // the reference symbol is not special: EVERY choice of gauge gives the same integer. The sweep is
+  // V extra decompositions, so the pools that draw hundreds of tasks ask for the light version.
+  var gauges = [];
+  if (cfg.light) gauges.push(rD);
+  else for (j = 0; j < V; j++){
+    var G = zeros(N, V), b2, j2;
+    for (b2 = 0; b2 < N; b2++) for (j2 = 0; j2 < V; j2++) G[b2][j2] = A[b2][j2] - A[b2][j];
+    gauges.push(rankOf(svd(G).s, sA[0]));
+  }
+  // the quoted criterion is about rank(log P); the deciding one is about the log-odds. They differ
+  // by exactly one when the all-ones vector lies in the ROW SPACE of log P, so measure the distance
+  var rA = rankOf(sA, sA[0]), res = [];
+  for (j = 0; j < V; j++) res[j] = 1;
+  for (k = 0; k < rA; k++){
+    var dp = 0;
+    for (j = 0; j < V; j++) dp += dA.V[j][k];
+    for (j = 0; j < V; j++) res[j] -= dp * dA.V[j][k];
+  }
+  var onesDist = 0;
+  for (j = 0; j < V; j++) onesDist += res[j] * res[j];
+  onesDist = Math.sqrt(onesDist / V);
+  var tot = 0;
+  for (k = 0; k < s.length; k++) tot += s[k] * s[k];
+  return { cfg: cfg, N: N, V: V, R: R, D: D, P: P, A: A, lse: sm.lse, marg: marg, H: H, MI: MI,
+           minP: minP, logV: Math.log(V), sv: sD, svA: sA, Ub: Ub, Wb: Wb, s: s, fro: Math.sqrt(tot),
+           rankD: rD, rankA: rA, gauges: gauges, onesDist: onesDist };
+}
+function tailOf(task, d){
+  var t = 0, k;
+  for (k = d; k < task.s.length; k++) t += task.s[k] * task.s[k];
+  return Math.sqrt(t);
+}
+// The two "what is not the limit" controls only mean something at a width where the bottleneck
+// actually bites. "Bites" is defined on the SPECTRUM, which is exact and is a property of the task
+// rather than of any outcome: the widest width that still drops at least a tenth of the log-odds
+// matrix. At a width whose tail is 1e-3 of the whole, the excess is optimiser noise and every ratio
+// taken from it is noise with a decimal point in it.
+function controlWidth(task, d){
+  var best = 1, k;
+  for (k = 1; k < task.R; k++) if (tailOf(task, k) >= 0.1 * task.fro) best = k;
+  return Math.max(1, Math.min(d, best));
+}
+
+// the floor and the two nulls, every one of them a computation rather than a run
+function floorStudy(task){
+  var N = task.N, V = task.V, U = zeros(N, V), Mg = zeros(N, V), b, j;
+  for (b = 0; b < N; b++) for (j = 0; j < V; j++){ U[b][j] = 1 / V; Mg[b][j] = task.marg[j]; }
+  return { teacher: meanKL(task.P, task.P), marginal: meanKL(task.P, Mg), uniform: meanKL(task.P, U),
+           floor: task.H, logV: task.logV };
+}
+
+// ---------------------------------------------------------------- the model
+// one-hot context -> tanh embedding (hid) -> K bottleneck heads of width d -> a SHARED output
+// matrix W3 (V x d), no output bias. K = 1 is the plain single softmax and K > 1 is a mixture of
+// softmaxes; keeping them in ONE forward pass is what makes the comparison a comparison.
+function initNet(cfg, seed){
+  var rnd = rng(seed * 104729 + 7), n = { cfg: cfg, E1: [], b1: [], W2: [], b2: [], Wg: [], bg: [], W3: [] }, i, j, k;
+  for (i = 0; i < cfg.N; i++){ n.E1[i] = []; for (j = 0; j < cfg.hid; j++) n.E1[i][j] = gauss(rnd) * 0.8; }
+  for (j = 0; j < cfg.hid; j++) n.b1[j] = gauss(rnd) * 0.1;
+  for (k = 0; k < cfg.K; k++){
+    n.W2[k] = []; n.b2[k] = [];
+    for (i = 0; i < cfg.d; i++){
+      n.W2[k][i] = [];
+      for (j = 0; j < cfg.hid; j++) n.W2[k][i][j] = gauss(rnd) / Math.sqrt(cfg.hid);
+      n.b2[k][i] = gauss(rnd) * 0.1;
+    }
+  }
+  for (k = 0; k < cfg.K; k++){
+    n.Wg[k] = [];
+    for (j = 0; j < cfg.hid; j++) n.Wg[k][j] = gauss(rnd) / Math.sqrt(cfg.hid);
+    n.bg[k] = 0;
+  }
+  for (i = 0; i < cfg.V; i++){ n.W3[i] = []; for (j = 0; j < cfg.d; j++) n.W3[i][j] = gauss(rnd) / Math.sqrt(cfg.d); }
+  return n;
+}
+function cloneNet(n){
+  return { cfg: n.cfg, E1: copyM(n.E1), b1: n.b1.slice(), W2: n.W2.map(copyM),
+           b2: n.b2.map(function(v){ return v.slice(); }),
+           Wg: copyM(n.Wg), bg: n.bg.slice(), W3: copyM(n.W3) };
+}
+function zeroGrad(n){
+  var c = n.cfg;
+  return { E1: zeros(c.N, c.hid), b1: new Array(c.hid).fill(0),
+           W2: n.W2.map(function(){ return zeros(c.d, c.hid); }),
+           b2: n.W2.map(function(){ return new Array(c.d).fill(0); }),
+           Wg: zeros(c.K, c.hid), bg: new Array(c.K).fill(0), W3: zeros(c.V, c.d) };
+}
+function fwd(n, b){
+  var c = n.cfg, i, j, k, a = [];
+  for (j = 0; j < c.hid; j++) a[j] = Math.tanh(n.E1[b][j] + n.b1[j]);
+  var h = [], z = [], sm = [];
+  for (k = 0; k < c.K; k++){
+    h[k] = []; z[k] = [];
+    for (i = 0; i < c.d; i++){
+      var t = n.b2[k][i];
+      for (j = 0; j < c.hid; j++) t += n.W2[k][i][j] * a[j];
+      h[k][i] = Math.tanh(t);
+    }
+    for (i = 0; i < c.V; i++){
+      var u = 0;
+      for (j = 0; j < c.d; j++) u += n.W3[i][j] * h[k][j];
+      z[k][i] = u;
+    }
+    sm[k] = softmax1(z[k]);
+  }
+  var g = [];
+  for (k = 0; k < c.K; k++){
+    var q = n.bg[k];
+    for (j = 0; j < c.hid; j++) q += n.Wg[k][j] * a[j];
+    g[k] = q;
+  }
+  var pi = softmax1(g), p = [];
+  for (i = 0; i < c.V; i++){
+    var sp = 0;
+    for (k = 0; k < c.K; k++) sp += pi[k] * sm[k][i];
+    p[i] = sp;
+  }
+  return { a: a, h: h, z: z, sm: sm, g: g, pi: pi, p: p };
+}
+function predict(n){
+  var c = n.cfg, P = zeros(c.N, c.V), b, i;
+  for (b = 0; b < c.N; b++){ var r = fwd(n, b); for (i = 0; i < c.V; i++) P[b][i] = r.p[i]; }
+  return P;
+}
+function logitMat(n){
+  var c = n.cfg, Z = zeros(c.N, c.V), b, i;
+  for (b = 0; b < c.N; b++){ var r = fwd(n, b); for (i = 0; i < c.V; i++) Z[b][i] = r.z[0][i]; }
+  return Z;
+}
+function excess(n, task){ return meanKL(task.P, predict(n)); }
+
+// the backward pass, written by hand. dL/dz for a softmax under cross entropy is the usual
+// (p - target), but a MIXTURE breaks that: the incoming signal has to be split by the posterior
+// responsibility first, which is why the mixture path carries its own softmax Jacobian.
+function gradAll(n, task){
+  var c = n.cfg, g = zeroGrad(n), b, i, j, k, L = 0;
+  for (b = 0; b < c.N; b++){
+    var r = fwd(n, b), ps = task.P[b], dp = [];
+    for (i = 0; i < c.V; i++){
+      if (ps[i] > 0){ L += ps[i] * Math.log(ps[i] / r.p[i]) / c.N; dp[i] = -ps[i] / r.p[i] / c.N; }
+      else dp[i] = 0;
+    }
+    var da = new Array(c.hid).fill(0), dpi = [];
+    for (k = 0; k < c.K; k++){
+      var acc = 0;
+      for (i = 0; i < c.V; i++) acc += dp[i] * r.sm[k][i];
+      dpi[k] = acc;
+    }
+    for (k = 0; k < c.K; k++){
+      var dsk = [], dot = 0;
+      for (i = 0; i < c.V; i++){ dsk[i] = dp[i] * r.pi[k]; dot += dsk[i] * r.sm[k][i]; }
+      var dz = [];
+      for (i = 0; i < c.V; i++) dz[i] = r.sm[k][i] * (dsk[i] - dot);
+      var dh = new Array(c.d).fill(0);
+      for (i = 0; i < c.V; i++) for (j = 0; j < c.d; j++){ g.W3[i][j] += dz[i] * r.h[k][j]; dh[j] += n.W3[i][j] * dz[i]; }
+      for (i = 0; i < c.d; i++){
+        var dpre = dh[i] * (1 - r.h[k][i] * r.h[k][i]);
+        g.b2[k][i] += dpre;
+        for (j = 0; j < c.hid; j++){ g.W2[k][i][j] += dpre * r.a[j]; da[j] += n.W2[k][i][j] * dpre; }
+      }
+    }
+    var pdot = 0;
+    for (k = 0; k < c.K; k++) pdot += dpi[k] * r.pi[k];
+    for (k = 0; k < c.K; k++){
+      var dg = r.pi[k] * (dpi[k] - pdot);
+      g.bg[k] += dg;
+      for (j = 0; j < c.hid; j++){ g.Wg[k][j] += dg * r.a[j]; da[j] += n.Wg[k][j] * dg; }
+    }
+    for (j = 0; j < c.hid; j++){
+      var dq = da[j] * (1 - r.a[j] * r.a[j]);
+      g.E1[b][j] += dq; g.b1[j] += dq;
+    }
+  }
+  return { g: g, loss: L };
+}
+function params(n){                                        // one fixed flat order, used everywhere
+  var c = n.cfg, L = [], i, j, k;
+  for (i = 0; i < c.N; i++) for (j = 0; j < c.hid; j++) L.push(["E1", i, j]);
+  for (j = 0; j < c.hid; j++) L.push(["b1", j, -1]);
+  for (k = 0; k < c.K; k++){
+    for (i = 0; i < c.d; i++) for (j = 0; j < c.hid; j++) L.push(["W2", k, i, j]);
+    for (i = 0; i < c.d; i++) L.push(["b2", k, i]);
+  }
+  for (k = 0; k < c.K; k++) for (j = 0; j < c.hid; j++) L.push(["Wg", k, j]);
+  for (k = 0; k < c.K; k++) L.push(["bg", k, -1]);
+  for (i = 0; i < c.V; i++) for (j = 0; j < c.d; j++) L.push(["W3", i, j]);
+  return L;
+}
+function getP(n, p){
+  if (p[0] === "E1") return n.E1[p[1]][p[2]];
+  if (p[0] === "b1") return n.b1[p[1]];
+  if (p[0] === "W2") return n.W2[p[1]][p[2]][p[3]];
+  if (p[0] === "b2") return n.b2[p[1]][p[2]];
+  if (p[0] === "Wg") return n.Wg[p[1]][p[2]];
+  if (p[0] === "bg") return n.bg[p[1]];
+  return n.W3[p[1]][p[2]];
+}
+function setP(n, p, v){
+  if (p[0] === "E1") n.E1[p[1]][p[2]] = v;
+  else if (p[0] === "b1") n.b1[p[1]] = v;
+  else if (p[0] === "W2") n.W2[p[1]][p[2]][p[3]] = v;
+  else if (p[0] === "b2") n.b2[p[1]][p[2]] = v;
+  else if (p[0] === "Wg") n.Wg[p[1]][p[2]] = v;
+  else if (p[0] === "bg") n.bg[p[1]] = v;
+  else n.W3[p[1]][p[2]] = v;
+}
+function getG(g, p){
+  if (p[0] === "E1") return g.E1[p[1]][p[2]];
+  if (p[0] === "b1") return g.b1[p[1]];
+  if (p[0] === "W2") return g.W2[p[1]][p[2]][p[3]];
+  if (p[0] === "b2") return g.b2[p[1]][p[2]];
+  if (p[0] === "Wg") return g.Wg[p[1]][p[2]];
+  if (p[0] === "bg") return g.bg[p[1]];
+  return g.W3[p[1]][p[2]];
+}
+// Adam, walked over the same nested structures the forward pass uses rather than through the flat
+// parameter list - the flat list stays the reference order for the gradient checkers, where being
+// obvious matters more than being quick.
+function adamPlan(n){
+  var c = n.cfg, P = [], G = [], k;
+  function push(pa, ga){ P.push(pa); G.push(ga); }
+  for (var i = 0; i < c.N; i++) push(n.E1[i], "E1:" + i);
+  push(n.b1, "b1");
+  for (k = 0; k < c.K; k++){
+    for (i = 0; i < c.d; i++) push(n.W2[k][i], "W2:" + k + ":" + i);
+    push(n.b2[k], "b2:" + k);
+  }
+  for (k = 0; k < c.K; k++) push(n.Wg[k], "Wg:" + k);
+  push(n.bg, "bg");
+  for (i = 0; i < c.V; i++) push(n.W3[i], "W3:" + i);
+  return { P: P, G: G };
+}
+function gradRow(g, tag){
+  var p = tag.split(":");
+  if (p[0] === "E1") return g.E1[+p[1]];
+  if (p[0] === "b1") return g.b1;
+  if (p[0] === "W2") return g.W2[+p[1]][+p[2]];
+  if (p[0] === "b2") return g.b2[+p[1]];
+  if (p[0] === "Wg") return g.Wg[+p[1]];
+  if (p[0] === "bg") return g.bg;
+  return g.W3[+p[1]];
+}
+function adamTrain(n, task, opt){
+  var pl = adamPlan(n), rows = pl.P, tags = pl.G, m = [], v = [], r, i, t;
+  for (r = 0; r < rows.length; r++){ m[r] = new Array(rows[r].length).fill(0); v[r] = new Array(rows[r].length).fill(0); }
+  var b1 = 0.9, b2 = 0.999, eps = 1e-8, curve = [], every = Math.max(1, Math.round(opt.steps / 40));
+  var p1 = 1, p2 = 1;
+  for (t = 1; t <= opt.steps; t++){
+    var gr = gradAll(n, task);
+    p1 *= b1; p2 *= b2;
+    var c1 = 1 - p1, c2 = 1 - p2;
+    // a cosine decay to a twentieth of the rate: the floor here is a property of the WIDTH, so the
+    // run has to actually settle on it rather than rattle around above it
+    var lr = opt.lr * (0.05 + 0.95 * 0.5 * (1 + Math.cos(Math.PI * (t - 1) / Math.max(1, opt.steps - 1))));
+    for (r = 0; r < rows.length; r++){
+      var row = rows[r], grow = gradRow(gr.g, tags[r]), mr = m[r], vr = v[r];
+      for (i = 0; i < row.length; i++){
+        var gi = grow[i];
+        mr[i] = b1 * mr[i] + (1 - b1) * gi;
+        vr[i] = b2 * vr[i] + (1 - b2) * gi * gi;
+        row[i] -= lr * (mr[i] / c1) / (Math.sqrt(vr[i] / c2) + eps);
+      }
+    }
+    if (t === 1 || t % every === 0) curve.push([t, gr.loss]);
+  }
+  return { net: n, curve: curve, excess: excess(n, task) };
+}
+function trainBest(task, cfg, opt, seeds){                 // the best of a few starts, spread kept
+  var best = null, all = [], i;
+  for (i = 0; i < seeds.length; i++){
+    var r = adamTrain(initNet(cfg, seeds[i]), task, opt);
+    all.push(r.excess);
+    if (!best || r.excess < best.excess) best = r;
+  }
+  var lo = Math.min.apply(null, all), hi = Math.max.apply(null, all);
+  return { excess: best.excess, curve: best.curve, net: best.net, spread: hi - lo, all: all };
+}
+
+// ---------------------------------------------------------------- forward mode, over dual numbers
+// value and derivative side by side, one seed per parameter, no step size anywhere. It traverses the
+// graph in the opposite direction to the backward pass, so agreement is a real check and not an
+// echo. Run at INITIALISATION: at convergence the true gradient has decayed to nothing and any
+// difference test is measuring its own floor.
+function dualLoss(n, task, seedP){
+  var c = n.cfg, b, i, j, k, Lv = 0, Ld = 0;
+  var sel = function(p){
+    if (!seedP || p.length !== seedP.length) return 0;
+    for (var q = 0; q < p.length; q++) if (p[q] !== seedP[q]) return 0;
+    return 1;
+  };
+  for (b = 0; b < c.N; b++){
+    var av = [], ad = [];
+    for (j = 0; j < c.hid; j++){
+      var pv = n.E1[b][j] + n.b1[j], pd = sel(["E1", b, j]) + sel(["b1", j, -1]), th = Math.tanh(pv);
+      av[j] = th; ad[j] = (1 - th * th) * pd;
+    }
+    var smv = [], smd = [], gv = [], gd = [];
+    for (k = 0; k < c.K; k++){
+      var hv = [], hd = [];
+      for (i = 0; i < c.d; i++){
+        var tv = n.b2[k][i], td = sel(["b2", k, i]);
+        for (j = 0; j < c.hid; j++){ tv += n.W2[k][i][j] * av[j]; td += sel(["W2", k, i, j]) * av[j] + n.W2[k][i][j] * ad[j]; }
+        var t2 = Math.tanh(tv);
+        hv[i] = t2; hd[i] = (1 - t2 * t2) * td;
+      }
+      var zv = [], zd = [];
+      for (i = 0; i < c.V; i++){
+        var uv = 0, ud = 0;
+        for (j = 0; j < c.d; j++){ uv += n.W3[i][j] * hv[j]; ud += sel(["W3", i, j]) * hv[j] + n.W3[i][j] * hd[j]; }
+        zv[i] = uv; zd[i] = ud;
+      }
+      var mx = -Infinity;
+      for (i = 0; i < c.V; i++) if (zv[i] > mx) mx = zv[i];
+      var ev = [], ed = [], sv = 0, sd = 0;
+      for (i = 0; i < c.V; i++){ ev[i] = Math.exp(zv[i] - mx); ed[i] = ev[i] * zd[i]; sv += ev[i]; sd += ed[i]; }
+      smv[k] = []; smd[k] = [];
+      for (i = 0; i < c.V; i++){ smv[k][i] = ev[i] / sv; smd[k][i] = (ed[i] * sv - ev[i] * sd) / (sv * sv); }
+    }
+    for (k = 0; k < c.K; k++){
+      var qv = n.bg[k], qd = sel(["bg", k, -1]);
+      for (j = 0; j < c.hid; j++){ qv += n.Wg[k][j] * av[j]; qd += sel(["Wg", k, j]) * av[j] + n.Wg[k][j] * ad[j]; }
+      gv[k] = qv; gd[k] = qd;
+    }
+    var gm = -Infinity;
+    for (k = 0; k < c.K; k++) if (gv[k] > gm) gm = gv[k];
+    var fv = [], fd = [], gs = 0, gsd = 0;
+    for (k = 0; k < c.K; k++){ fv[k] = Math.exp(gv[k] - gm); fd[k] = fv[k] * gd[k]; gs += fv[k]; gsd += fd[k]; }
+    var piv = [], pid = [];
+    for (k = 0; k < c.K; k++){ piv[k] = fv[k] / gs; pid[k] = (fd[k] * gs - fv[k] * gsd) / (gs * gs); }
+    for (i = 0; i < c.V; i++){
+      var mv = 0, md = 0;
+      for (k = 0; k < c.K; k++){ mv += piv[k] * smv[k][i]; md += pid[k] * smv[k][i] + piv[k] * smd[k][i]; }
+      var ps = task.P[b][i];
+      if (ps > 0){ Lv += ps * Math.log(ps / mv) / c.N; Ld += -ps * (md / mv) / c.N; }
+    }
+  }
+  return { v: Lv, d: Ld };
+}
+function centralDiff(n, task, p, h){
+  var v0 = getP(n, p);
+  setP(n, p, v0 + h); var lp = excess(n, task);
+  setP(n, p, v0 - h); var lm = excess(n, task);
+  setP(n, p, v0);
+  return (lp - lm) / (2 * h);
+}
+function gradStudy(task, cfg, seed){
+  var n = initNet(cfg, seed), gr = gradAll(n, task), P = params(n);
+  var base = dualLoss(n, task, null), gmax = 0, worstDual = 0, worstCd = 0, i;
+  for (i = 0; i < P.length; i++) gmax = Math.max(gmax, Math.abs(getG(gr.g, P[i])));
+  for (i = 0; i < P.length; i++){
+    var rev = getG(gr.g, P[i]);
+    var fw = dualLoss(n, task, P[i]).d;
+    var cd = centralDiff(n, task, P[i], 1e-5);
+    worstDual = Math.max(worstDual, Math.abs(rev - fw) / gmax);
+    worstCd = Math.max(worstCd, Math.abs(rev - cd) / gmax);
+  }
+  return { nParams: P.length, lossGap: Math.abs(gr.loss - base.v), gmax: gmax,
+           dual: worstDual, cd: worstCd, loss: gr.loss };
+}
+
+// ---------------------------------------------------------------- write the model down
+// Eckart-Young: the best rank-d approximation of the log-odds matrix IS its truncated SVD, and every
+// rank-<=d matrix with a zero first column is reachable - so the truncation is the optimum in LOGIT
+// space and there is nothing to search for. The layers below then only have to reproduce one fixed
+// bottleneck matrix, which is a single linear solve.
+function truncKL(task, d){
+  var N = task.N, V = task.V, Dd = zeros(N, V), kk = Math.min(d, task.s.length), k, b, j;
+  for (k = 0; k < kk; k++) for (b = 0; b < N; b++) for (j = 0; j < V; j++) Dd[b][j] += task.s[k] * task.Ub[k][b] * task.Wb[k][j];
+  return { kl: meanKL(task.P, rowSoftmax(Dd).P), ey: tailOf(task, kk), Dd: Dd };
+}
+function constructNet(task, cfg, seed){
+  var d = cfg.d, N = cfg.N, V = cfg.V, hid = cfg.hid, b, j, k;
+  var n = initNet(cfg, seed), kk = Math.min(d, task.s.length);
+  var Ht = zeros(N, d), W3 = zeros(V, d), mx = 0;
+  for (k = 0; k < kk; k++) for (b = 0; b < N; b++){
+    Ht[b][k] = task.Ub[k][b];
+    if (Math.abs(Ht[b][k]) > mx) mx = Math.abs(Ht[b][k]);
+  }
+  var alpha = 0.9 / mx;
+  for (k = 0; k < kk; k++){
+    for (b = 0; b < N; b++) Ht[b][k] *= alpha;
+    for (j = 0; j < V; j++) W3[j][k] = task.s[k] * task.Wb[k][j] / alpha;
+  }
+  n.W3 = W3;
+  var A = zeros(N, hid + 1), tgt = zeros(N, d);
+  for (b = 0; b < N; b++){
+    var r = fwd(n, b);
+    for (j = 0; j < hid; j++) A[b][j] = r.a[j];
+    A[b][hid] = 1;
+    for (k = 0; k < d; k++) tgt[b][k] = Math.log((1 + Ht[b][k]) / (1 - Ht[b][k])) / 2;      // atanh
+  }
+  var X = lstsq(A, tgt), res = 0;
+  for (k = 0; k < d; k++){ for (j = 0; j < hid; j++) n.W2[0][k][j] = X[j][k]; n.b2[0][k] = X[hid][k]; }
+  for (b = 0; b < N; b++) for (k = 0; k < d; k++){
+    var sres = 0;
+    for (j = 0; j <= hid; j++) sres += A[b][j] * X[j][k];
+    res = Math.max(res, Math.abs(sres - tgt[b][k]));
+  }
+  return { net: n, solveRes: res, alpha: alpha, feasible: hid + 1 >= N };
+}
+
+// ---------------------------------------------------------------- the ladder over widths
+function ladderStudy(task, base, opt, seeds){
+  var rows = [], d, top = Math.min(task.V - 1, 8);
+  for (d = 1; d <= top; d++){
+    var cfg = { N: base.N, V: base.V, hid: base.hid, d: d, K: 1 };
+    var tk = truncKL(task, d);
+    var cn = constructNet(task, cfg, seeds[0]);
+    var built = excess(cn.net, task);
+    var tr = trainBest(task, cfg, opt, seeds);
+    rows.push({ d: d, ey: tk.ey, sigma: d < task.s.length ? task.s[d] : 0, trunc: tk.kl,
+                built: built, builtGap: Math.abs(built - tk.kl), solveRes: cn.solveRes,
+                trained: tr.excess, spread: tr.spread, feasible: cn.feasible,
+                nParams: params(initNet(cfg, 1)).length,
+                gain: tk.kl > 0 ? (tk.kl - tr.excess) / tk.kl : 0 });
+  }
+  return rows;
+}
+
+// ---------------------------------------------------------------- what is NOT the limit
+function capacityStudy(task, base, opt, seeds, d){
+  var hids = [6, 12, 24, 48, 96], stepsList = [50, 100, 250, 500, 1000, 2000], rows = [], sr = [], i;
+  seeds = seeds.slice(0, 2);
+  d = controlWidth(task, d);                               // a width that is genuinely bottlenecked
+  for (i = 0; i < hids.length; i++){
+    var cfg = { N: base.N, V: base.V, hid: hids[i], d: d, K: 1 };
+    var tr = trainBest(task, cfg, opt, seeds);
+    rows.push({ hid: hids[i], nParams: params(initNet(cfg, 1)).length, excess: tr.excess, spread: tr.spread });
+  }
+  var cfg2 = { N: base.N, V: base.V, hid: base.hid, d: d, K: 1 };
+  for (i = 0; i < stepsList.length; i++){
+    var tr2 = trainBest(task, cfg2, { lr: opt.lr, steps: stepsList[i] }, seeds);
+    sr.push({ steps: stepsList[i], excess: tr2.excess });
+  }
+  var lo = Infinity, hi = -Infinity;
+  rows.forEach(function(r){ if (r.excess < lo) lo = r.excess; if (r.excess > hi) hi = r.excess; });
+  var slo = Infinity, shi = -Infinity;
+  sr.forEach(function(r){ if (r.excess < slo) slo = r.excess; if (r.excess > shi) shi = r.excess; });
+  return { rows: rows, steps: sr, d: d, widthRatio: hi / lo, stepRatio: shi / slo,
+           paramRatio: rows[rows.length - 1].nParams / rows[0].nParams };
+}
+
+// ---------------------------------------------------------------- the fix, and its control
+// A mixture of softmaxes takes the log OUT of the low-rank part: log of a sum of K softmaxes is not
+// a rank-d matrix, so K components lift the reachable log-odds rank without touching d. The control
+// is the only question that matters: at the same parameter count, would MORE WIDTH have done it?
+function mixtureStudy(task, base, opt, seeds, d, Kmax){
+  var rows = [], k, i;
+  d = controlWidth(task, d);                               // same: there is nothing to fix at a
+                                                           // width that already suffices
+  for (k = 1; k <= Kmax; k++){
+    var cfg = { N: base.N, V: base.V, hid: base.hid, d: d, K: k };
+    var tr = trainBest(task, cfg, opt, seeds);
+    rows.push({ K: k, d: d, nParams: params(initNet(cfg, 1)).length, excess: tr.excess,
+                cap: k * d, kind: "mixture" });
+  }
+  var wid = [];
+  for (i = 0; i < Kmax; i++){
+    var dd = d * (i + 1), cfg2 = { N: base.N, V: base.V, hid: base.hid, d: dd, K: 1 };
+    var tr2 = trainBest(task, cfg2, opt, seeds);
+    wid.push({ K: 1, d: dd, nParams: params(initNet(cfg2, 1)).length, excess: tr2.excess,
+               cap: dd, kind: "width" });
+  }
+  // the price of one more unit of reachable log-odds rank, each way
+  var perRankWidth = base.V + base.hid + 1;
+  var perRankMix = (d + 1) * (base.hid + 1) / d;
+  var big = { V: 50257, hid: 768, d: 768 };
+  var bigWidth = big.V + big.hid + 1, bigMix = (big.d + 1) * (big.hid + 1) / big.d;
+  return { rows: rows, width: wid, d: d, perRankWidth: perRankWidth, perRankMix: perRankMix,
+           ratio: perRankWidth / perRankMix, big: big, bigWidth: bigWidth, bigMix: bigMix,
+           bigRatio: bigWidth / bigMix };
+}
+
+// ---------------------------------------------------------------- the hole in the quoted criterion
+// rank(log P) <= d + 1 is the criterion everyone quotes. The one that decides is rank(log-odds) <= d.
+// They agree exactly when 1_V lies in the row space of log P, which it generically does - and it
+// provably does NOT when there are no more contexts than the rank. Then the quoted rule says a
+// width is enough when it is not, and a trained model says so.
+function holeStudy(base, opt, seeds){
+  var R = Math.min(base.rho, base.V - 1);
+  var t = makeTask({ N: R, V: base.V, rho: R, decay: base.decay, scale: base.scale, seed: base.seed });
+  var quoted = t.rankA - 1, truth = t.rankD, rows = [], d;
+  for (d = Math.max(1, truth - 3); d <= Math.min(truth + 1, base.V - 1); d++){
+    var cfg = { N: t.N, V: base.V, hid: base.hid, d: d, K: 1 };
+    var tr = trainBest(t, cfg, opt, seeds);
+    var cn = constructNet(t, cfg, seeds[0]);
+    rows.push({ d: d, trained: tr.excess, built: excess(cn.net, t), trunc: truncKL(t, d).kl,
+                quotedOK: d >= quoted, trueOK: d >= truth });
+  }
+  return { task: t, quoted: quoted, truth: truth, rows: rows, onesDist: t.onesDist };
+}
+// how often do the two criteria disagree on a randomly drawn task?
+function agreeStudy(base, count){
+  var same = 0, plus = 0, other = 0, worst = 0, i;
+  var maxR = Math.min(base.N - 1, base.V - 1);            // MORE contexts than rank: the generic case
+  for (i = 1; i <= count; i++){
+    var R = 2 + (i % Math.max(1, maxR - 1));
+    var t = makeTask({ N: base.N, V: base.V, rho: R, decay: base.decay, scale: base.scale, seed: i, light: 1 });
+    if (t.rankA === t.rankD + 1) plus++;
+    else if (t.rankA === t.rankD) same++;
+    else other++;
+    if (t.onesDist > worst) worst = t.onesDist;
+  }
+  return { n: count, plus: plus, same: same, other: other, worstOnes: worst };
+}
+
+// ---------------------------------------------------------------- does anything predict?
+function auc(runs, f, filter){
+  var conc = 0, disc = 0, tied = 0, i, j;
+  for (i = 0; i < runs.length; i++) for (j = i + 1; j < runs.length; j++){
+    if (filter && !filter(runs[i], runs[j])) continue;
+    var lo, hi;
+    if (runs[i].truth < runs[j].truth){ hi = i; lo = j; }
+    else if (runs[j].truth < runs[i].truth){ hi = j; lo = i; }
+    else continue;
+    if (f(runs[hi]) > f(runs[lo])) conc++;
+    else if (f(runs[hi]) < f(runs[lo])) disc++;
+    else tied++;
+  }
+  var pairs = conc + disc + tied;
+  return { auc: pairs ? (conc + 0.5 * tied) / pairs : 0.5, pairs: pairs };
+}
+function rankerStudy(o){
+  var runs = [], gi, ri, di, si, k, mx = 0;
+  for (ri = 0; ri < o.rhos.length; ri++) if (o.rhos[ri] > mx) mx = o.rhos[ri];
+  var N = Math.max(o.N, mx + 2);                           // enough contexts that every pool task is
+                                                           // GENERIC - the exception is card 6's job
+  for (gi = 0; gi < o.decays.length; gi++)
+  for (ri = 0; ri < o.rhos.length; ri++)
+  for (si = 0; si < o.seeds.length; si++){
+    var task = makeTask({ N: N, V: o.V, rho: o.rhos[ri], decay: o.decays[gi], scale: o.scale, seed: o.seeds[si], light: 1 });
+    for (di = 0; di < o.ds.length; di++){
+      var d = o.ds[di], cfg = { N: N, V: o.V, hid: o.hid, d: d, K: 1 };
+      var tail = tailOf(task, d);
+      var quick = adamTrain(initNet(cfg, o.seeds[si]), task, { lr: o.lr, steps: 20 });
+      var full = adamTrain(initNet(cfg, o.seeds[si]), task, { lr: o.lr, steps: o.steps });
+      runs.push({ rho: task.R, d: d, decay: o.decays[gi], seed: o.seeds[si], truth: full.excess,
+                  rankGap: -Math.max(0, task.rankD - d),
+                  quotedGap: -Math.max(0, task.rankA - 1 - d),
+                  sigma: -(d < task.s.length ? task.s[d] : 0),
+                  tail: -tail, frac: -tail / task.fro, trunc: -truncKL(task, d).kl,
+                  quick: -quick.excess });
+    }
+  }
+  var cands = [
+    ["the log-odds rank gap, an INTEGER", function(r){ return r.rankGap; }, "no"],
+    ["the quoted gap, rank(log P) &minus; 1 &minus; d", function(r){ return r.quotedGap; }, "no"],
+    ["the first dropped singular value", function(r){ return r.sigma; }, "no"],
+    ["the Eckart-Young tail", function(r){ return r.tail; }, "no"],
+    ["the tail as a fraction of the whole", function(r){ return r.frac; }, "no"],
+    ["the KL of the truncated log-odds", function(r){ return r.trunc; }, "no"],
+    ["twenty steps of training", function(r){ return r.quick; }, "yes"]
+  ];
+  var cell = function(a, b){ return a.rho === b.rho && a.d === b.d; };
+  var scored = cands.map(function(c){
+    var A = auc(runs, c[1]), W = auc(runs, c[1], cell);
+    return { name: c[0], train: c[2], auc: A.auc, pairs: A.pairs, within: W.auc, withinPairs: W.pairs };
+  });
+  var lo = Infinity, hi = -Infinity, cells = {}, worstCell = 0, wk = "";
+  runs.forEach(function(r){
+    if (r.truth < lo) lo = r.truth;
+    if (r.truth > hi) hi = r.truth;
+    var key = r.rho + "/" + r.d;
+    if (!cells[key]) cells[key] = [];
+    cells[key].push(r.truth);
+  });
+  for (k in cells) if (cells.hasOwnProperty(k)){
+    var v = cells[k], mn = Math.min.apply(null, v), mxv = Math.max.apply(null, v);
+    if (mn > 0 && mxv / mn > worstCell){ worstCell = mxv / mn; wk = k; }
+  }
+  return { runs: runs, scored: scored, n: runs.length, N: N, lo: lo, hi: hi, worstCell: worstCell, worstKey: wk };
+}
+
+// ---------------------------------------------------------------- the K = 1 identity
+// A mixture of ONE softmax must be that softmax, bit for bit. If it is not, every mixture number on
+// the page is measuring two different models instead of one model with a knob.
+function mixtureIdentity(task, base, d, seed){
+  var cfg = { N: base.N, V: base.V, hid: base.hid, d: d, K: 1 }, n = initNet(cfg, seed);
+  var worst = 0, b, i;
+  for (b = 0; b < cfg.N; b++){
+    var r = fwd(n, b);
+    for (i = 0; i < cfg.V; i++) worst = Math.max(worst, Math.abs(r.p[i] - r.sm[0][i]));
+  }
+  return worst;
+}
+// the price of one unit of reachable log-odds rank, taken from the PARAMETER LISTS rather than a
+// formula, so a change to the architecture cannot leave the arithmetic behind
+function priceProbe(base, d){
+  var c1 = { N: base.N, V: base.V, hid: base.hid, d: d, K: 1 };
+  var c2 = { N: base.N, V: base.V, hid: base.hid, d: d + 1, K: 1 };
+  var c3 = { N: base.N, V: base.V, hid: base.hid, d: d, K: 2 };
+  return { width: params(initNet(c2, 1)).length - params(initNet(c1, 1)).length,
+           mixture: params(initNet(c3, 1)).length - params(initNet(c1, 1)).length };
+}
+
+// ================================================================ the page's own assertions
+function selfCheck(o){
+  var out = [], n = 0;
+  function ck(c, label){ n++; if (!c) out.push("FAIL  " + label); }
+  var t = o.task, b, j, k, i;
+
+  // --- the task is what it claims to be
+  for (b = 0; b < t.N; b++){
+    var s = 0;
+    for (j = 0; j < t.V; j++){ s += t.P[b][j]; ck(t.P[b][j] > 0, "a true probability is not positive"); }
+    ck(Math.abs(s - 1) < 1e-12, "the true conditional does not normalise at context " + b);
+    ck(t.D[b][0] === 0, "the log-odds gauge is not exact: column 0 is not identically zero");
+  }
+  ck(t.H > 0 && t.H < t.logV, "the conditional entropy is outside (0, log V)");
+  ck(t.MI > 0, "the task carries no mutual information");
+  ck(t.MI + t.H <= t.logV + 1e-12, "H(y|x) + I(x;y) exceeds log V");
+  var mg = 0;
+  for (j = 0; j < t.V; j++) mg += t.marg[j];
+  ck(Math.abs(mg - 1) < 1e-12, "the marginal does not normalise");
+  // the spectrum is the one that was asked for, and the tail is numerically nothing
+  for (k = 0; k < t.R; k++)
+    ck(Math.abs(t.sv[k] - t.s[k]) <= 1e-11 * t.s[0], "singular value " + k + " is not the one built");
+  if (t.R < t.sv.length) ck(t.sv[t.R] / t.sv[0] < 1e-12, "the log-odds matrix has more rank than it was given");
+  ck(t.rankD === t.R, "the log-odds rank is not the rank the task was built with");
+
+  // --- the rank that decides, three ways
+  for (j = 0; j < t.V; j++)
+    ck(t.gauges[j] === t.rankD, "reference symbol " + j + " gives a different rank, so the gauge is not free");
+  // rank(log P) = rank(log-odds) + 1 exactly when the all-ones vector is in the row space of log P
+  ck(t.rankA === t.rankD + (t.onesDist < 1e-9 ? 1 : 0),
+     "the rank of log P is not the log-odds rank plus the row-space indicator (" + t.rankA + " vs " +
+     t.rankD + ", ones distance " + t.onesDist + ")");
+  ck(t.rankA >= t.rankD, "rank(log P) fell below the log-odds rank, which a rank-one shift cannot do");
+  ck(t.rankA <= t.rankD + 1, "rank(log P) exceeds the log-odds rank by more than a rank-one shift can");
+
+  // --- the floor and the nulls, all exact
+  ck(o.floor.teacher === 0, "the teacher's own excess is not exactly zero (" + o.floor.teacher + ")");
+  ck(Math.abs(o.floor.marginal - t.MI) < 1e-12, "the context-ignoring predictor's excess is not the mutual information");
+  ck(Math.abs(o.floor.uniform - (t.logV - t.H)) < 1e-12, "the uniform predictor's excess is not log V - H");
+  ck(o.floor.marginal >= 0 && o.floor.uniform >= 0, "a null has negative excess, which a KL cannot");
+
+  // --- gradients, checked at initialisation against a method with no step size in it
+  ck(o.grad.lossGap === 0, "forward mode does not reproduce the loss bit for bit");
+  ck(o.grad.gmax > 0, "the gradient is zero everywhere, so nothing is being checked");
+  ck(o.grad.dual < 1e-11, "reverse mode disagrees with forward-mode duals (" + o.grad.dual + ")");
+  ck(o.grad.dual < o.grad.cd, "forward mode is no sharper than a central difference, so one of them is wrong");
+  ck(o.gradMix.lossGap === 0, "the mixture's forward mode does not reproduce its loss");
+  ck(o.gradMix.dual < 1e-11, "the mixture's reverse mode disagrees with forward mode");
+  ck(o.mixId === 0, "a mixture of ONE softmax is not that softmax bit for bit (" + o.mixId + ")");
+
+  // --- the ladder: the optimum is written down, not searched for
+  var fro2 = 0;
+  for (k = 0; k < t.s.length; k++) fro2 += t.s[k] * t.s[k];
+  o.lad.forEach(function(r){
+    var head = 0;
+    for (var q = 0; q < Math.min(r.d, t.s.length); q++) head += t.s[q] * t.s[q];
+    ck(Math.abs(r.ey * r.ey + head - fro2) <= 1e-9 * fro2,
+       "the dropped tail and the kept head do not add up to the whole at d = " + r.d);
+    ck(Math.abs(r.built - r.trunc) < 1e-12,
+       "the network built from the truncated SVD is not the truncation itself at d = " + r.d);
+    ck(r.built >= -1e-12 && r.trained >= -1e-12, "an excess is negative beyond rounding at d = " + r.d);
+    ck(r.solveRes < 1e-9, "the one linear solve behind the constructed net did not close at d = " + r.d);
+    if (r.d >= t.R){
+      ck(r.ey === 0, "the Eckart-Young tail is not exactly zero at a width that can represent the task");
+      ck(r.trunc === 0, "the truncation is not the target itself at d = " + r.d);
+      ck(Math.abs(r.built) < 1e-12, "the constructed net does not reach zero excess at d = " + r.d);
+      ck(r.trained > Math.abs(r.built), "training beat a model that is already exact, which cannot happen");
+    } else {
+      ck(r.ey > 0, "the tail is zero at a width that provably cannot represent the task");
+      ck(r.trunc > 0, "the truncation costs nothing at a width that cannot represent the task");
+    }
+  });
+  for (i = 1; i < o.lad.length; i++)
+    ck(o.lad[i].trunc <= o.lad[i - 1].trunc + 1e-12, "the truncation got worse with more width");
+  ck(o.ladGain > 0, "training never beat the truncated SVD, so the page's second headline is wrong");
+
+  // --- what is not the limit
+  ck(o.cap.rows.length > 1 && o.cap.steps.length > 1, "the controls did not run");
+  o.cap.rows.forEach(function(r){ ck(r.excess > 0, "a bottlenecked model reached zero excess"); });
+  ck(o.cap.rows[0].excess / o.cap.rows[o.cap.rows.length - 1].excess < 2,
+     "the widest net below the bottleneck beat the narrowest, so capacity underneath DOES buy something");
+  ck(o.cap.steps[o.cap.steps.length - 2].excess / o.cap.steps[o.cap.steps.length - 1].excess < 2,
+     "doubling the training budget still moves the floor, so it is not a floor yet");
+  ck(o.cap.paramRatio > 5, "the capacity control did not span a wide enough parameter range");
+
+  // --- the fix and its price, taken from the parameter lists
+  ck(o.price.width === t.V + o.base.hid + 1,
+     "one more unit of width does not cost V + hid + 1 parameters (" + o.price.width + ")");
+  ck(o.price.mixture === (o.mixD + 1) * (o.base.hid + 1),
+     "one more mixture component does not cost (d + 1)(hid + 1) parameters (" + o.price.mixture + ")");
+  ck(o.mix.rows[0].K === 1 && Math.abs(o.mix.rows[0].excess - o.mix.width[0].excess) < 1e-15,
+     "the K = 1 row and the unwidened row are not the same run");
+  ck(o.mix.bigRatio > o.mix.ratio,
+     "the mixture does not get relatively cheaper as the vocabulary grows, which is its whole case");
+  ck(o.mix.rows[o.mix.rows.length - 1].excess < o.mix.rows[0].excess,
+     "adding mixture components did not help at all");
+
+  // --- the hole in the quoted criterion
+  ck(o.hole.task.rankA === o.hole.task.rankD,
+     "the constructed exception did not come out as an exception (" + o.hole.task.rankA + " vs " +
+     o.hole.task.rankD + ")");
+  ck(o.hole.onesDist > 1e-6, "the all-ones vector is in the row space after all, so there is no hole");
+  ck(o.hole.quoted === o.hole.truth - 1, "the quoted width and the true width are not one apart");
+  o.hole.rows.forEach(function(r){
+    if (r.quotedOK && !r.trueOK){
+      ck(r.trunc > 0, "the width the quoted rule allows can represent the task after all");
+      ck(r.trained > 0, "a model at the quoted width reached zero excess");
+    }
+    if (r.trueOK) ck(Math.abs(r.built) < 1e-12, "the constructed net misses at a width that suffices");
+  });
+  ck(o.agree.same === 0 && o.agree.plus === o.agree.n,
+     "the two criteria disagreed on a randomly drawn task, so the hole is not the rare case the page says");
+  ck(o.agree.worstOnes < 1e-9, "the all-ones vector left the row space on a generic task");
+
+  // --- the ranker, once the pool has been trained
+  if (o.pool){
+    o.pool.runs.forEach(function(r){
+      ck(r.rankGap === r.quotedGap,
+         "the quoted gap and the log-odds gap are different predictors in the pool, which the page denies");
+    });
+    o.pool.scored.forEach(function(s){
+      ck(s.auc >= 0 && s.auc <= 1, "an AUC left [0, 1]");
+      ck(s.pairs > 0 && s.withinPairs > 0, "a candidate scored no pairs");
+      ck(s.within >= 0 && s.within <= 1, "a within-cell AUC left [0, 1]");
+    });
+    ck(o.pool.scored[0].within === 0.5,
+       "the rank gap is not exactly a coin inside a cell where it cannot vary (" +
+       o.pool.scored[0].within + ")");
+    ck(o.pool.scored[1].within === 0.5, "the quoted gap is not exactly a coin inside one cell");
+    ck(o.pool.scored[0].auc === o.pool.scored[1].auc,
+       "two identical predictors scored differently");
+    ck(o.pool.worstCell > 1, "the excess does not vary at all inside a cell");
+  }
+  return { pass: n - out.length, total: n, lines: out };
+}
+// ===== ENGINE:END =====
+
+// ---------------------------------------------------------------- small view helpers
+function $(id){ return document.getElementById(id); }
+function f1(x){ return (Math.round(x * 10) / 10).toFixed(1); }
+function f2(x){ return (Math.round(x * 100) / 100).toFixed(2); }
+function f3(x){ return (Math.round(x * 1000) / 1000).toFixed(3); }
+function f4(x){ return (Math.round(x * 10000) / 10000).toFixed(4); }
+function num(n){ return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+function ex(x){ return x === 0 ? "0.0e+0" : Number(x).toExponential(1); }
+function ex2(x){ return x === 0 ? "0.0e+0" : Number(x).toExponential(2); }
+function pct(x){ return f1(x * 100) + "%"; }
+function cls(good){ return good ? "ok" : "bad"; }
+function mult(x){
+  if (!isFinite(x)) return "&infin;&times;";
+  if (x >= 10 && Math.abs(x - Math.round(x)) < 0.005) return num(Math.round(x)) + "&times;";
+  return (x >= 100 ? num(Math.round(x)) : f2(x)) + "&times;";
+}
+// past a few orders of magnitude a ratio stops being a number anyone can read
+function orders(x){ return f1(Math.log10(Math.max(x, 1e-300))) + " orders of magnitude"; }
+
+var NS = [6, 8, 12, 16, 24];
+var GS = [0.45, 0.6, 0.75, 0.9];
+var FIX = { V: 12, hid: 24, scale: 12, lr: 0.05, steps: 900 };
+var SEEDS = [3, 4, 5];
+var B = null, FAST = null, SLOW = null, POOL = null;
+
+function opts(){
+  return { N: NS[+$("sN").value], rho: +$("sR").value, decay: GS[+$("sG").value],
+           d: +$("sD").value, K: +$("sK").value, seed: +$("sS").value };
+}
+function showOpts(){
+  var o = opts();
+  $("vN").textContent = o.N; $("vR").textContent = o.rho; $("vG").textContent = f2(o.decay);
+  $("vD").textContent = o.d; $("vK").textContent = o.K; $("vS").textContent = o.seed;
+}
+
+// ---------------------------------------------------------------- charts
+function ladChart(rows, R){
+  var w = 520, h = 250, L = 54, Rp = 12, T = 14, Bm = 34, i;
+  var vals = [];
+  rows.forEach(function(r){
+    if (r.trunc > 0) vals.push(r.trunc);
+    if (r.trained > 0) vals.push(r.trained);
+  });
+  if (!vals.length) return "";
+  var lo = Math.log10(Math.min.apply(null, vals)), hi = Math.log10(Math.max.apply(null, vals));
+  if (hi - lo < 1) { hi = lo + 1; }
+  var X = function(d){ return L + (d - rows[0].d) / Math.max(1, rows.length - 1) * (w - L - Rp); };
+  var Y = function(v){ return T + (hi - Math.log10(Math.max(v, Math.pow(10, lo)))) / (hi - lo) * (h - T - Bm); };
+  var s = "<svg viewBox='0 0 " + w + " " + h + "' width='100%'>";
+  for (i = Math.ceil(lo); i <= Math.floor(hi); i++){
+    var y = Y(Math.pow(10, i));
+    s += "<line x1='" + L + "' y1='" + y + "' x2='" + (w - Rp) + "' y2='" + y +
+         "' stroke='#e2e8f0' stroke-width='1'/>";
+    s += "<text x='" + (L - 6) + "' y='" + (y + 3.5) + "' font-size='9' fill='#94a3b8' " +
+         "text-anchor='end'>1e" + i + "</text>";
+  }
+  var mk = function(f, col, dash){
+    var pts = [], j;
+    for (j = 0; j < rows.length; j++) if (f(rows[j]) > 0) pts.push(X(rows[j].d) + "," + Y(f(rows[j])));
+    return pts.length > 1 ? "<polyline points='" + pts.join(" ") + "' fill='none' stroke='" + col +
+      "' stroke-width='2'" + (dash ? " stroke-dasharray='4 3'" : "") + "/>" : "";
+  };
+  s += mk(function(r){ return r.trunc; }, "#94a3b8", true);
+  s += mk(function(r){ return r.trained; }, "#be123c", false);
+  for (i = 0; i < rows.length; i++){
+    var xx = X(rows[i].d);
+    if (rows[i].trained > 0) s += "<circle cx='" + xx + "' cy='" + Y(rows[i].trained) + "' r='3' fill='#be123c'/>";
+    s += "<text x='" + xx + "' y='" + (h - 18) + "' font-size='9' fill='#64748b' text-anchor='middle'>" +
+         rows[i].d + "</text>";
+  }
+  var xr = X(R);
+  s += "<line x1='" + xr + "' y1='" + T + "' x2='" + xr + "' y2='" + (h - Bm) +
+       "' stroke='#0f172a' stroke-width='1' stroke-dasharray='2 3'/>";
+  s += "<text x='" + xr + "' y='" + (h - 4) + "' font-size='9' fill='#0f172a' text-anchor='middle'>" +
+       "d = the true rank</text>";
+  s += "<text x='" + (L + 4) + "' y='" + (T + 11) + "' font-size='9.5' fill='#be123c'>trained</text>";
+  s += "<text x='" + (L + 60) + "' y='" + (T + 11) + "' font-size='9.5' fill='#94a3b8'>the truncated SVD</text>";
+  s += "</svg>";
+  return s;
+}
+function aucChart(scored){
+  var w = 520, rowH = 24, h = scored.length * rowH + 26, L = 250, i;
+  var s = "<svg viewBox='0 0 " + w + " " + h + "' width='100%'>";
+  var X = function(v){ return L + (v - 0.4) / 0.6 * (w - L - 14); };
+  s += "<line x1='" + X(0.5) + "' y1='6' x2='" + X(0.5) + "' y2='" + (h - 20) +
+       "' stroke='#0f172a' stroke-width='1' stroke-dasharray='2 3'/>";
+  s += "<text x='" + X(0.5) + "' y='" + (h - 6) + "' font-size='9' fill='#0f172a' text-anchor='middle'>a coin</text>";
+  for (i = 0; i < scored.length; i++){
+    var y = 10 + i * rowH, v = Math.max(0.4, Math.min(1, scored[i].auc));
+    var good = scored[i].auc > 0.5;
+    s += "<text x='0' y='" + (y + 11) + "' font-size='10' fill='#334155'>" +
+         scored[i].name.replace(/&minus;/g, "-").slice(0, 44) + "</text>";
+    s += "<rect x='" + Math.min(X(0.5), X(v)) + "' y='" + (y + 3) + "' width='" +
+         Math.max(1, Math.abs(X(v) - X(0.5))) + "' height='12' fill='" + (good ? "#15803d" : "#b91c1c") +
+         "' opacity='.75'/>";
+    s += "<text x='" + (X(v) + (good ? 5 : -5)) + "' y='" + (y + 13) + "' font-size='9.5' fill='#334155' " +
+         "text-anchor='" + (good ? "start" : "end") + "'>" + f3(scored[i].auc) + "</text>";
+  }
+  s += "</svg>";
+  return s;
+}
+
+// ---------------------------------------------------------------- stage 1: the task
+function renderFast(){
+  var o = opts();
+  var base = { N: o.N, V: FIX.V, hid: FIX.hid, scale: FIX.scale, rho: o.rho, decay: o.decay,
+               seed: o.seed, d: o.d, K: o.K };
+  var task = makeTask({ N: o.N, V: FIX.V, rho: o.rho, decay: o.decay, scale: FIX.scale, seed: o.seed });
+  var floor = floorStudy(task);
+  B = { o: o, base: base, task: task, floor: floor };
+  var nP = params(initNet({ N: o.N, V: FIX.V, hid: FIX.hid, d: o.d, K: o.K }, 1)).length;
+
+  $("setup").innerHTML =
+    "<strong>" + task.N + "</strong> contexts, every one of them enumerated, over a vocabulary of " +
+    "<strong>" + task.V + "</strong> symbols. The true conditional is a softmax of a log-odds matrix " +
+    "built with rank <strong>" + task.R + "</strong> and singular values " + f2(FIX.scale) +
+    " &times; " + f2(o.decay) + "&#8319;, so its spectrum is a choice rather than a measurement. " +
+    "The model is a one-hot context lookup into <strong>" + FIX.hid + "</strong> hidden units, then " +
+    "<strong>" + o.K + "</strong> bottleneck head" + (o.K > 1 ? "s" : "") + " of width " +
+    "<strong>" + o.d + "</strong>, then a shared " + task.V + " &times; " + o.d +
+    " output matrix with no bias &mdash; <strong>" + num(nP) + "</strong> parameters, trained with " +
+    "Adam for " + num(FIX.steps) + " steps at a rate of " + FIX.lr + " on a cosine decay, best of " +
+    SEEDS.length + " starts with the spread reported.";
+
+  $("floor").innerHTML =
+    "<tr class='hl'><td>the teacher itself</td><td class='ok'>" + ex(floor.teacher) +
+      "</td><td>an identity, not a tolerance: KL(p*, p*)</td></tr>" +
+    "<tr><td>a context-ignoring marginal</td><td>" + f4(floor.marginal) +
+      "</td><td>exactly the mutual information I(c ; y)</td></tr>" +
+    "<tr><td>a uniform predictor</td><td>" + f4(floor.uniform) +
+      "</td><td>exactly log V &minus; H(y|c)</td></tr>" +
+    "<tr><td>conditional entropy H(y|c)</td><td>" + f4(task.H) +
+      "</td><td>the floor the loss itself sits on</td></tr>" +
+    "<tr><td>log V</td><td>" + f4(task.logV) +
+      "</td><td>the loss of knowing nothing at all</td></tr>";
+  $("floorNote").innerHTML =
+    "Every entry of the true conditional is strictly positive &mdash; the smallest is <strong>" +
+    ex2(task.minP) + "</strong> &mdash; so the excess is a finite mean KL for any model, and it is " +
+    "zero only for the true conditional. The two nulls are the sanity rails: nothing below should " +
+    "score worse than a predictor that ignores its input.";
+
+  var spec = "", k;
+  for (k = 0; k < task.s.length; k++){
+    spec += "<tr" + (k === task.R - 1 ? " class='hl'" : "") + "><td>" + (k + 1) + "</td><td>" +
+      f4(task.s[k]) + "</td><td>" + f4(task.sv[k]) + "</td><td>" + f3(tailOf(task, k + 1)) + "</td></tr>";
+  }
+  if (task.R < task.sv.length)
+    spec += "<tr><td>" + (task.R + 1) + "</td><td class='ok'>0.0e+0</td><td class='ok'>" +
+      ex(task.sv[task.R]) + "</td><td class='ok'>0.0e+0</td></tr>";
+  $("spec").innerHTML = spec;
+
+  var uniq = [];
+  for (k = 0; k < task.gauges.length; k++) if (uniq.indexOf(task.gauges[k]) < 0) uniq.push(task.gauges[k]);
+  $("rank").innerHTML =
+    "<tr class='hl'><td>rank of the log-odds matrix</td><td><strong>" + task.rankD +
+      "</strong></td><td>the width a head actually needs</td></tr>" +
+    "<tr><td>rank of log P</td><td>" + task.rankA + "</td><td>what the quoted rule is about</td></tr>" +
+    "<tr><td>distinct answers over all " + task.V + " gauges</td><td class='" + cls(uniq.length === 1) +
+      "'>" + uniq.length + "</td><td>" + (uniq.length === 1 ? "the reference symbol is free" :
+      "the reference symbol matters, which it must not") + "</td></tr>" +
+    "<tr><td>distance of 1&#7515; from rowspace(log P)</td><td class='" +
+      cls(task.onesDist < 1e-9) + "'>" + ex(task.onesDist) + "</td><td>" +
+      (task.onesDist < 1e-9 ? "in the row space, so the two ranks differ by one" :
+       "outside it, so the two ranks are equal") + "</td></tr>" +
+    "<tr><td>Frobenius norm of the log odds</td><td>" + f3(task.fro) +
+      "</td><td>the scale the tail is measured against</td></tr>";
+  $("rankNote").innerHTML =
+    "The two criteria are computed by different routes and asserted to agree: re-gauging the matrix " +
+    "against each of the " + task.V + " reference symbols in turn and taking the rank, and " +
+    "projecting the all-ones vector onto the row space of log P. " +
+    (task.onesDist < 1e-9
+      ? "Here the all-ones vector <em>is</em> in the row space (distance " + ex(task.onesDist) +
+        "), so rank(log P) = " + task.rankA + " is one more than the rank that decides. That extra " +
+        "one is the log partition function and it is not capacity anyone can spend."
+      : "<span class='red'>Here the all-ones vector is NOT in the row space</span> (distance " +
+        f4(task.onesDist) + "), so the two ranks are equal &mdash; and the quoted rule, which allows " +
+        "a width of rank(log P) &minus; 1 = " + (task.rankA - 1) + ", is allowing a width that " +
+        "cannot represent this task.");
+}
+
+// ---------------------------------------------------------------- stage 2: the gradients
+function renderGrads(){
+  var o = B.o, cfgA = { N: o.N, V: FIX.V, hid: FIX.hid, d: o.d, K: 1 };
+  var cfgB = { N: o.N, V: FIX.V, hid: FIX.hid, d: o.d, K: Math.max(2, o.K) };
+  var g1 = gradStudy(B.task, cfgA, 5), g2 = gradStudy(B.task, cfgB, 5);
+  var mid = mixtureIdentity(B.task, B.base, o.d, 5);
+  FAST = { grad: g1, gradMix: g2, mixId: mid };
+  var row = function(name, g){
+    return "<tr><td>" + name + "</td><td>" + num(g.nParams) + "</td><td class='" +
+      cls(g.lossGap === 0) + "'>" + ex(g.lossGap) + "</td><td class='" + cls(g.dual < 1e-11) + "'>" +
+      ex2(g.dual) + "</td><td>" + ex2(g.cd) + "</td><td>" + ex2(g.gmax) + "</td></tr>";
+  };
+  $("grad").innerHTML = row("one softmax, width " + o.d, g1) +
+                        row("a mixture of " + cfgB.K + ", width " + o.d, g2);
+  $("gradNote").innerHTML =
+    "Forward mode reproduces the loss bit for bit (<strong>" + ex(g1.lossGap) + "</strong>) and its " +
+    "gradient to <strong>" + ex2(g1.dual) + "</strong> of the largest gradient, while a central " +
+    "difference at 1e-5 manages " + ex2(g1.cd) + " &mdash; " +
+    orders(g1.cd / Math.max(g1.dual, 1e-300)) + " looser, which is the difference quotient's own " +
+    "floor rather than anything about the code. A mixture of one softmax equals its single component with " +
+    "a gap of <strong class='" + cls(mid === 0) + "'>" + ex(mid) + "</strong>, so every K row below " +
+    "is the same forward pass with a knob moved and not a second model.";
+}
+
+// ---------------------------------------------------------------- stage 3: the training
+function renderTrain(){
+  var o = B.o, opt = { lr: FIX.lr, steps: FIX.steps }, task = B.task;
+  var lad = ladderStudy(task, B.base, opt, SEEDS);
+  var ladGain = 0, bestGainD = 0, i;
+  for (i = 0; i < lad.length; i++) if (lad[i].d < task.R && lad[i].gain > ladGain){
+    ladGain = lad[i].gain; bestGainD = lad[i].d;
+  }
+  var cap = capacityStudy(task, B.base, opt, SEEDS, o.d);
+  var mix = mixtureStudy(task, B.base, opt, SEEDS, o.d, 4);
+  var price = priceProbe(B.base, mix.d);
+  var hole = holeStudy(B.base, opt, SEEDS);
+  var agree = agreeStudy(B.base, 40);
+  SLOW = { lad: lad, ladGain: ladGain, cap: cap, mix: mix, price: price, hole: hole, agree: agree };
+
+  var here = null;
+  $("lad").innerHTML = lad.map(function(r){
+    if (r.d === o.d) here = r;
+    return "<tr" + (r.d === o.d ? " class='hl'" : "") + "><td>" + r.d + "</td><td>" +
+      (r.sigma > 0 ? f3(r.sigma) : "<span class='ok'>0.0e+0</span>") + "</td><td>" +
+      (r.ey > 0 ? f3(r.ey) : "<span class='ok'>0.0e+0</span>") + "</td><td>" +
+      (r.trunc > 0 ? f4(r.trunc) : "<span class='ok'>0.0e+0</span>") + "</td><td>" +
+      (r.trunc > 0 ? f4(r.built) : ex(r.built)) + "</td><td class='ok'>" + ex(r.builtGap) +
+      "</td><td>" + ex(r.solveRes) + "</td><td>" + (r.trained > 1e-3 ? f4(r.trained) : ex2(r.trained)) +
+      "</td><td>" + ex(r.spread) + "</td><td class='" + cls(r.gain > 0) + "'>" +
+      (r.trunc > 0 ? pct(r.gain) : "&mdash;") + "</td></tr>";
+  }).join("");
+  var wide = lad.filter(function(r){ return r.d >= task.R; })[0];
+  $("ladNote").innerHTML =
+    "At every width the network built from the truncated SVD lands on the truncation itself &mdash; " +
+    "worst gap over the ladder <strong>" + ex(Math.max.apply(null, lad.map(function(r){ return r.builtGap; }))) +
+    "</strong>, from one linear solve whose residual never exceeds <strong>" +
+    ex(Math.max.apply(null, lad.map(function(r){ return r.solveRes; }))) + "</strong>. It is the " +
+    "optimum of a well-posed problem, written down rather than searched for. " +
+    "<span class='red'>And it is not the best model:</span> training beats it at every bottlenecked " +
+    "width, by " + pct(lad[0].gain) + " at width 1 and by <strong>" + pct(ladGain) +
+    "</strong> at width " + bestGainD + ". Nothing is wrong with Eckart-Young &mdash; it is optimal " +
+    "in the Frobenius norm of the logits, and a KL is not that norm: it will trade a large logit " +
+    "error on a symbol the truth has already ruled out for a small one where the mass is.";
+  $("ladSVG").innerHTML = ladChart(lad, task.R);
+
+  if (wide){
+    $("exact").innerHTML =
+      "<tr class='hl'><td>the truncated SVD, computed directly</td><td class='ok'>" + ex(wide.trunc) + "</td></tr>" +
+      "<tr><td>a real network built from it</td><td class='ok'>" + ex(wide.built) + "</td></tr>" +
+      "<tr><td>the same network, trained instead</td><td>" + ex2(wide.trained) + "</td></tr>" +
+      "<tr><td>the teacher</td><td class='ok'>" + ex(B.floor.teacher) + "</td></tr>";
+    $("exactNote").innerHTML =
+      "At width " + wide.d + " the task is representable, so the ceiling is provably not binding. " +
+      "The constructed network scores <strong>" + ex(wide.built) + "</strong> and the trained one " +
+      "<strong>" + ex2(wide.trained) + "</strong> &mdash; " +
+      orders(wide.trained / Math.max(Math.abs(wide.built), 1e-300)) + " of pure optimiser. When a " +
+      "model at an adequate width underperforms, the bottleneck is not the thing to blame.";
+  }
+
+  var best = Math.min.apply(null, cap.rows.map(function(r){ return r.excess; }));
+  var bestRow = cap.rows.filter(function(r){ return r.excess === best; })[0];
+  var bestHid = bestRow.hid, bestParams = bestRow.nParams;
+  $("cap").innerHTML = cap.rows.map(function(r){
+    return "<tr" + (r.excess === best ? " class='hl'" : "") + "><td>" + r.hid + "</td><td>" +
+      num(r.nParams) + "</td><td>" + f4(r.excess) + "</td><td>" + ex(r.spread) + "</td></tr>";
+  }).join("");
+  var last = cap.steps[cap.steps.length - 1];
+  $("capSteps").innerHTML = cap.steps.map(function(r){
+    return "<tr" + (r.steps === last.steps ? " class='hl'" : "") + "><td>" + num(r.steps) +
+      "</td><td>" + f4(r.excess) + "</td><td>" + mult(r.excess / last.excess) + "</td></tr>";
+  }).join("");
+  var flat = cap.steps[cap.steps.length - 1];
+  for (i = 0; i < cap.steps.length; i++) if (cap.steps[i].excess / last.excess < 1.05){ flat = cap.steps[i]; break; }
+  $("capNote").innerHTML =
+    "Both controls run at width <strong>" + cap.d + "</strong>, which is genuinely bottlenecked. " +
+    "<strong>" + f1(cap.paramRatio) + "&times;</strong> the parameters below the bottleneck does not " +
+    "lower the floor: the best of the five is one of the two <em>smallest</em> networks, at " +
+    bestHid + " hidden units and " + num(bestParams) + " parameters, and the largest at " +
+    num(cap.rows[cap.rows.length - 1].nParams) + " is " + mult(cap.widthRatio) + " worse &mdash; the optimiser " +
+    "having a harder time, not capacity paying off. <strong>" +
+    mult(last.steps / cap.steps[0].steps) + "</strong> the training budget moves it by " +
+    mult(cap.stepRatio) + ", and from " + num(flat.steps) + " steps on the curve is flat to " +
+    pct(flat.excess / last.excess - 1) + ". That is what makes this failure unpleasant: it " +
+    "produces a smooth, converged-looking run at a wrong answer, and every lever you would reach for " +
+    "reports that the model is fine.";
+
+  var rowsAll = mix.rows.map(function(r){ return r; }).concat(mix.width);
+  var bestMix = Math.min.apply(null, mix.rows.map(function(r){ return r.excess; }));
+  var mixWin = mix.rows.filter(function(r){ return r.excess === bestMix; })[0];
+  // the fair control is not the widest head, it is the CHEAPEST one that beats the best mixture
+  var beat = mix.width.filter(function(r){ return r.excess < bestMix; });
+  var widWin = beat.length ? beat.reduce(function(a, b){ return b.nParams < a.nParams ? b : a; })
+                           : mix.width.reduce(function(a, b){ return b.excess < a.excess ? b : a; });
+  $("mix").innerHTML = rowsAll.map(function(r){
+    var star = (r.kind === "width" && r === widWin) || (r.kind === "mixture" && r === mixWin);
+    return "<tr" + (star ? " class='hl'" : "") + "><td>" +
+      (r.kind === "mixture" ? "a mixture of softmaxes" : "one softmax, wider") + "</td><td>" +
+      r.K + "</td><td>" + r.d + "</td><td>" + r.cap + "</td><td>" + num(r.nParams) + "</td><td>" +
+      (r.excess > 1e-3 ? f4(r.excess) : ex2(r.excess)) + "</td></tr>";
+  }).join("");
+  $("mixNote").innerHTML =
+    "The mixture works: " + mixWin.K + " components at width " + mix.d + " are <strong>" +
+    mult(mix.rows[0].excess / bestMix) + "</strong> better than one softmax at the same width. " +
+    "<span class='red'>The control is the honest half:</span> the cheapest single softmax that " +
+    "beats that mixture is width " + widWin.d + " at " + num(widWin.nParams) + " parameters, " +
+    "<strong>" + num(Math.abs(mixWin.nParams - widWin.nParams)) + " " +
+    (widWin.nParams < mixWin.nParams ? "fewer" : "more") + "</strong> than the mixture, and it is a " +
+    "further " + mult(bestMix / Math.max(widWin.excess, 1e-300)) + " better. On this page more " +
+    "width " + (widWin.excess < bestMix ? "simply wins" : "does not win") + ", and the next table " +
+    "says why in parameters rather than in opinion.";
+
+  $("price").innerHTML =
+    "<tr><td>this page: V = " + FIX.V + ", hidden = " + FIX.hid + ", d = " + mix.d +
+      "</td><td>" + num(price.width) + "</td><td>" + f1(mix.perRankMix) + "</td><td class='" +
+      cls(mix.ratio > 1) + "'>" + (mix.ratio > 1 ? "mixing, by " + mult(mix.ratio) :
+      "widening, by " + mult(1 / mix.ratio)) + "</td></tr>" +
+    "<tr class='hl'><td>GPT-2 small: V = " + num(mix.big.V) + ", hidden = d = " + mix.big.d +
+      "</td><td>" + num(mix.bigWidth) + "</td><td>" + f1(mix.bigMix) + "</td><td class='ok'>mixing, by " +
+      mult(mix.bigRatio) + "</td></tr>";
+  $("priceNote").innerHTML =
+    "Both prices come from the page's own parameter lists rather than a formula: one more unit of " +
+    "width costs exactly <strong>" + num(price.width) + "</strong> parameters (V + hidden + 1) and " +
+    "one more component costs <strong>" + num(price.mixture) + "</strong> ((d + 1)(hidden + 1)) while " +
+    "buying up to d = " + mix.d + " more reachable rank. Here that is " + mult(mix.ratio) +
+    " &mdash; a wash, because the vocabulary is " + FIX.V + " symbols wide. Put GPT-2 small's shape " +
+    "into the same two expressions and it inverts by <strong>" + mult(mix.bigRatio) + "</strong>. " +
+    "The mixture is not a better model; it is a cheaper way to buy the same integer, and it only " +
+    "becomes worth buying that way when the output matrix is large enough to make width expensive.";
+
+  $("hole").innerHTML = hole.rows.map(function(r){
+    return "<tr" + (r.quotedOK && !r.trueOK ? " class='hl'" : "") + "><td>" + r.d + "</td><td class='" +
+      cls(r.quotedOK) + "'>" + (r.quotedOK ? "enough" : "not enough") + "</td><td class='" +
+      cls(r.trueOK) + "'>" + (r.trueOK ? "enough" : "not enough") + "</td><td>" +
+      (r.trunc > 0 ? f4(r.trunc) : "<span class='ok'>0.0e+0</span>") + "</td><td>" +
+      (r.trunc > 0 ? f4(r.built) : ex(r.built)) + "</td><td>" +
+      (r.trained > 1e-3 ? f4(r.trained) : ex2(r.trained)) + "</td></tr>";
+  }).join("");
+  var gap = hole.rows.filter(function(r){ return r.quotedOK && !r.trueOK; })[0];
+  var fine = hole.rows.filter(function(r){ return r.trueOK; })[0];
+  $("holeNote").innerHTML =
+    "A companion task with <strong>" + hole.task.N + "</strong> contexts and rank <strong>" +
+    hole.task.rankD + "</strong> &mdash; no more contexts than rank, so the all-ones vector sits " +
+    "<strong>" + f4(hole.onesDist) + "</strong> away from the row space of log P instead of 1e-15 " +
+    "away, and rank(log P) = " + hole.task.rankA + " equals the log-odds rank rather than exceeding " +
+    "it. The quoted rule therefore allows width <strong>" + hole.quoted + "</strong> and the truth " +
+    "needs <strong>" + hole.truth + "</strong>." +
+    (gap ? " At the width the quoted rule waves through, the best rank-" + gap.d + " logits still " +
+      "cost <strong>" + f4(gap.trunc) + "</strong> and training lands at " + ex2(gap.trained) +
+      (fine ? ", against " + ex2(fine.trained) + " one width up &mdash; " +
+        mult(gap.trained / Math.max(fine.trained, 1e-300)) + " apart, with the constructed model at " +
+        "that width scoring " + ex(fine.built) + "." : ".") : "");
+  $("agree").innerHTML =
+    "<tr class='hl'><td>rank(log P) = log-odds rank + 1</td><td class='ok'>" + agree.plus +
+      "</td><td>the quoted rule is right</td></tr>" +
+    "<tr><td>rank(log P) = log-odds rank</td><td class='" + cls(agree.same === 0) + "'>" + agree.same +
+      "</td><td>the quoted rule over-claims by one</td></tr>" +
+    "<tr><td>anything else</td><td class='" + cls(agree.other === 0) + "'>" + agree.other +
+      "</td><td>a rank-one shift cannot do it</td></tr>";
+  $("agreeNote").innerHTML =
+    "<span class='red'>The claim this page came to make and had to narrow:</span> the quoted " +
+    "criterion is necessary rather than sufficient, and on <strong>" + agree.plus + " of " + agree.n +
+    "</strong> randomly drawn tasks with more contexts than rank it is also correct, because the " +
+    "all-ones vector stays in the row space to within <strong>" + ex(agree.worstOnes) +
+    "</strong>. The hole is real, it is decidable, and you have to build the exception on purpose to " +
+    "fall into it &mdash; which is exactly why the loose statement survives in print.";
+}
+
+// ---------------------------------------------------------------- assertions
+function runChecks(){
+  if (!B || !FAST || !SLOW){
+    $("selftest").textContent = "the assertions run once the tables are built";
+    return;
+  }
+  var c = selfCheck({ task: B.task, floor: B.floor, grad: FAST.grad, gradMix: FAST.gradMix,
+                      mixId: FAST.mixId, lad: SLOW.lad, ladGain: SLOW.ladGain, cap: SLOW.cap,
+                      mix: SLOW.mix, price: SLOW.price, hole: SLOW.hole, agree: SLOW.agree,
+                      pool: POOL, base: B.base, mixD: SLOW.mix.d });
+  $("selftest").textContent =
+    "selfCheck()  " + num(c.pass) + " / " + num(c.total) + " checks passed" +
+    (c.lines.length ? "\n" + c.lines.join("\n") :
+     "\n\nthe true conditional normalises at every enumerated context and the reference column of\n" +
+     "the log odds is identically zero, so the target sits in the gauge the model lives in; the\n" +
+     "measured spectrum is the one it was built with and the tail below the chosen rank is\n" +
+     "numerically nothing; all " + B.task.V + " gauges return the same integer, and rank(log P) is that\n" +
+     "integer plus a row-space indicator, both directions; the teacher's own excess is exactly\n" +
+     "zero, a context-ignoring predictor scores exactly the mutual information and a uniform one\n" +
+     "exactly log V minus the conditional entropy; forward-mode duals reproduce the loss bit for\n" +
+     "bit and beat a central difference against the same backward pass, for the single softmax\n" +
+     "and for the mixture, and a mixture of one softmax is its component exactly; the dropped\n" +
+     "tail and the kept head add up to the whole at every width, the network built from the\n" +
+     "truncated SVD is the truncation to 1e-12 with a solve that closes, the truncation is\n" +
+     "monotone in width and exactly zero once the width suffices, and training beat it somewhere;\n" +
+     "capacity below the bottleneck and the training budget both leave the floor where it is; the\n" +
+     "price of a width and of a component are the ones the parameter lists actually charge, and\n" +
+     "the mixture gets relatively cheaper as the vocabulary grows; the constructed exception has\n" +
+     "the all-ones vector out of the row space and the two rules one apart, while forty random\n" +
+     "tasks have them agreeing." +
+     (POOL ? "" : "\n\n(the ranker assertions run once the pool has been trained)"));
+}
+
+// ---------------------------------------------------------------- wiring
+$("runPool").addEventListener("click", function(){
+  var btn = this;
+  btn.disabled = true;
+  $("poolStatus").textContent = "training the pool…";
+  setTimeout(function(){
+    var t0 = Date.now();
+    var pl = rankerStudy({ N: B.o.N, V: FIX.V, hid: FIX.hid, scale: FIX.scale, lr: FIX.lr, steps: 600,
+      decays: [0.45, 0.6, 0.75, 0.9], rhos: [4, 6, 8], ds: [2, 3, 4, 5, 6], seeds: [1, 2] });
+    POOL = pl;
+    $("auc").innerHTML = pl.scored.map(function(s, i){
+      var good = s.auc > 0.5;
+      return "<tr" + (i === 0 ? " class='hl'" : "") + "><td style='white-space:normal'>" + s.name +
+        "</td><td>" + s.train + "</td><td class='" + cls(good) + "'>" + f3(s.auc) +
+        "</td><td class='" + cls(good) + "'>" + (s.auc >= 0.5 ? "+" : "&minus;") +
+        f3(Math.abs(s.auc - 0.5)) + "</td><td class='" + cls(s.within > 0.5) + "'>" + f3(s.within) +
+        "</td><td>" + num(s.pairs) + "</td></tr>";
+    }).join("");
+    $("aucSVG").innerHTML = aucChart(pl.scored);
+    var rk = pl.scored[0], qt = pl.scored[1], tl = pl.scored[4], tk = pl.scored[5], qk = pl.scored[6];
+    $("aucNote").innerHTML =
+      "Over <strong>" + pl.n + "</strong> trained configurations spanning an excess range of " +
+      ex2(pl.lo) + " to " + f4(pl.hi) + ", the rank gap ranks final quality at <strong class='" +
+      cls(rk.auc > 0.5) + "'>" + f3(rk.auc) + "</strong> against a coin's 0.500. " +
+      "<span class='red'>The control is the sharp end:</span> hold the true rank and the width " +
+      "fixed and it scores exactly <strong class='bad'>" + f3(rk.within) + "</strong> over " +
+      num(rk.withinPairs) + " pairs &mdash; not noisy, <em>silent</em>, because inside one cell an " +
+      "integer criterion is a constant and ties every pair &mdash; while the outcomes it was asked " +
+      "to arbitrate still span <strong>" + mult(pl.worstCell) + "</strong> in the worst cell. The " +
+      "continuous quantity it discards, the tail of the spectrum below the cut, scores <strong " +
+      "class='ok'>" + f3(tl.auc) + "</strong> as a fraction of the whole and the KL of the " +
+      "truncation <strong class='ok'>" + f3(tk.auc) + "</strong>, neither of them needing a single " +
+      "training step, and twenty steps of training score " + f3(qk.auc) + " overall and " +
+      f3(qk.within) + " inside a cell. The quoted gap is not a second candidate at all: it takes " +
+      "the same value as the log-odds gap on every one of the " + pl.n + " configurations, which is " +
+      "why it scores an identical <strong>" + f3(qt.auc) + "</strong>.";
+    $("poolStatus").textContent = "done in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    btn.disabled = false;
+    runChecks();
+  }, 30);
+});
+
+function recompute(){
+  $("mainStatus").textContent = "enumerating the context space…";
+  setTimeout(function(){
+    var t0 = Date.now();
+    renderFast();
+    POOL = null;
+    $("auc").innerHTML = "";
+    $("aucSVG").innerHTML = "";
+    $("aucNote").innerHTML = "";
+    $("poolStatus").textContent = "not run yet for these settings";
+    $("mainStatus").textContent = "checking the gradients…";
+    setTimeout(function(){
+      renderGrads();
+      $("mainStatus").textContent = "training…";
+      setTimeout(function(){
+        renderTrain();
+        $("mainStatus").textContent = "rebuilt in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+        runChecks();
+      }, 20);
+    }, 20);
+  }, 20);
+}
+
+["sN", "sR", "sG", "sD", "sK", "sS"].forEach(function(id){
+  $(id).addEventListener("input", function(){
+    showOpts();
+    $("mainStatus").textContent = "release to recompute";
+  });
+  $(id).addEventListener("change", recompute);
+});
+
+var tabs = $("tabs").querySelectorAll("button");
+for (var ti = 0; ti < tabs.length; ti++){
+  tabs[ti].addEventListener("click", function(){
+    var name = this.getAttribute("data-tab");
+    for (var k = 0; k < tabs.length; k++) tabs[k].className = tabs[k] === this ? "tab-active" : "";
+    ["look", "understand", "build"].forEach(function(s){
+      $(s).className = (s === "look" ? "panel" : "panel light") + (s === name ? "" : " hidden");
+    });
+    window.scrollTo(0, 0);
+  });
+}
+
+showOpts();
+recompute();
+</script>
+</body>
+</html>
