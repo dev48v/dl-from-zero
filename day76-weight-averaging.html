@@ -1,0 +1,2164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero &middot; Day 76 &mdash; Weight averaging</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin:0; background:#f8fafc; color:#0f172a; line-height:1.55;
+         font-family:-apple-system, "Segoe UI", "Inter", Roboto, Helvetica, Arial, sans-serif; }
+  header { background:#fff; }
+  /* the tab bar sticks, not the header: a header taller than the viewport would pin forever */
+  .tabbar { background:#fff; border-bottom:1px solid #e2e8f0; position:sticky; top:0; z-index:20; }
+  .tabbar .wrap { padding-top:10px; padding-bottom:10px; }
+  .wrap { max-width:1120px; margin:0 auto; padding:16px; }
+  .narrow { max-width:780px; margin:0 auto; padding:16px; }
+  @media (min-width:768px){ .wrap, .narrow { padding:26px; } }
+  .kicker { font-size:11px; font-weight:800; letter-spacing:.18em; color:#be123c; margin:0 0 10px; }
+  h1 { font-size:17px; font-weight:800; line-height:1.55; margin:0; }
+  @media (min-width:768px){ h1 { font-size:19px; } }
+  h2 { font-size:23px; font-weight:800; margin:34px 0 10px; line-height:1.25; }
+  h3 { font-size:17px; font-weight:700; margin:26px 0 8px; }
+  p { margin:0 0 12px; }
+  em { font-style:italic; }
+  code { font-family:"SF Mono", Consolas, "Liberation Mono", monospace; font-size:12.5px;
+         background:#eef2f7; padding:1px 4px; border-radius:4px; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px 14px; border-radius:8px; font-size:12px;
+        overflow-x:auto; line-height:1.5;
+        font-family:"SF Mono", Consolas, "Liberation Mono", monospace; }
+  pre code { background:none; padding:0; color:inherit; font-size:inherit; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; }
+  .tabs button { border:0; background:#f1f5f9; color:#0f172a; padding:9px 18px; border-radius:9px;
+                 font-size:13.5px; font-weight:650; cursor:pointer; font-family:inherit; }
+  .tabs button.tab-active { background:#0f172a; color:#fff; }
+  .panel { background:#f1f5f9; }
+  .panel.light { background:#f8fafc; }
+  .hidden { display:none; }
+  .stack > * + * { margin-top:20px; }
+  .card { background:#fff; border-radius:16px; padding:18px;
+          box-shadow:0 1px 3px rgba(15,23,42,.10), 0 1px 2px rgba(15,23,42,.06); }
+  .cap { font-size:11px; font-weight:800; letter-spacing:.12em; color:#64748b; margin:0 0 10px; }
+  .lede { font-size:13.5px; color:#475569; margin:0 0 12px; }
+  .note { font-size:12px; color:#64748b; margin:10px 0 0; }
+  .grid2 { display:grid; gap:20px; }
+  @media (min-width:1000px){ .grid2 { grid-template-columns:1fr 1fr; } }
+  .ctrls { display:grid; gap:12px 22px; grid-template-columns:1fr; }
+  @media (min-width:640px){ .ctrls { grid-template-columns:1fr 1fr; } }
+  @media (min-width:1000px){ .ctrls { grid-template-columns:repeat(3,1fr); } }
+  label.ctl { font-size:13px; display:block; }
+  label.ctl b { float:right; font-variant-numeric:tabular-nums; }
+  input[type=range] { width:100%; margin:4px 0 0; }
+  .scroll { overflow-x:auto; }
+  table.num { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
+  table.num th, table.num td { padding:4px 9px; text-align:right; white-space:nowrap; }
+  table.num th { font-size:10.5px; letter-spacing:.05em; color:#64748b; font-weight:800; }
+  table.num td { font-size:12.5px; border-top:1px solid #e2e8f0; }
+  table.num th:first-child, table.num td:first-child { text-align:left; white-space:normal;
+    min-width:112px; }
+  table.num tr.hl td { background:#f1f5f9; }
+  .ok { color:#15803d; font-weight:800; }
+  .bad { color:#b91c1c; font-weight:800; }
+  .lg { font-size:10px; color:#64748b; font-weight:400; letter-spacing:0; }
+  button.run { border:0; background:#0f172a; color:#fff; padding:9px 17px; border-radius:9px;
+               font-size:13px; font-weight:650; cursor:pointer; font-family:inherit; }
+  button.run:disabled { opacity:.5; cursor:default; }
+  .runbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  .status { font-size:12px; color:#64748b; }
+  svg { max-width:100%; height:auto; display:block; }
+  ul { margin:0 0 12px; padding-left:22px; }
+  li { margin:0 0 6px; }
+  .red { color:#b91c1c; font-weight:800; }
+  .mono { font-family:"SF Mono", Consolas, "Liberation Mono", monospace; font-size:12px;
+          word-break:break-all; color:#334155; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="kicker">DEEPLEARNINGFROMZERO &middot; DAY 76</p>
+    <h1 id="headline">
+      &#129513; Weight averaging &mdash; averaging the <em>weights</em> of several networks and
+      averaging their <em>predictions</em> are two different operations, and only one of them is an
+      operation on functions. The second is a theorem: under a squared loss the mean member's risk
+      splits exactly into the ensemble's risk plus the spread of the members' predictions, so
+      averaging predictions can never cost more than the mean member &mdash; checked here as an
+      equation, closing to <strong>2.4e-17</strong>. The first has no such guarantee, and the reason
+      is that a network's weights are one arbitrary representative of a whole orbit computing the
+      identical map. The task is a teacher network over an <em>enumerated</em> input space of
+      <strong>64</strong> points, <strong>48</strong> of them shown to a <strong>41</strong>-parameter
+      student with a fixed per-point offset, so the score is an exact population risk and the floor
+      is a computation: the teacher scores exactly <strong>0</strong>.
+      <span class="red">THE headline:</span> permuting the five hidden units and flipping their signs
+      gives <strong>3,840</strong> weight vectors that compute the same function to
+      <strong>4.4e-16</strong> &mdash; and averaging the network with each of them gives 3,840
+      different models spanning <strong>0.0249</strong> to <strong>1.9098</strong>, a factor of
+      <strong>77</strong>, of which exactly <em>one</em> returns the network you started with. So
+      &ldquo;average the two models&rdquo; is not a question you can ask about two models.
+      <span class="red">And the average of a network with an equivalent copy of itself is literally a
+      pruned copy of it:</span> flip every sign of a unit and the two copies cancel to exactly zero,
+      which is why deleting the right <strong>4</strong> of <strong>5</strong> units scores
+      <strong>2.94&times;</strong> better than the network they came from.
+      <span class="red">What the two averages differ BY is curvature, and nothing else:</span> shrink
+      the deviations by a half and the gap between them falls by <strong>4.005</strong>, then
+      4.003, 4.001, 4.001 &mdash; and <strong>4</strong> to within <strong>2e-9</strong> in the
+      bilinear twin, where the discrepancy has a closed form, while a twin that is affine in what is
+      being averaged has no gap at all, to <strong>7.3e-16</strong>.
+      <span class="red">Averaging the iterates of one run needs a floor, and a realizable task has
+      none:</span> at a solution that interpolates the training set every minibatch gradient is
+      exactly <strong>0.0e+0</strong> over all <strong>6</strong> minibatches, so the noise switches
+      itself off and averaging the tail is <strong>1.71&times;</strong> <em>worse</em> than just
+      keeping the last iterate. Give it an offset and the same recipe is <strong>1.11&times;</strong>
+      better &mdash; while its <em>training</em> loss is <strong>1.34&times;</strong> worse.
+      <span class="red">Two runs are the hard case and nothing you can compute predicts it:</span>
+      the midpoint of two independent solutions costs <strong>3.57&times;</strong> the better of them
+      and the best of 32 pairs still costs <strong>1.25&times;</strong>, while over the pool the best
+      candidate scores <strong>AUC 0.677</strong> against a coin's 0.500 and the weight distance
+      everyone reaches for scores <strong>0.661</strong>, falling to <strong>0.589</strong> inside one
+      learning rate. <span class="red">Aligning first helps and the usual recipe finds the wrong
+      element:</span> minimising the weight distance over all 3,840 gives a midpoint of
+      <strong>0.1219</strong>, while the element that minimises the <em>risk</em> gives
+      <strong>0.0373</strong> &mdash; <strong>3.27&times;</strong> better, below both endpoints, with
+      a barrier of exactly <strong>0</strong> &mdash; and the distance ranks those 3,840 elements at
+      <strong>0.661</strong>. Gradients checked at initialisation against forward-mode dual numbers
+      to <strong>1.4e-16</strong> of the largest gradient, where a central difference manages 1.9e-11.
+      <strong>148</strong> in-page assertions. Pure vanilla JavaScript, one file, no build step.
+    </h1>
+  </div>
+</header>
+
+<div class="tabbar">
+  <div class="wrap">
+    <div class="tabs" id="tabs">
+      <button data-tab="look" class="tab-active">&#128300; MEASURE</button>
+      <button data-tab="understand">&#129504; UNDERSTAND</button>
+      <button data-tab="build">&#128296; BUILD</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ MEASURE -->
+<section id="look" class="panel">
+  <div class="wrap stack">
+
+    <div class="card">
+      <p class="cap">THE SETTING</p>
+      <div class="ctrls">
+        <label class="ctl">training points <b id="vN">48</b>
+          <input type="range" id="sN" min="0" max="4" step="1" value="1" /></label>
+        <label class="ctl">hidden units h <b id="vH">5</b>
+          <input type="range" id="sH" min="3" max="5" step="1" value="5" /></label>
+        <label class="ctl">learning rate <b id="vL">0.10</b>
+          <input type="range" id="sL" min="0" max="4" step="1" value="2" /></label>
+        <label class="ctl">label offset <b id="vZ">0.35</b>
+          <input type="range" id="sZ" min="0" max="4" step="1" value="3" /></label>
+        <label class="ctl">SGD steps <b id="vT">3000</b>
+          <input type="range" id="sT" min="0" max="3" step="1" value="2" /></label>
+        <label class="ctl">seed <b id="vS">1</b>
+          <input type="range" id="sS" min="1" max="6" step="1" value="1" /></label>
+      </div>
+      <p class="note" id="setup"></p>
+      <p class="note"><span class="status" id="mainStatus"></span></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE FLOOR AND THE NULLS</p>
+      <p class="lede">The input space is small enough to enumerate and the true function is a network
+        the student can hold exactly, so the score is an <em>exact</em> expectation over the whole
+        space rather than a held-out estimate. Every number below is a computation, and three of them
+        are what a model that has learned nothing would score.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>quantity</th><th>value</th><th>what it is</th>
+        </tr></thead><tbody id="floor"></tbody></table>
+      </div>
+      <p class="note" id="floorNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">1 &middot; THE GRADIENTS, CHECKED WITHOUT A STEP SIZE</p>
+      <p class="lede">Everything trained below rests on a hand-written backward pass, so it is checked
+        against forward-mode differentiation over dual numbers &mdash; value and derivative carried
+        side by side, one seed per parameter, no step size anywhere, and the opposite traversal to a
+        backward pass. At <em>initialisation</em>: at convergence the true gradient has decayed to
+        nothing and a difference test measures its own floor instead of the code.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>model</th><th>parameters</th><th>loss, forward vs reverse</th>
+          <th>gradient vs forward mode</th><th>relative to the largest</th>
+          <th>gradient vs a central difference</th><th>largest |g|</th>
+        </tr></thead><tbody id="grad"></tbody></table>
+      </div>
+      <p class="note" id="gradNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">2 &middot; THE SAME FUNCTION, THOUSANDS OF WAYS</p>
+      <p class="lede">Permute the hidden units and the network computes the same map. Flip the sign of
+        one unit's incoming <em>and</em> outgoing weights and, because <code>tanh</code> is odd, it
+        computes the same map again. So <code>h!&#8901;2&#7476;</code> weight vectors are the same
+        function &mdash; and the average of the trained network with each of them is a different
+        model. The identity element is the only one that gives the network back, and it does so to
+        the last bit, because <code>(p + p) / 2</code> is <code>p</code>.</p>
+      <div class="grid2">
+        <div>
+          <div class="scroll">
+            <table class="num"><thead><tr>
+              <th>group</th><th>size</th><th>largest change to the function</th>
+              <th>best average</th><th>median</th><th>worst</th><th>worse than the network</th>
+            </tr></thead><tbody id="orbit"></tbody></table>
+          </div>
+          <p class="note" id="orbitNote"></p>
+        </div>
+        <div>
+          <p class="cap">WHERE THE 3,840 AVERAGES LAND</p>
+          <div id="orbitSVG"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="cap">3 &middot; AVERAGING WITH A SIGN FLIP IS DELETING UNITS</p>
+      <p class="lede">Take the sign-flipped copy of a unit and average: <code>(w + (&minus;w))/2</code>
+        is exactly zero, so every flipped unit's incoming and outgoing weights vanish. The average of
+        two networks computing the identical function is the same network with those units
+        <em>deleted</em> &mdash; which settles, in one line, whether averaging equivalent models can
+        be a no-op. Delete all of them and what is left is a constant, and a constant cannot beat the
+        best constant there is.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>units flipped</th><th>sign patterns</th><th>units actually zeroed</th>
+          <th>best risk</th><th>worst risk</th><th>the best, against the full network</th>
+        </tr></thead><tbody id="prune"></tbody></table>
+      </div>
+      <p class="note" id="pruneNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">4 &middot; WHAT THE TWO AVERAGES DIFFER BY</p>
+      <p class="lede">Scatter parameter vectors around a centre with deviations that sum to zero, so
+        the <em>weight</em> average is that centre at every scale, then shrink the deviations by a
+        half. The weight average does not move. The prediction average moves by the curvature term
+        alone, which is second order &mdash; so the gap between them has to fall by four. That is the
+        whole relationship: the two averages agree to <em>first</em> order and differ by curvature,
+        which is why a tight trajectory can be averaged either way and two independent solutions
+        cannot.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>deviation scale</th><th>the network</th><th>ratio to the row above</th>
+          <th>the bilinear twin <span class="lg">tanh removed</span></th><th>ratio</th>
+          <th>the affine twin <span class="lg">first layer frozen</span></th>
+        </tr></thead><tbody id="order"></tbody></table>
+      </div>
+      <p class="note" id="orderNote"></p>
+      <div class="scroll" style="margin-top:14px">
+        <table class="num"><thead><tr>
+          <th>three networks trained with the first layer frozen</th><th>value</th><th></th>
+        </tr></thead><tbody id="affine"></tbody></table>
+      </div>
+      <p class="note" id="affineNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">5 &middot; ONE TRAJECTORY</p>
+      <p class="lede">Constant-rate minibatch SGD, snapshots taken over the second half of the run,
+        then the two averages of the same snapshots. The decomposition on the right is an
+        <em>equation</em>, not a bound: the mean member's risk is the ensemble's risk plus the spread
+        of the members, exactly, which is why averaging predictions has a guarantee and averaging
+        weights does not.</p>
+      <div class="grid2">
+        <div>
+          <div class="scroll">
+            <table class="num"><thead><tr>
+              <th>what you keep</th><th>population risk</th><th>against the last iterate</th>
+              <th>training loss</th>
+            </tr></thead><tbody id="traj"></tbody></table>
+          </div>
+          <p class="note" id="trajNote"></p>
+        </div>
+        <div>
+          <div class="scroll">
+            <table class="num"><thead><tr>
+              <th>the decomposition</th><th>value</th>
+            </tr></thead><tbody id="amb"></tbody></table>
+          </div>
+          <p class="cap" style="margin-top:14px">THE RUN</p>
+          <div id="curveSVG"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="cap">6 &middot; TWO RUNS, AND THE ELEMENT YOU ALIGN TO</p>
+      <p class="lede">Two independent runs on the same task. Interpolate between them and the risk
+        rises above the straight line joining their scores &mdash; the barrier. Then look for a
+        member of the second run's orbit that averages better. The standard recipe minimises the
+        <em>weight distance</em>; the page also searches all <span id="tried">3,840</span> elements
+        for the one that minimises the <em>risk</em>, so the proxy can be scored against the target
+        instead of trusted.</p>
+      <div class="grid2">
+        <div>
+          <div class="scroll">
+            <table class="num"><thead><tr>
+              <th>what is averaged</th><th>distance</th><th>midpoint risk</th><th>barrier</th>
+              <th>against the better run</th>
+            </tr></thead><tbody id="two"></tbody></table>
+          </div>
+          <p class="note" id="twoNote"></p>
+        </div>
+        <div>
+          <p class="cap">THE PATH FROM ONE RUN TO THE OTHER</p>
+          <div id="pathSVG"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="cap">7 &middot; WHEN AVERAGING THE ITERATES HAS ANYTHING TO DO</p>
+      <p class="lede">The recipe assumes the iterates are hovering rather than still descending. On a
+        <em>realizable</em> task they are not, and the reason is an identity rather than a trend: at a
+        solution that interpolates the training set every residual is zero, so every minibatch
+        gradient is exactly zero and the noise switches itself off. The two sweeps are the controls
+        &mdash; turn the rate down, or the offset off, and the gain goes away.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>the true function, on this training set</th><th>training loss</th>
+          <th>largest |g| over a minibatch</th><th>largest |g| over the whole set</th>
+          <th>minibatches</th>
+        </tr></thead><tbody id="probe"></tbody></table>
+      </div>
+      <p class="note" id="probeNote"></p>
+      <div class="grid2" style="margin-top:16px">
+        <div>
+          <p class="cap">THE LEARNING RATE</p>
+          <div class="scroll">
+            <table class="num"><thead><tr>
+              <th>rate</th><th>spread of the iterates</th><th>disagreement share</th>
+              <th>last iterate</th><th>the average</th><th>gain</th>
+            </tr></thead><tbody id="rates"></tbody></table>
+          </div>
+          <p class="note" id="ratesNote"></p>
+        </div>
+        <div>
+          <p class="cap">THE LABEL OFFSET</p>
+          <div class="scroll">
+            <table class="num"><thead><tr>
+              <th>offset</th><th>training floor</th><th>spread</th><th>last iterate</th>
+              <th>the average</th><th>gain</th>
+            </tr></thead><tbody id="noises"></tbody></table>
+          </div>
+          <p class="note" id="noisesNote"></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="cap">8 &middot; DOES ANYTHING PREDICT WHAT AVERAGING WILL COST?</p>
+      <p class="lede">Train a pool of pairs that differ in the learning rate and the seeds, then ask
+        each candidate to rank them by what averaging the pair actually costs. A coin scores 0.500.
+        The control holds the learning rate fixed, so a candidate has to arbitrate only the
+        comparisons it cannot see coming from the obvious axis.</p>
+      <div class="runbar">
+        <button class="run" id="runPool">train the pool</button>
+        <span class="status" id="poolStatus">not run yet</span>
+      </div>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>candidate</th><th>AUC</th><th>vs a coin</th>
+          <th>within one rate <span class="lg">the control</span></th>
+          <th>vs the ALIGNED average <span class="lg">the other question</span></th><th>pairs</th>
+        </tr></thead><tbody id="auc"></tbody></table>
+      </div>
+      <div id="aucSVG" style="margin-top:12px"></div>
+      <p class="note" id="aucNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE PAGE CHECKING ITSELF</p>
+      <pre id="selftest">running&hellip;</pre>
+    </div>
+
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ UNDERSTAND -->
+<section id="understand" class="panel light hidden">
+  <div class="narrow">
+
+    <h2>Two operations that share a word</h2>
+    <p>&ldquo;Averaging models&rdquo; names two things. One takes <code>M</code> networks, runs all of
+      them, and averages the numbers that come out. The other takes the same <code>M</code> networks,
+      averages their weight vectors, and runs the single network that results. The first costs
+      <code>M</code> forward passes forever; the second costs one. That is the whole reason anybody
+      does the second one, and it is why stochastic weight averaging, model soups and exponential
+      moving averages all exist.</p>
+    <p>The first has a guarantee. Under a squared loss, for any <code>M</code> predictors and any
+      target, the mean member's risk splits exactly:</p>
+    <pre><code>mean_m risk(f_m)  =  risk(mean_m f_m)  +  mean_m mean_x (f_m(x) - fbar(x))^2</code></pre>
+    <p>The last term is a mean of squares, so it cannot be negative, so the ensemble is never worse
+      than the average member and is better by exactly the spread. That is the ambiguity
+      decomposition, and the MEASURE tab checks it as an equation &mdash; it closes to 2.4e-17, which
+      is rounding and not agreement.</p>
+    <p>The second has no guarantee at all, and the reason is not that it is a harder theorem. It is
+      that averaging weights is not an operation on functions.</p>
+
+    <h2>The average of two models is not a function of the two models</h2>
+    <p>Take a trained network and swap two hidden units, carrying their incoming weights, their bias
+      and their outgoing weight along together. Nothing about the computed function changes &mdash;
+      the MEASURE tab checks that the outputs move by at most 4.4e-16, which is the summation order
+      and nothing else. Take a unit and negate its incoming weights, its bias and its outgoing
+      weight. Because <code>tanh</code> is odd, that too changes nothing.</p>
+    <p>With five hidden units that is <code>5! &#8901; 2&#8309; = 3,840</code> weight vectors, all of
+      them the same function. Average the network with each of them and you get 3,840
+      <em>different</em> models, spanning a factor of 77 in risk. Exactly one of them &mdash; the
+      identity &mdash; hands the network back, and it does so bit for bit, because <code>(p+p)/2</code>
+      is <code>p</code>.</p>
+    <p>So the question &ldquo;what do you get if you average these two models?&rdquo; has no answer.
+      It depends on which representative of each orbit you were handed, and training hands you one at
+      random. Everything else on this page is a consequence of that.</p>
+
+    <h2>The sharpest case: averaging is pruning</h2>
+    <p>Flip every sign of one unit and average with the original. The incoming weights are
+      <code>(w + (-w))/2 = 0</code>, exactly, and so is the outgoing weight. The unit is gone. So the
+      average of a network with an equivalent copy of itself is that network with a subset of its
+      units deleted &mdash; and on the default setting, deleting the right four of the five units
+      scores 2.94&times; better than the network they came from, because that network is overfitting
+      its 48 training points with 41 parameters. Delete all five and what is left is a constant
+      function, which scores worse than the best constant, as it must.</p>
+
+    <h2>What the two averages differ by is curvature</h2>
+    <p>If the model is <em>affine</em> in the parameters being averaged, the two operations are the
+      same operation: <code>f(mean w) = mean f(w)</code> by linearity. The MEASURE tab runs that as a
+      control &mdash; freeze the first layer, train only the output block, and the two averages agree
+      pointwise to under 1e-15, with the same risk to the last few bits.</p>
+    <p>Away from that, the difference is the second-order term and nothing else. Scatter parameter
+      vectors around a centre with deviations summing to zero and shrink them by a half: the weight
+      average does not move, and the gap between the averages falls by 4.005, 4.003, 4.001, 4.001. In
+      the twin with the nonlinearity removed &mdash; where the model is exactly bilinear in its two
+      blocks &mdash; the ratio is 4 to within 2e-9 and the discrepancy has a closed form,
+      <code>-&frac14; &#916;w&#8322; &#8901; (&#916;V x)</code>, which the page checks to under 2e-15.</p>
+    <p>That is the honest version of &ldquo;weight averaging approximates ensembling&rdquo;. It does,
+      to first order, and the error is the curvature times the square of how far apart the members
+      are. Iterates from one run are close together, so it is a good approximation. Two independent
+      solutions are not, so it is not.</p>
+
+    <h2>Averaging iterates needs a floor, and a realizable task has none</h2>
+    <p>SWA's premise is that the run has stopped improving and is hovering inside a floor, so the
+      iterates are samples around a centre worth finding. Whether that is true is decided by
+      something you can check without training anything. At a solution that interpolates the training
+      set every residual is zero, so every minibatch gradient is <em>exactly</em> zero &mdash; the
+      page reports 0.0e+0 across all six minibatches, not something small. SGD's noise is the
+      disagreement between minibatch gradients; if they are all zero there is no noise, no hovering,
+      and no floor. The run simply keeps descending more and more slowly, and averaging the tail can
+      only average in the past.</p>
+    <p>That is what the offset sweep measures. With no offset the task is realizable and averaging is
+      1.71&times; <em>worse</em> than keeping the last iterate. Put an offset on the labels, so the
+      student can no longer interpolate, and the same recipe becomes 1.11&times; better. The rate
+      sweep is the same control on the other axis: at the smallest rate the iterates barely spread,
+      the disagreement share is 11.4&times; smaller than at the largest, and averaging loses.</p>
+    <p>One number on that card is worth staring at. The averaged network has a <em>worse</em> training
+      loss than the last iterate, by 1.34&times;, and a better population risk, by 1.11&times;. If you
+      were watching the loss you were optimising, averaging looks like a mistake.</p>
+
+    <h2>Two runs, and the element you align to</h2>
+    <p>Between two independently trained networks there is a barrier: the midpoint costs 3.57&times;
+      the better of them here. Aligning first is the known fix, and the standard recipe picks the
+      group element minimising the distance between the weight vectors. The page runs that
+      exhaustively over all 3,840 elements &mdash; and then also runs the search the recipe is a proxy
+      for, minimising the risk of the average.</p>
+    <p>They are not the same element. Minimising the distance gives a midpoint of 0.1219, worse than
+      either endpoint. Minimising the risk gives 0.0373, better than both, with a barrier of exactly
+      zero &mdash; the two runs really are linearly connected once you pick the right representative,
+      and the usual recipe does not pick it. Scored as a ranker over those 3,840 elements the distance
+      manages 0.661 against a coin's 0.500: better than nothing, and a long way from the thing it
+      stands in for.</p>
+
+    <h2>And nothing predicts it in advance</h2>
+    <p>Over a pool of 32 pairs the best candidate for &ldquo;what will averaging these two cost?&rdquo;
+      scores AUC 0.677 against a coin's 0.500, and inside one learning rate it falls to 0.563. The
+      distance between the weight vectors &mdash; the number everyone reaches for &mdash; scores 0.661
+      and 0.589. The same distance after aligning scores 0.581 overall and 0.429 within a cell, which
+      is <em>below</em> the coin, because aligning changes which question is being asked: against the
+      aligned average, that same number scores 0.748.</p>
+    <p>Meanwhile averaging the weights of two independent runs never beat the better member, on 0 of
+      32 pairs, costing between 1.25&times; and 8.90&times;. Averaging their predictions cost no more
+      than the mean member on 32 of 32 &mdash; it cannot, that is the theorem &mdash; but beat the
+      <em>better</em> member on only 21 of 32, which is the distinction the guarantee is usually
+      quoted past.</p>
+
+    <h2>What to take from it</h2>
+    <ul>
+      <li>Averaging predictions is safe by a theorem and costs <code>M</code> forward passes. Averaging
+        weights is free at inference and safe by nothing.</li>
+      <li>They agree to first order. The error is curvature times the square of the spread, so the
+        substitution is sound for iterates of one run and unsound for separate runs.</li>
+      <li>Before averaging a tail, check whether the run has a floor. If the model can interpolate its
+        training set, the minibatch gradients go to exactly zero and there is nothing to average.</li>
+      <li>Watch the risk you care about, not the loss you are optimising: here averaging made the
+        training loss 1.34&times; worse and the population risk 1.11&times; better.</li>
+      <li>If you align two runs before averaging, remember the distance is a proxy. Here it found an
+        element 3.27&times; worse than the one an exhaustive search over the same group found.</li>
+    </ul>
+
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ BUILD -->
+<section id="build" class="panel light hidden">
+  <div class="narrow">
+
+    <h2>The whole thing, from scratch</h2>
+    <p>One file, no libraries, no build step. A two-layer <code>tanh</code> network with a hand-written
+      forward and backward pass, a deterministic generator, and an input space small enough to
+      enumerate so that nothing here is estimated.</p>
+
+    <h3>1 &middot; One flat parameter vector</h3>
+    <p>Every derivative, every average and every symmetry below indexes the same array, which is what
+      makes &ldquo;average the weights&rdquo; a one-line operation and the orbit search a loop.</p>
+<pre><code>function psize(h, d){ return h * d + h + h + 1; }   // [ W1 | b1 | w2 | b2 ]
+function iW1(h, d, j, k){ return j * d + k; }
+function ib1(h, d, j){ return h * d + j; }
+function iw2(h, d, j){ return h * d + h + j; }
+function ib2(h, d){ return h * d + h + h; }</code></pre>
+
+    <h3>2 &middot; Forward, with the nonlinearity in exactly one place</h3>
+    <p>Putting <code>act</code> and its derivative in one function each means the linear twin of the
+      whole engine is a two-token edit rather than a second implementation to keep in sync.</p>
+<pre><code>function act(z, lin){ return lin ? z : Math.tanh(z); }
+function dact(a, lin){ return lin ? 1 : 1 - a * a; }
+
+function forwardOne(p, h, d, x, lin){
+  var a = [], j, k, y = p[ib2(h, d)];
+  for (j = 0; j &lt; h; j++){
+    var z = p[ib1(h, d, j)];
+    for (k = 0; k &lt; d; k++) z += p[iW1(h, d, j, k)] * x[k];
+    a[j] = act(z, lin);
+  }
+  for (j = 0; j &lt; h; j++) y += p[iw2(h, d, j)] * a[j];
+  return { y: y, a: a };
+}</code></pre>
+
+    <h3>3 &middot; Backward, by hand</h3>
+<pre><code>var gy = 2 * e / M;                       // d(mean square error)/dy
+g[ib2(h, d)] += gy;
+for (j = 0; j &lt; h; j++){
+  g[iw2(h, d, j)] += gy * f.a[j];
+  var gz = gy * p[iw2(h, d, j)] * dact(f.a[j], lin);
+  g[ib1(h, d, j)] += gz;
+  for (k = 0; k &lt; d; k++) g[iW1(h, d, j, k)] += gz * x[k];
+}</code></pre>
+
+    <h3>4 &middot; Checked against forward mode, not a difference</h3>
+    <p>Dual numbers carry the value and one derivative together. One pass per parameter is expensive
+      and exact: no step size, nothing to tune, and the opposite traversal to the backward pass. The
+      check runs at <em>initialisation</em> &mdash; at convergence the true gradient has decayed to
+      nothing and a difference test starts measuring its own floor rather than the code.</p>
+<pre><code>var va = act(vz, lin), da = dact(va, lin) * dz;   // value and derivative, side by side
+vy += vw * va;
+dy += vw * da + dw * va;
+...
+dloss += 2 * e * dy;</code></pre>
+
+    <h3>5 &middot; The two averages</h3>
+<pre><code>function meanVec(list){                    // average the PARAMETERS, then run ONCE
+  var P = list[0].length, out = [], i, m;
+  for (i = 0; i &lt; P; i++){
+    var s = 0;
+    for (m = 0; m &lt; list.length; m++) s += list[m][i];
+    out[i] = s / list.length;
+  }
+  return out;
+}
+function meanPred(preds){                   // run ALL of them, then average the outputs
+  var N = preds[0].length, out = [], i, m;
+  for (i = 0; i &lt; N; i++){
+    var s = 0;
+    for (m = 0; m &lt; preds.length; m++) s += preds[m][i];
+    out[i] = s / preds.length;
+  }
+  return out;
+}</code></pre>
+    <p>And the decomposition that separates them, computed as an equation so it can be checked as
+      one:</p>
+<pre><code>for (m = 0; m &lt; M; m++) mean += mse(preds[m], T);
+mean /= M;
+for (m = 0; m &lt; M; m++) for (i = 0; i &lt; N; i++){
+  var dv = preds[m][i] - avg[i];
+  amb += dv * dv;                          // the spread of the members
+}
+amb /= (M * N);
+var ens = mse(avg, T);                     // and mean - ens - amb must be rounding</code></pre>
+
+    <h3>6 &middot; The symmetry group</h3>
+    <p>A permutation of the units and a sign flip per unit. Both are exact symmetries of the function,
+      and neither is a symmetry of the average.</p>
+<pre><code>function applySym(p, h, d, perm, signs){
+  var q = p.slice(), j, k;
+  for (j = 0; j &lt; h; j++){
+    var src = perm[j], sg = signs ? signs[j] : 1;
+    for (k = 0; k &lt; d; k++) q[iW1(h, d, j, k)] = sg * p[iW1(h, d, src, k)];
+    q[ib1(h, d, j)] = sg * p[ib1(h, d, src)];
+    q[iw2(h, d, j)] = sg * p[iw2(h, d, src)];
+  }
+  q[ib2(h, d)] = p[ib2(h, d)];             // the output bias is outside the group
+  return q;
+}</code></pre>
+    <p>With <code>h = 5</code> the whole group is 3,840 elements, so the best alignment is
+      <em>found</em> rather than approximated by a matching heuristic &mdash; and the same loop can be
+      run against the risk instead of the distance, which is how the page prices the proxy.</p>
+
+    <h3>7 &middot; The one check that decides whether averaging a tail is worth doing</h3>
+    <p>No training involved. Put the true function into the student, and look at the minibatch
+      gradients.</p>
+<pre><code>for (b = 0; b + batch &lt;= n; b += batch){
+  var idx = [];
+  for (i = 0; i &lt; batch; i++) idx.push(b + i);
+  gmax = Math.max(gmax, maxAbs(gradOf(p, h, d, task.Xtr, task.Ttr, false, idx).g));
+}</code></pre>
+    <p>If that comes back exactly zero, the model can interpolate, the noise switches itself off, and
+      there is no floor for the iterates to hover in.</p>
+
+    <h3>8 &middot; What the page asserts</h3>
+    <p>The self-check is written as identities wherever an identity exists, and as a <em>derived</em>
+      rounding bound &mdash; a multiple of the machine epsilon times a scale computed from the data
+      &mdash; wherever floating point is the only thing in the way. A hand-picked threshold is how a
+      page ships red: an idempotent operation re-applied costs about one unit in the last place, and
+      an assertion that it costs zero is a bug in the assertion.</p>
+<pre><code>ck(o.probe0.gmax === 0,
+   "a minibatch gradient at an interpolating solution is not exactly zero (" + o.probe0.gmax + ")");
+ck(o.orbit.identity !== null &amp;&amp; o.orbit.identity.L === o.orbit.L0,
+   "averaging the network with itself did not return the network exactly");
+ck(Math.abs(amb.gap) &lt;= 64 * eps * Math.max(amb.scale, 1),
+   "the ambiguity decomposition does not close (" + amb.gap + ")");
+ck(o.order.maxCentre &lt;= 64 * eps * Math.max(1, o.orbit.scale),
+   "the weight average moved when the deviations were shrunk (" + o.order.maxCentre + ")");</code></pre>
+
+    <h3>Try it</h3>
+    <ul>
+      <li>Put the label offset to 0 and watch the averaging gain on the trajectory card go below 1:
+        a realizable task has no floor to average over.</li>
+      <li>Turn the learning rate down and watch the disagreement share collapse: with nothing to
+        disagree about, the two averages become the same number.</li>
+      <li>Drop the hidden units to 3 and watch the orbit shrink from 3,840 to 48 &mdash; and the
+        spread of what averaging produces shrink with it.</li>
+      <li>Train the pool and compare each candidate's overall AUC with its within-rate control. The
+        gap between those two columns is how much of the apparent skill was the learning rate.</li>
+    </ul>
+
+  </div>
+</section>
+
+<script>
+// ===== ENGINE:BEGIN =====
+// Day 76 - weight averaging. Pure functions: no DOM, no clock, no Math.random.
+// Averaging the WEIGHTS of several networks and averaging their PREDICTIONS are two different
+// operations. The second is a theorem - under a squared loss the ensemble's gain is EXACTLY the
+// spread of the members' predictions - while the first is not an operation on functions at all,
+// because a network's weights are one arbitrary representative of a whole orbit of weight vectors
+// computing the identical map. The task is a teacher network over an ENUMERATED input space, so
+// the score is an exact population risk and the floor is a computation: the teacher scores 0.
+
+function rng(seed){                                        // mulberry32
+  var a = (seed >>> 0) || 1;
+  return function(){
+    a = (a + 0x6D2B79F5) >>> 0;
+    var t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function gauss(rnd){                                       // Box-Muller, cosine branch
+  var u = 1 - rnd(), v = rnd();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+// The nonlinearity lives in exactly one place and its derivative in exactly one other, so the
+// LINEAR TWIN of this engine is a two-token edit rather than a second implementation.
+function act(z, lin){ return lin ? z : Math.tanh(z); }
+function dact(a, lin){ return lin ? 1 : 1 - a * a; }
+
+// ---------------------------------------------------------------- packing
+// One flat parameter vector, so every derivative below is indexed the same way:
+//   [ W1 (h x d) | b1 (h) | w2 (h) | b2 ]
+function psize(h, d){ return h * d + h + h + 1; }
+function iW1(h, d, j, k){ return j * d + k; }
+function ib1(h, d, j){ return h * d + j; }
+function iw2(h, d, j){ return h * d + h + j; }
+function ib2(h, d){ return h * d + h + h; }
+
+// ---------------------------------------------------------------- the input space, enumerated
+// d binary features means 2^d inputs, all of them. A risk on this page is a finite sum over the
+// whole space and never a sample, so "generalisation" is a computation rather than an estimate.
+function inputs(d){
+  var N = 1 << d, X = [], i, k;
+  for (i = 0; i < N; i++){
+    var row = [];
+    for (k = 0; k < d; k++) row.push(((i >> k) & 1) ? 1 : -1);
+    X.push(row);
+  }
+  return X;
+}
+function initParams(h, d, seed, scale){
+  var rnd = rng(seed), p = [], P = psize(h, d), i, j, k;
+  for (i = 0; i < P; i++) p[i] = 0;
+  for (j = 0; j < h; j++){
+    for (k = 0; k < d; k++) p[iW1(h, d, j, k)] = gauss(rnd) * scale / Math.sqrt(d);
+    p[ib1(h, d, j)] = gauss(rnd) * 0.3;
+    p[iw2(h, d, j)] = gauss(rnd) * scale / Math.sqrt(h);
+  }
+  p[ib2(h, d)] = gauss(rnd) * 0.1;
+  return p;
+}
+
+// ---------------------------------------------------------------- forward
+function forwardOne(p, h, d, x, lin){
+  var a = [], j, k, y = p[ib2(h, d)];
+  for (j = 0; j < h; j++){
+    var z = p[ib1(h, d, j)];
+    for (k = 0; k < d; k++) z += p[iW1(h, d, j, k)] * x[k];
+    a[j] = act(z, lin);
+  }
+  for (j = 0; j < h; j++) y += p[iw2(h, d, j)] * a[j];
+  return { y: y, a: a };
+}
+function predict(p, h, d, X, lin){
+  var out = [], i;
+  for (i = 0; i < X.length; i++) out[i] = forwardOne(p, h, d, X[i], lin).y;
+  return out;
+}
+function mse(pred, T){
+  var s = 0, i;
+  for (i = 0; i < T.length; i++){ var e = pred[i] - T[i]; s += e * e; }
+  return s / T.length;
+}
+function lossOf(p, h, d, X, T, lin){ return mse(predict(p, h, d, X, lin), T); }
+// THE score: the exact risk against the true function over the whole enumerated input space.
+function riskOf(task, p, h, lin){
+  return mse(predict(p, h, task.d, task.X, lin), task.clean);
+}
+function trainLossOf(task, p, h, lin){
+  return mse(predict(p, h, task.d, task.Xtr, lin), task.Ttr);
+}
+
+// ---------------------------------------------------------------- reverse mode, by hand
+function gradOf(p, h, d, X, T, lin, idx){
+  var P = psize(h, d), g = [], i, j, k;
+  for (i = 0; i < P; i++) g[i] = 0;
+  var list = idx || null, M = list ? list.length : X.length, loss = 0;
+  for (var q = 0; q < M; q++){
+    var nn = list ? list[q] : q, x = X[nn];
+    var f = forwardOne(p, h, d, x, lin);
+    var e = f.y - T[nn];
+    loss += e * e;
+    var gy = 2 * e / M;
+    g[ib2(h, d)] += gy;
+    for (j = 0; j < h; j++){
+      g[iw2(h, d, j)] += gy * f.a[j];
+      var gz = gy * p[iw2(h, d, j)] * dact(f.a[j], lin);
+      g[ib1(h, d, j)] += gz;
+      for (k = 0; k < d; k++) g[iW1(h, d, j, k)] += gz * x[k];
+    }
+  }
+  return { loss: loss / M, g: g };
+}
+
+// ---------------------------------------------------------------- forward mode, over duals
+// Value and derivative carried side by side. No step size anywhere, and the opposite traversal to
+// the backward pass above, so agreement is evidence and not a coincidence of shared code.
+function dualLoss(p, h, d, X, T, lin, seed){
+  var j, k, i, loss = 0, dloss = 0, N = X.length;
+  for (i = 0; i < N; i++){
+    var x = X[i];
+    var vy = p[ib2(h, d)], dy = (seed === ib2(h, d)) ? 1 : 0;
+    for (j = 0; j < h; j++){
+      var vz = p[ib1(h, d, j)], dz = (seed === ib1(h, d, j)) ? 1 : 0;
+      for (k = 0; k < d; k++){
+        var w = iW1(h, d, j, k);
+        vz += p[w] * x[k];
+        if (seed === w) dz += x[k];
+      }
+      var va = act(vz, lin), da = dact(va, lin) * dz;
+      var wj = iw2(h, d, j), vw = p[wj], dw = (seed === wj) ? 1 : 0;
+      vy += vw * va;
+      dy += vw * da + dw * va;
+    }
+    var e = vy - T[i];
+    loss += e * e;
+    dloss += 2 * e * dy;
+  }
+  return { loss: loss / N, d: dloss / N };
+}
+function dualGrad(p, h, d, X, T, lin){
+  var P = psize(h, d), g = [], loss = 0, i;
+  for (i = 0; i < P; i++){ var r = dualLoss(p, h, d, X, T, lin, i); g[i] = r.d; loss = r.loss; }
+  return { loss: loss, g: g };
+}
+function cdGrad(p, h, d, X, T, lin, eps){
+  var P = psize(h, d), g = [], i;
+  for (i = 0; i < P; i++){
+    var q = p.slice();
+    q[i] = p[i] + eps; var lp = lossOf(q, h, d, X, T, lin);
+    q[i] = p[i] - eps; var lm = lossOf(q, h, d, X, T, lin);
+    g[i] = (lp - lm) / (2 * eps);
+  }
+  return g;
+}
+function maxAbsDiff(a, b){
+  var m = 0, i;
+  for (i = 0; i < a.length; i++) m = Math.max(m, Math.abs(a[i] - b[i]));
+  return m;
+}
+function maxAbs(a){
+  var m = 0, i;
+  for (i = 0; i < a.length; i++) m = Math.max(m, Math.abs(a[i]));
+  return m;
+}
+
+// ---------------------------------------------------------------- the task
+// A teacher network the student can hold exactly, a training subset with a fixed per-point offset
+// so there is something to overfit, and the WHOLE space kept back as the population.
+function makeTask(cfg){
+  var d = cfg.d, X = inputs(d), N = X.length, i;
+  var tp = initParams(cfg.ht, d, cfg.seed * 7919 + 13, 1.6);
+  var clean = predict(tp, cfg.ht, d, X, false);
+  var rnd = rng(cfg.seed * 15485863 + 991);
+  var perm = [], Xtr = [], Ttr = [], Xte = [], Cte = [], noise = [], ms = 0;
+  for (i = 0; i < N; i++) perm[i] = i;
+  for (i = N - 1; i > 0; i--){
+    var j = Math.floor(rnd() * (i + 1)), t = perm[i]; perm[i] = perm[j]; perm[j] = t;
+  }
+  var ntr = cfg.ntr;
+  for (i = 0; i < N; i++){
+    var idx = perm[i];
+    if (i < ntr){
+      var nz = gauss(rnd) * cfg.noise;
+      noise.push(nz); ms += nz * nz;
+      Xtr.push(X[idx]); Ttr.push(clean[idx] + nz);
+    } else { Xte.push(X[idx]); Cte.push(clean[idx]); }
+  }
+  ms /= Math.max(ntr, 1);
+  var mean = 0;
+  for (i = 0; i < N; i++) mean += clean[i];
+  mean /= N;
+  var vr = 0;
+  for (i = 0; i < N; i++) vr += (clean[i] - mean) * (clean[i] - mean);
+  vr /= N;
+  var zeros = [];
+  for (i = 0; i < N; i++) zeros[i] = 0;
+  return { d: d, N: N, X: X, clean: clean, Xtr: Xtr, Ttr: Ttr, Xte: Xte, Cte: Cte, ntr: ntr,
+           noise: noise, noiseMS: ms, tp: tp, ht: cfg.ht, mean: mean, variance: vr,
+           zero: mse(zeros, clean), P: psize(cfg.h, d) };
+}
+// The student can hold the teacher EXACTLY: copy its units and give every spare unit an output
+// weight of 0, which contributes 0 to the sum and not merely something small.
+function embedTeacher(task, h){
+  var d = task.d, p = [], P = psize(h, d), i, j, k;
+  for (i = 0; i < P; i++) p[i] = 0;
+  for (j = 0; j < h; j++){
+    for (k = 0; k < d; k++) p[iW1(h, d, j, k)] = j < task.ht ? task.tp[iW1(task.ht, d, j, k)] : 0.3;
+    p[ib1(h, d, j)] = j < task.ht ? task.tp[ib1(task.ht, d, j)] : 0.1;
+    p[iw2(h, d, j)] = j < task.ht ? task.tp[iw2(task.ht, d, j)] : 0;
+  }
+  p[ib2(h, d)] = task.tp[ib2(task.ht, d)];
+  return p;
+}
+
+// ---------------------------------------------------------------- training
+// Constant-rate minibatch SGD. The rate is deliberately NOT decayed: the iterates are meant to keep
+// moving, because a trajectory that has collapsed to a point has nothing left to average.
+// The snapshot stride is DERIVED from the run length, so the whole schedule always fits inside
+// the run - a fixed stride silently returns fewer snapshots than were asked for on a short run.
+function strideOf(cfg){ return Math.max(1, Math.round(cfg.steps / 150)); }
+function shuffled(n, rnd){
+  var a = [], i, j;
+  for (i = 0; i < n; i++) a[i] = i;
+  for (i = n - 1; i > 0; i--){ j = Math.floor(rnd() * (i + 1)); var t = a[i]; a[i] = a[j]; a[j] = t; }
+  return a;
+}
+function train(task, o){
+  var h = o.h, d = task.d, n = task.Xtr.length, i;
+  var p = o.start ? o.start.slice() : initParams(h, d, o.seed, o.scale === undefined ? 1.0 : o.scale);
+  var rnd = rng(o.seed * 104729 + 7);
+  var frozen = !!o.frozen;                                 // frozen features = affine in what moves
+  var snaps = [], curve = [], order = [], ptr = 0, s;
+  for (s = 0; s < o.steps; s++){
+    if (ptr + o.batch > order.length){ order = shuffled(n, rnd); ptr = 0; }
+    var idx = order.slice(ptr, ptr + o.batch); ptr += o.batch;
+    var gr = gradOf(p, h, d, task.Xtr, task.Ttr, o.lin, idx);
+    if (frozen){
+      for (i = 0; i < h; i++) p[iw2(h, d, i)] -= o.lr * gr.g[iw2(h, d, i)];
+      p[ib2(h, d)] -= o.lr * gr.g[ib2(h, d)];
+    } else {
+      for (i = 0; i < p.length; i++) p[i] -= o.lr * gr.g[i];
+    }
+    if (o.curveEvery && s % o.curveEvery === 0)
+      curve.push({ s: s, tr: trainLossOf(task, p, h, o.lin), risk: riskOf(task, p, h, o.lin) });
+    if (s >= o.burn && (s - o.burn) % o.every === 0 && snaps.length < o.snaps) snaps.push(p.slice());
+  }
+  return { p: p, snaps: snaps, curve: curve, h: h, lin: !!o.lin };
+}
+
+// ---------------------------------------------------------------- why realizability decides
+// SGD's noise is the disagreement between minibatch gradients. At a solution that INTERPOLATES the
+// training set every residual is exactly zero, so every minibatch gradient is exactly zero - not
+// small, zero - and the noise switches itself off. That is the whole reason averaging the iterates
+// has nothing to do on a realizable task: there is no hovering, only a slower and slower descent.
+function interpolationProbe(task, p, h, batch){
+  var d = task.d, n = task.Xtr.length, gmax = 0, b, i, batches = 0;
+  for (b = 0; b + batch <= n; b += batch){
+    var idx = [];
+    for (i = 0; i < batch; i++) idx.push(b + i);
+    gmax = Math.max(gmax, maxAbs(gradOf(p, h, d, task.Xtr, task.Ttr, false, idx).g));
+    batches++;
+  }
+  return { trainLoss: trainLossOf(task, p, h, false), gmax: gmax, batches: batches,
+           full: maxAbs(gradOf(p, h, d, task.Xtr, task.Ttr, false, null).g) };
+}
+
+// ---------------------------------------------------------------- averaging, both ways
+function meanVec(list){
+  var P = list[0].length, out = [], i, m;
+  for (i = 0; i < P; i++){
+    var s = 0;
+    for (m = 0; m < list.length; m++) s += list[m][i];
+    out[i] = s / list.length;
+  }
+  return out;
+}
+function meanPred(preds){
+  var N = preds[0].length, out = [], i, m;
+  for (i = 0; i < N; i++){
+    var s = 0;
+    for (m = 0; m < preds.length; m++) s += preds[m][i];
+    out[i] = s / preds.length;
+  }
+  return out;
+}
+// The ambiguity decomposition. Under a squared loss the mean member risk splits EXACTLY into the
+// ensemble's risk plus the mean spread of the members around their own average, so the ensemble
+// gain IS the prediction variance and can never be negative. There is no analogue for the weights.
+function ambiguity(preds, T){
+  var M = preds.length, N = T.length, avg = meanPred(preds);
+  var mean = 0, amb = 0, m, i;
+  for (m = 0; m < M; m++) mean += mse(preds[m], T);
+  mean /= M;
+  for (m = 0; m < M; m++) for (i = 0; i < N; i++){
+    var dv = preds[m][i] - avg[i];
+    amb += dv * dv;
+  }
+  amb /= (M * N);
+  var ens = mse(avg, T);
+  return { mean: mean, ens: ens, amb: amb, gap: mean - ens - amb, avg: avg,
+           scale: Math.abs(mean) + Math.abs(ens) + Math.abs(amb) };
+}
+
+// ---------------------------------------------------------------- the symmetry group
+// Permuting the hidden units, and flipping the sign of a unit's incoming AND outgoing weights
+// (tanh is odd), both leave the computed function alone. So h! * 2^h parameter vectors compute
+// exactly the same map, and "the average of two networks" depends on which of them you were handed.
+function permutations(h){
+  var out = [], base = [], i;
+  for (i = 0; i < h; i++) base.push(i);
+  (function rec(cur, left){
+    if (!left.length){ out.push(cur.slice()); return; }
+    for (var q = 0; q < left.length; q++){
+      var nx = left.slice(); nx.splice(q, 1);
+      rec(cur.concat([left[q]]), nx);
+    }
+  })([], base);
+  return out;
+}
+function signVectors(h){
+  var out = [], n = 1 << h, i, j;
+  for (i = 0; i < n; i++){
+    var v = [];
+    for (j = 0; j < h; j++) v.push(((i >> j) & 1) ? -1 : 1);
+    out.push(v);
+  }
+  return out;
+}
+function applySym(p, h, d, perm, signs){
+  var q = p.slice(), j, k;
+  for (j = 0; j < h; j++){
+    var src = perm[j], sg = signs ? signs[j] : 1;
+    for (k = 0; k < d; k++) q[iW1(h, d, j, k)] = sg * p[iW1(h, d, src, k)];
+    q[ib1(h, d, j)] = sg * p[ib1(h, d, src)];
+    q[iw2(h, d, j)] = sg * p[iw2(h, d, src)];
+  }
+  q[ib2(h, d)] = p[ib2(h, d)];
+  return q;
+}
+function dist2(a, b){
+  var s = 0, i;
+  for (i = 0; i < a.length; i++){ var e = a[i] - b[i]; s += e * e; }
+  return s;
+}
+// Exhaustive over the whole group. h! * 2^h is 3,840 at h = 5, so the best alignment is FOUND and
+// not approximated by a matching heuristic.
+function align(pA, pB, h, d, withSigns){
+  var perms = permutations(h), sgs = withSigns ? signVectors(h) : [null];
+  var best = null, bestD = Infinity, tried = 0, worst = -Infinity, a, b;
+  for (a = 0; a < perms.length; a++) for (b = 0; b < sgs.length; b++){
+    var q = applySym(pB, h, d, perms[a], sgs[b]), dd = dist2(pA, q);
+    tried++;
+    if (dd < bestD){ bestD = dd; best = q; }
+    if (dd > worst) worst = dd;
+  }
+  return { p: best, d2: bestD, tried: tried, worstD2: worst, raw2: dist2(pA, pB) };
+}
+
+// ---------------------------------------------------------------- the same function, many ways
+// One trained network, every member of its orbit, and the risk of the average of the network with
+// each member. The identity element gives (p + p) / 2, which is p to the last bit.
+function orbitStudy(task, p, h, withSigns){
+  var d = task.d, perms = permutations(h), sgs = withSigns ? signVectors(h) : [null];
+  var base = predict(p, h, d, task.X, false), L0 = mse(base, task.clean);
+  var rows = [], funcMax = 0, identity = null, i, j;
+  for (i = 0; i < perms.length; i++) for (j = 0; j < sgs.length; j++){
+    var q = applySym(p, h, d, perms[i], sgs[j]);
+    var pq = predict(q, h, d, task.X, false);
+    var fd = maxAbsDiff(pq, base);
+    if (fd > funcMax) funcMax = fd;
+    var Lm = mse(predict(meanVec([p, q]), h, d, task.X, false), task.clean);
+    var isId = dist2(q, p) === 0;
+    var row = { L: Lm, own: mse(pq, task.clean), func: fd, id: isId, perm: perms[i].slice(),
+                signs: sgs[j] ? sgs[j].slice() : null, d2: dist2(p, q) };
+    rows.push(row);
+    if (isId && identity === null) identity = row;
+  }
+  var sorted = rows.slice().sort(function(a, b){ return a.L - b.L; });
+  var worseThanBase = 0, ownMax = 0;
+  for (i = 0; i < rows.length; i++){
+    if (rows[i].L > L0 * (1 + 1e-12)) worseThanBase++;
+    ownMax = Math.max(ownMax, Math.abs(rows[i].own - L0));
+  }
+  return { L0: L0, rows: rows, sorted: sorted, funcMax: funcMax, identity: identity,
+           worseThanBase: worseThanBase, n: rows.length, ownMax: ownMax,
+           min: sorted[0].L, max: sorted[sorted.length - 1].L,
+           median: sorted[Math.floor(sorted.length / 2)].L,
+           q1: sorted[Math.floor(sorted.length / 4)].L,
+           scale: Math.max(maxAbs(base), 1) };
+}
+
+// ---------------------------------------------------------------- averaging with a sign flip IS pruning
+// Flip every sign of one unit and average: the two copies of that unit cancel to exactly zero, so
+// the "average of two networks computing the same function" is the SAME network with those units
+// deleted. Which settles the question of whether averaging equivalent models can be a no-op.
+function pruneLadder(task, p, h){
+  var d = task.d, sgs = signVectors(h), rows = [], i, j;
+  for (i = 0; i < sgs.length; i++){
+    var s = sgs[i], q = applySym(p, h, d, permutations(h)[0], s);
+    var mid = meanVec([p, q]), k = 0, zeroed = 0;
+    for (j = 0; j < h; j++) if (s[j] < 0) k++;
+    for (j = 0; j < h; j++)
+      if (mid[iw2(h, d, j)] === 0 && mid[ib1(h, d, j)] === 0) zeroed++;
+    rows.push({ k: k, zeroed: zeroed, risk: riskOf(task, mid, h, false),
+                train: trainLossOf(task, mid, h, false), signs: s.slice() });
+  }
+  var byK = [];
+  for (i = 0; i <= h; i++){
+    var here = rows.filter(function(r){ return r.k === i; });
+    byK.push({ k: i, count: here.length,
+               zeroOK: here.every(function(r){ return r.zeroed === r.k; }),
+               best: Math.min.apply(null, here.map(function(r){ return r.risk; })),
+               worst: Math.max.apply(null, here.map(function(r){ return r.risk; })) });
+  }
+  var srt = rows.slice().sort(function(a, b){ return a.risk - b.risk; });
+  return { rows: rows, byK: byK, best: srt[0], full: rows[0], n: rows.length,
+           exactZero: rows.every(function(r){ return r.zeroed === r.k; }) };
+}
+
+// ---------------------------------------------------------------- aligning by distance vs by risk
+// The usual recipe picks the group element that minimises the weight distance. That is a PROXY for
+// the thing anybody actually wants, which is the risk of the average - so both are computed here,
+// exhaustively, and the proxy is scored against the target instead of being trusted.
+function alignStudy(task, pA, pB, h, withSigns){
+  var d = task.d, perms = permutations(h), sgs = withSigns ? signVectors(h) : [null];
+  var bestD = Infinity, bestDp = null, bestR = Infinity, bestRp = null;
+  var ds = [], rs = [], a, b, riskAtBestD = 0;
+  for (a = 0; a < perms.length; a++) for (b = 0; b < sgs.length; b++){
+    var q = applySym(pB, h, d, perms[a], sgs[b]);
+    var dd = dist2(pA, q), rr = riskOf(task, meanVec([pA, q]), h, false);
+    ds.push(Math.sqrt(dd)); rs.push(rr);
+    if (dd < bestD){ bestD = dd; bestDp = q; riskAtBestD = rr; }
+    if (rr < bestR){ bestR = rr; bestRp = q; }
+  }
+  var conc = auc(ds, rs);
+  return { byDist: bestDp, byRisk: bestRp, d2: bestD, riskAtBestD: riskAtBestD, bestRisk: bestR,
+           tried: ds.length, conc: conc.auc, pairs: conc.pairs, raw2: dist2(pA, pB),
+           worstRisk: Math.max.apply(null, rs), medRisk: rs.slice().sort(function(x, y){
+             return x - y; })[Math.floor(rs.length / 2)] };
+}
+
+// ---------------------------------------------------------------- the path between two networks
+function pathStudy(task, pA, pB, h, steps, lin){
+  var pts = [], i, k;
+  var LA = riskOf(task, pA, h, lin), LB = riskOf(task, pB, h, lin);
+  var barrier = -Infinity, at = 0;
+  for (i = 0; i <= steps; i++){
+    var al = i / steps, q = [];
+    for (k = 0; k < pA.length; k++) q[k] = (1 - al) * pA[k] + al * pB[k];
+    var L = riskOf(task, q, h, lin);
+    var chord = (1 - al) * LA + al * LB;
+    pts.push({ a: al, L: L, chord: chord });
+    if (L - chord > barrier){ barrier = L - chord; at = al; }
+  }
+  return { pts: pts, LA: LA, LB: LB, barrier: barrier, at: at,
+           mid: pts[Math.floor(steps / 2)].L, rel: barrier / Math.max(LA, LB) };
+}
+
+// ---------------------------------------------------------------- the exact bilinear identity
+// With the nonlinearity removed and both layers still training, the map is BILINEAR in the two
+// blocks, so the midpoint's output minus the mean output has a closed form: -1/4 * dw2 . (dV x~).
+// Not a bound, an equation - it is what the whole discrepancy IS at two members.
+function bilinearGap(task, pA, pB, h){
+  var d = task.d, X = task.X, out = [], i, j, k;
+  var yA = predict(pA, h, d, X, true), yB = predict(pB, h, d, X, true);
+  var yM = predict(meanVec([pA, pB]), h, d, X, true);
+  var worst = 0, scale = 0;
+  for (i = 0; i < X.length; i++){
+    var pr = 0;
+    for (j = 0; j < h; j++){
+      var dw = pA[iw2(h, d, j)] - pB[iw2(h, d, j)];
+      var dv = pA[ib1(h, d, j)] - pB[ib1(h, d, j)];
+      for (k = 0; k < d; k++) dv += (pA[iW1(h, d, j, k)] - pB[iW1(h, d, j, k)]) * X[i][k];
+      pr += dw * dv;
+    }
+    pr = -0.25 * pr;
+    var got = yM[i] - 0.5 * (yA[i] + yB[i]);
+    out.push({ i: i, closed: pr, got: got });
+    worst = Math.max(worst, Math.abs(pr - got));
+    scale = Math.max(scale, Math.abs(pr), Math.abs(got));
+  }
+  return { rows: out, worst: worst, scale: scale };
+}
+
+// ---------------------------------------------------------------- what the difference IS
+// Put M parameter vectors around a centre with deviations that sum to zero, so the WEIGHT average
+// is that centre exactly, at every scale. Then shrink the deviations by s. The weight average does
+// not move; the prediction average moves by the curvature term alone, which is second order - so
+// halving s must quarter the gap. The two averages agree to FIRST order and the entire difference
+// between them is curvature, which is why a tight trajectory can be averaged either way and two
+// independent solutions cannot.
+function orderStudy(task, p, h, deltas, scales, lin, frozen){
+  var d = task.d, X = task.X, M = deltas.length, out = [], si, m, k;
+  var mn = meanVec(deltas), cd = deltas.map(function(dv){
+    var q = [];
+    for (k = 0; k < dv.length; k++) q[k] = dv[k] - mn[k];
+    return q;
+  });
+  if (frozen) cd = cd.map(function(dv){
+    var q = dv.slice();
+    for (k = 0; k < h * d + h; k++) q[k] = 0;              // only the affine block is allowed to move
+    return q;
+  });
+  var base = predict(p, h, d, X, lin);
+  for (si = 0; si < scales.length; si++){
+    var s = scales[si], ps = [], preds = [];
+    for (m = 0; m < M; m++){
+      var q = [];
+      for (k = 0; k < p.length; k++) q[k] = p[k] + s * cd[m][k];
+      ps.push(q);
+      preds.push(predict(q, h, d, X, lin));
+    }
+    var wavg = predict(meanVec(ps), h, d, X, lin), pavg = meanPred(preds);
+    out.push({ s: s, gap: maxAbsDiff(wavg, pavg), centre: maxAbsDiff(wavg, base),
+               spread: Math.sqrt(dist2(ps[0], p)) });
+  }
+  var ratios = [];
+  for (si = 1; si < out.length; si++)
+    ratios.push(out[si - 1].gap / Math.max(out[si].gap, 1e-300));
+  return { rows: out, ratios: ratios, last: ratios.length ? ratios[ratios.length - 1] : 0,
+           maxCentre: Math.max.apply(null, out.map(function(r){ return r.centre; })) };
+}
+
+// ---------------------------------------------------------------- the affine control
+// Freeze the first layer so only the output block moves. The model is then AFFINE in every
+// parameter being averaged, and weight averaging and prediction averaging become the SAME
+// operation - which is the whole condition, run as a control rather than stated as a claim.
+function affineStudy(task, h, seeds, o){
+  var d = task.d, feats = initParams(h, d, o.featSeed, 1.0);
+  var ps = seeds.map(function(s){
+    var st = initParams(h, d, s, 1.0), q = feats.slice(), j;
+    for (j = 0; j < h; j++) q[iw2(h, d, j)] = st[iw2(h, d, j)];
+    q[ib2(h, d)] = st[ib2(h, d)];
+    return train(task, { h: h, seed: s, lr: o.lr, batch: o.batch, steps: o.steps, burn: o.steps,
+                         every: 1, snaps: 0, lin: false, frozen: true, start: q }).p;
+  });
+  var preds = ps.map(function(p){ return predict(p, h, d, task.X, false); });
+  var wavg = predict(meanVec(ps), h, d, task.X, false), pavg = meanPred(preds);
+  return { wRisk: mse(wavg, task.clean), pRisk: mse(pavg, task.clean),
+           pointwise: maxAbsDiff(wavg, pavg), scale: Math.max(maxAbs(wavg), 1),
+           amb: ambiguity(preds, task.clean),
+           members: preds.map(function(q){ return mse(q, task.clean); }) };
+}
+
+// ---------------------------------------------------------------- one trajectory
+function trajectoryStudy(task, o){
+  var d = task.d, h = o.h;
+  var r = train(task, { h: h, seed: o.seed, lr: o.lr, batch: o.batch, steps: o.steps,
+                        burn: o.burn, every: o.every, snaps: o.snaps, lin: false,
+                        curveEvery: o.curveEvery || 0, scale: o.scale });
+  var preds = r.snaps.map(function(p){ return predict(p, h, d, task.X, false); });
+  var swa = meanVec(r.snaps);
+  var amb = ambiguity(preds, task.clean);
+  var member = preds.map(function(q){ return mse(q, task.clean); });
+  var mn = meanVec(r.snaps), sp = 0, i;
+  for (i = 0; i < r.snaps.length; i++) sp += Math.sqrt(dist2(r.snaps[i], mn));
+  sp /= Math.max(r.snaps.length, 1);
+  return { run: r, snaps: r.snaps, swa: swa, preds: preds, amb: amb, member: member, spread: sp,
+           swaRisk: mse(predict(swa, h, d, task.X, false), task.clean),
+           swaTrain: trainLossOf(task, swa, h, false),
+           ensRisk: amb.ens, meanRisk: amb.mean,
+           finalRisk: riskOf(task, r.p, h, false), finalTrain: trainLossOf(task, r.p, h, false),
+           bestIter: Math.min.apply(null, member), worstIter: Math.max.apply(null, member) };
+}
+
+// ---------------------------------------------------------------- concordance
+function auc(score, outcome){
+  var n = score.length, c = 0, dsc = 0, ties = 0, i, j;
+  for (i = 0; i < n; i++) for (j = i + 1; j < n; j++){
+    if (outcome[i] === outcome[j]) continue;
+    var so = (outcome[i] < outcome[j]) ? 1 : -1;
+    var ss = (score[i] < score[j]) ? 1 : (score[i] > score[j] ? -1 : 0);
+    if (ss === 0) ties++;
+    else if (ss === so) c++;
+    else dsc++;
+  }
+  var tot = c + dsc + ties;
+  return { auc: tot ? (c + 0.5 * ties) / tot : 0.5, pairs: tot, ties: ties };
+}
+
+// ---------------------------------------------------------------- the ranker pool
+// Pairs of independently trained networks. The outcome is what averaging the pair actually costs;
+// the candidates are the things anybody would reach for to predict it before doing it.
+function rankerStudy(task, o){
+  var rows = [], h = o.h, d = task.d, li, si, i;
+  for (li = 0; li < o.lrs.length; li++) for (si = 0; si < o.pairs.length; si++){
+    var lr = o.lrs[li], pr = o.pairs[si];
+    var A = train(task, { h: h, seed: pr[0], lr: lr, batch: o.batch, steps: o.steps,
+                          burn: o.steps, every: 1, snaps: 0, lin: false });
+    var B = train(task, { h: h, seed: pr[1], lr: lr, batch: o.batch, steps: o.steps,
+                          burn: o.steps, every: 1, snaps: 0, lin: false });
+    var LA = riskOf(task, A.p, h, false), LB = riskOf(task, B.p, h, false);
+    var Lmid = riskOf(task, meanVec([A.p, B.p]), h, false);
+    var al = align(A.p, B.p, h, d, true);
+    var Lali = riskOf(task, meanVec([A.p, al.p]), h, false);
+    var ens = mse(meanPred([predict(A.p, h, d, task.X, false),
+                            predict(B.p, h, d, task.X, false)]), task.clean);
+    rows.push({ lr: lr, seeds: pr, LA: LA, LB: LB, Lmid: Lmid, Lali: Lali, ens: ens,
+                raw: Math.sqrt(al.raw2), aligned: Math.sqrt(al.d2),
+                endpoint: Math.max(LA, LB), best: Math.min(LA, LB),
+                cost: Lmid / Math.min(LA, LB) });
+  }
+  var outRaw = rows.map(function(r){ return r.Lmid; });
+  var outAli = rows.map(function(r){ return r.Lali; });
+  var cands = [
+    { name: "the distance between the two weight vectors", key: "raw" },
+    { name: "the same distance after ALIGNING the two networks", key: "aligned" },
+    { name: "the worse of the two members' own risks", key: "endpoint" },
+    { name: "what averaging their PREDICTIONS costs instead", key: "ens" }
+  ].map(function(c){
+    var v = rows.map(function(r){ return r[c.key]; });
+    var a = auc(v, outRaw), b = auc(v, outAli);
+    // the control: only comparisons INSIDE one learning rate, where the pool's easiest axis of
+    // variation has been removed and a candidate has to arbitrate the pairs it cannot see
+    var cn = 0, cd = 0, ct = 0, i, j;
+    for (i = 0; i < rows.length; i++) for (j = i + 1; j < rows.length; j++){
+      if (rows[i].lr !== rows[j].lr || outRaw[i] === outRaw[j]) continue;
+      var so = outRaw[i] < outRaw[j] ? 1 : -1;
+      var ss = v[i] < v[j] ? 1 : (v[i] > v[j] ? -1 : 0);
+      if (ss === 0) ct++; else if (ss === so) cn++; else cd++;
+    }
+    var tot = cn + cd + ct;
+    return { name: c.name, key: c.key, auc: a.auc, pairs: a.pairs, ties: a.ties,
+             aucAli: b.auc, aliPairs: b.pairs,
+             within: tot ? (cn + 0.5 * ct) / tot : 0.5, withinPairs: tot };
+  });
+  cands.sort(function(a, b){ return b.auc - a.auc; });
+  var midWins = 0, aliWins = 0, ensBeatsBest = 0, ensLegal = 0, aliBeatsMid = 0;
+  for (i = 0; i < rows.length; i++){
+    if (rows[i].Lmid < rows[i].best) midWins++;
+    if (rows[i].Lali < rows[i].best) aliWins++;
+    if (rows[i].ens <= rows[i].best * (1 + 1e-12)) ensBeatsBest++;
+    if (rows[i].ens <= 0.5 * (rows[i].LA + rows[i].LB) + 1e-15) ensLegal++;
+    if (rows[i].Lali < rows[i].Lmid) aliBeatsMid++;
+  }
+  var costs = rows.map(function(r){ return r.cost; });
+  var aliCosts = rows.map(function(r){ return r.Lali / r.best; });
+  return { rows: rows, cands: cands, n: rows.length, midWins: midWins, aliWins: aliWins,
+           ensBeatsBest: ensBeatsBest, ensLegal: ensLegal, aliBeatsMid: aliBeatsMid,
+           worstCost: Math.max.apply(null, costs), bestCost: Math.min.apply(null, costs),
+           worstAli: Math.max.apply(null, aliCosts), bestAli: Math.min.apply(null, aliCosts) };
+}
+
+// ---------------------------------------------------------------- the rate sweep
+// A trajectory that has stopped moving has nothing to average, so the gain has to be a function of
+// the rate. This is the control that stops "averaging helps" being a free-floating claim.
+function rateSweep(task, o){
+  return o.lrs.map(function(lr){
+    var t = trajectoryStudy(task, { h: o.h, seed: o.seed, lr: lr, batch: o.batch, steps: o.steps,
+                                    burn: o.burn, every: o.every, snaps: o.snaps });
+    return { lr: lr, spread: t.spread, final: t.finalRisk, finalTrain: t.finalTrain,
+             swa: t.swaRisk, ens: t.ensRisk, mean: t.meanRisk, amb: t.amb.amb, best: t.bestIter,
+             frac: t.amb.amb / Math.max(t.meanRisk, 1e-300),
+             beatsFinal: t.swaRisk < t.finalRisk,
+             gain: t.finalRisk / Math.max(t.swaRisk, 1e-300) };
+  });
+}
+
+// ---------------------------------------------------------------- the offset sweep
+// Averaging the iterates has something to do only if the iterates are hovering rather than still
+// descending. On a REALIZABLE task an interpolating solution makes every minibatch gradient zero,
+// so the noise switches itself off and the run keeps improving - and averaging can then only
+// average in the past.
+function noiseSweep(cfg, levels){
+  return levels.map(function(nz){
+    var c = {}, k;
+    for (k in cfg) c[k] = cfg[k];
+    c.noise = nz;
+    var task = makeTask(c);
+    var t = trajectoryStudy(task, { h: cfg.h, seed: cfg.seed, lr: cfg.lr, batch: cfg.batch,
+                                    steps: cfg.steps, burn: Math.floor(cfg.steps * cfg.burnFrac),
+                                    every: strideOf(cfg), snaps: cfg.snaps });
+    return { noise: nz, floor: task.noiseMS, spread: t.spread, final: t.finalRisk,
+             finalTrain: t.finalTrain, swa: t.swaRisk, ens: t.ensRisk, mean: t.meanRisk,
+             best: t.bestIter, amb: t.amb.amb, beatsFinal: t.swaRisk < t.finalRisk,
+             gain: t.finalRisk / Math.max(t.swaRisk, 1e-300) };
+  });
+}
+
+// ---------------------------------------------------------------- everything the page shows
+function runAll(cfg){
+  var task = makeTask(cfg), h = cfg.h, d = task.d, o = {};
+  o.cfg = cfg;
+  o.task = task;
+
+  var emb = embedTeacher(task, h);
+  o.emb = emb;
+  o.floor = { teacher: riskOf(task, emb, h, false), teacherTrain: trainLossOf(task, emb, h, false),
+              noiseMS: task.noiseMS, constant: task.variance, zero: task.zero, P: task.P,
+              spread: Math.max.apply(null, task.clean) - Math.min.apply(null, task.clean) };
+
+  // gradients, AT INITIALISATION - at convergence a difference test measures its own floor
+  var p0 = initParams(h, d, cfg.seed * 31 + 5, 1.0);
+  var rev = gradOf(p0, h, d, task.Xtr, task.Ttr, false, null);
+  var fwd = dualGrad(p0, h, d, task.Xtr, task.Ttr, false);
+  var cd = cdGrad(p0, h, d, task.Xtr, task.Ttr, false, 1e-5);
+  o.grad = { P: p0.length, lossGap: Math.abs(rev.loss - fwd.loss), gmax: maxAbs(rev.g),
+             dual: maxAbsDiff(rev.g, fwd.g), cd: maxAbsDiff(rev.g, cd), loss: rev.loss };
+  var revL = gradOf(p0, h, d, task.Xtr, task.Ttr, true, null);
+  var fwdL = dualGrad(p0, h, d, task.Xtr, task.Ttr, true);
+  var cdL = cdGrad(p0, h, d, task.Xtr, task.Ttr, true, 1e-5);
+  o.gradLin = { lossGap: Math.abs(revL.loss - fwdL.loss), gmax: maxAbs(revL.g),
+                dual: maxAbsDiff(revL.g, fwdL.g), cd: maxAbsDiff(revL.g, cdL), loss: revL.loss };
+
+  o.traj = trajectoryStudy(task, { h: h, seed: cfg.seed, lr: cfg.lr, batch: cfg.batch,
+                                   steps: cfg.steps, burn: Math.floor(cfg.steps * cfg.burnFrac),
+                                   every: strideOf(cfg), snaps: cfg.snaps,
+                                   curveEvery: Math.max(1, Math.floor(cfg.steps / 60)) });
+
+  o.orbit = orbitStudy(task, o.traj.run.p, h, false);
+  o.orbitSigned = orbitStudy(task, o.traj.run.p, h, true);
+
+  var A = o.traj.run.p;
+  var Br = train(task, { h: h, seed: cfg.seed + 101, lr: cfg.lr, batch: cfg.batch,
+                         steps: cfg.steps, burn: cfg.steps, every: 1, snaps: 0, lin: false });
+  var alP = align(A, Br.p, h, d, false), alS = align(A, Br.p, h, d, true);
+  o.alignS = alignStudy(task, A, Br.p, h, true);
+  o.two = { raw: pathStudy(task, A, Br.p, h, 40, false),
+            alignedPerm: pathStudy(task, A, alP.p, h, 40, false),
+            aligned: pathStudy(task, A, alS.p, h, 40, false),
+            oracle: pathStudy(task, A, o.alignS.byRisk, h, 40, false),
+            dRaw: Math.sqrt(alP.raw2), dPerm: Math.sqrt(alP.d2), dSign: Math.sqrt(alS.d2),
+            tried: alS.tried, triedPerm: alP.tried,
+            ens: mse(meanPred([predict(A, h, d, task.X, false),
+                               predict(Br.p, h, d, task.X, false)]), task.clean),
+            funcAlign: maxAbsDiff(predict(alS.p, h, d, task.X, false),
+                                  predict(Br.p, h, d, task.X, false)),
+            B: Br.p, A: A };
+  o.prune = pruneLadder(task, A, h);
+
+  o.affine = affineStudy(task, h, [cfg.seed + 1, cfg.seed + 2, cfg.seed + 3],
+                         { lr: cfg.lr, batch: cfg.batch, steps: cfg.steps,
+                           featSeed: cfg.seed * 13 + 3 });
+  o.bilinear = bilinearGap(task, A, Br.p, h);
+
+  var centre = meanVec(o.traj.snaps);
+  var devs = o.traj.snaps.slice(0, 6).map(function(q){
+    var v = [], k;
+    for (k = 0; k < q.length; k++) v[k] = q[k] - centre[k];
+    return v;
+  });
+  var SC = [1, 0.5, 0.25, 0.125, 0.0625];
+  o.order = orderStudy(task, centre, h, devs, SC, false, false);
+  o.orderLin = orderStudy(task, centre, h, devs, SC, true, false);
+  o.orderAff = orderStudy(task, centre, h, devs, SC, false, true);
+
+  o.rates = rateSweep(task, { h: h, seed: cfg.seed, batch: cfg.batch, steps: cfg.steps,
+                              burn: Math.floor(cfg.steps * cfg.burnFrac), every: strideOf(cfg),
+                              snaps: cfg.snaps, lrs: cfg.rateLrs });
+  o.noises = noiseSweep(cfg, cfg.noiseLevels);
+
+  // the mechanism, as an identity rather than a trend: the same probe on a realizable copy of this
+  // task and on the task as configured
+  var c0 = {}, k2;
+  for (k2 in cfg) c0[k2] = cfg[k2];
+  c0.noise = 0;
+  var task0 = makeTask(c0);
+  o.probe0 = interpolationProbe(task0, embedTeacher(task0, h), h, cfg.batch);
+  o.probeN = interpolationProbe(task, emb, h, cfg.batch);
+  return o;
+}
+
+// ---------------------------------------------------------------- the page checking itself
+// Assertions are IDENTITIES wherever an identity exists, and a DERIVED bound - never a hand-picked
+// tolerance - wherever floating point is the only thing standing in the way.
+function selfCheck(o){
+  var out = [], n = 0, i;
+  function ck(c, msg){ n++; if (!c) out.push("FAIL: " + msg); }
+  var t = o.task, h = o.cfg.h, eps = 2.220446049250313e-16;
+
+  // --- the task, the floor and the nulls
+  ck(t.N === (1 << t.d), "the input space is not enumerated");
+  ck(t.Xtr.length + t.Xte.length === t.N, "the split does not cover the input space");
+  ck(t.Xtr.length > t.P,
+     "the student has at least as many parameters as training points, so it can interpolate");
+  ck(o.floor.teacher === 0, "the teacher's own risk is not exactly zero (" + o.floor.teacher + ")");
+  ck(Math.abs(o.floor.teacherTrain - o.floor.noiseMS) <= 8 * eps * Math.max(o.floor.noiseMS, 1),
+     "the teacher's TRAINING loss is not the mean square of the offset");
+  ck(o.cfg.noise > 0 ? o.floor.teacherTrain > 0 : o.floor.teacherTrain === 0,
+     "the training floor does not match the offset the task was built with");
+  ck(Math.abs(o.floor.zero - (o.floor.constant + t.mean * t.mean)) <= 1e-13 * (1 + o.floor.zero),
+     "predicting zero does not cost the variance plus the squared mean");
+  ck(o.floor.constant > 0, "the true function is constant, so nothing here is learnable");
+
+  // --- gradients, at INITIALISATION, against a method with no step size in it
+  ck(o.grad.lossGap === 0, "forward mode does not reproduce the loss bit for bit");
+  ck(o.grad.gmax > 1e-3, "the gradient is ~0 at init, so the check would measure its own floor");
+  ck(o.grad.dual <= 1e-12 * Math.max(1, o.grad.gmax),
+     "reverse mode disagrees with forward-mode duals (" + o.grad.dual + ")");
+  ck(o.grad.dual < o.grad.cd,
+     "a central difference is no worse than exact forward mode, so one of them is wrong");
+  ck(o.gradLin.lossGap === 0, "the linear twin's forward mode does not reproduce its loss");
+  ck(o.gradLin.dual <= 1e-12 * Math.max(1, o.gradLin.gmax),
+     "the linear twin's reverse mode disagrees with forward mode");
+  ck(o.gradLin.dual < o.gradLin.cd, "the linear twin's central difference is no worse than exact");
+
+  // --- the ambiguity decomposition is an EQUATION, so it is checked as one
+  var amb = o.traj.amb;
+  ck(Math.abs(amb.gap) <= 64 * eps * Math.max(amb.scale, 1),
+     "the ambiguity decomposition does not close (" + amb.gap + ")");
+  ck(amb.amb >= 0, "the prediction spread came out negative");
+  ck(amb.ens <= amb.mean + 64 * eps * Math.max(amb.scale, 1),
+     "averaging predictions cost more than the mean member, which a convex loss forbids");
+  ck(o.traj.snaps.length === o.cfg.snaps, "the trajectory did not yield the snapshots asked for");
+  ck(o.traj.member.length === o.cfg.snaps, "a snapshot has no prediction");
+  ck(o.traj.bestIter <= o.traj.meanRisk && o.traj.meanRisk <= o.traj.worstIter,
+     "the mean member risk is outside the range of the members");
+
+  // --- the orbit: same function, different weights
+  ck(o.orbit.funcMax <= 16 * h * eps * o.orbit.scale,
+     "a permutation of the hidden units changed the function by more than the summation order can (" +
+     o.orbit.funcMax + ")");
+  ck(o.orbitSigned.funcMax <= 16 * h * eps * o.orbitSigned.scale,
+     "a sign flip changed the function by more than the summation order can");
+  ck(o.orbit.ownMax <= 64 * eps * Math.max(1, o.orbit.L0),
+     "two members of the orbit have different risks, so they are not the same function");
+  ck(o.orbit.identity !== null && o.orbit.identity.L === o.orbit.L0,
+     "averaging the network with itself did not return the network exactly");
+  ck(o.orbit.min <= o.orbit.L0, "every element of the orbit averaged to something worse than itself");
+  ck(o.orbit.max > o.orbit.L0, "no group element made the average worse, so there is nothing here");
+  ck(o.orbit.worseThanBase >= 1 && o.orbit.worseThanBase <= o.orbit.n - 1,
+     "the count of harmful group elements is out of range");
+  ck(o.orbitSigned.n === o.orbit.n * (1 << h), "the signed orbit is not 2^h times the plain one");
+  ck(o.orbit.n === o.two.triedPerm, "the orbit and the alignment search disagree on the group size");
+
+  // --- the bilinear identity, exact by construction
+  ck(o.bilinear.worst <= 256 * eps * Math.max(o.bilinear.scale, 1),
+     "the closed form for the midpoint of a bilinear model does not match the model (" +
+     o.bilinear.worst + ")");
+  ck(o.bilinear.scale > 0, "the two networks are identical, so the identity is vacuous");
+
+  // --- what the difference IS: second order, so halving the deviations quarters it
+  // NOT "=== 0": the deviations are centred by a subtraction, so their mean is zero to a rounding
+  // and the weight average lands within a few ulps of the centre. The bound is derived, not picked.
+  ck(o.order.maxCentre <= 64 * eps * Math.max(1, o.orbit.scale),
+     "the weight average moved when the deviations were shrunk (" + o.order.maxCentre + ")");
+  ck(o.orderAff.maxCentre <= 64 * eps * Math.max(1, o.orbit.scale),
+     "the affine twin's weight average moved further than rounding allows");
+  for (i = 0; i < o.order.ratios.length; i++)
+    ck(Math.abs(o.order.ratios[i] - 4) < 0.4,
+       "shrinking the deviations by a half did not quarter the gap (" + o.order.ratios[i] + ")");
+  ck(Math.abs(o.orderLin.last - 4) <= 1e-6,
+     "the bilinear twin's gap is not exactly quadratic (" + o.orderLin.last + ")");
+  o.orderAff.rows.forEach(function(r){
+    ck(r.gap <= 64 * eps * Math.max(1, o.orbit.scale),
+       "the affine twin's two averages differ at scale " + r.s + " (" + r.gap + ")");
+  });
+  ck(o.order.rows[0].gap > 0, "the nonlinear gap is zero, so there is nothing to shrink");
+
+  // --- the affine control: averaging weights IS averaging predictions when the model is affine
+  ck(o.affine.pointwise <= 64 * eps * o.affine.scale,
+     "with a frozen first layer the two averages differ pointwise (" + o.affine.pointwise + ")");
+  ck(Math.abs(o.affine.wRisk - o.affine.pRisk) <= 64 * eps * Math.max(o.affine.wRisk, 1),
+     "with a frozen first layer the two averages have different risks");
+  ck(o.affine.amb.ens <= o.affine.amb.mean + 64 * eps * Math.max(o.affine.amb.scale, 1),
+     "the affine control's ensemble beat its own decomposition");
+  ck(o.affine.members.length === 3, "the affine control did not train three members");
+
+  // --- two runs
+  ck(o.two.funcAlign <= 16 * h * eps * Math.max(1, o.orbit.scale),
+     "aligning the second network changed the function it computes");
+  ck(o.two.dPerm <= o.two.dRaw + 1e-12,
+     "the best permutation is further away than the identity, which cannot be");
+  ck(o.two.dSign <= o.two.dPerm + 1e-12,
+     "adding the sign flips made the best alignment worse, which cannot be");
+  ck(o.two.tried === o.two.triedPerm * (1 << h),
+     "the signed search did not visit 2^h times as many group elements");
+  ck(o.two.raw.barrier > 0, "there is no barrier between two independent runs at all");
+  ck(o.two.raw.pts.length === 41 && o.two.raw.pts[0].a === 0 && o.two.raw.pts[40].a === 1,
+     "the interpolation path is not a full path from A to B");
+  ck(Math.abs(o.two.raw.pts[0].L - o.two.raw.LA) <= 1e-14 * Math.max(1, o.two.raw.LA),
+     "the path does not start at A's own risk");
+  ck(Math.abs(o.two.aligned.LB - o.two.raw.LB) <= 1e-12 * Math.max(1, o.two.raw.LB),
+     "the aligned copy of B has a different risk from B");
+  ck(o.two.ens <= 0.5 * (o.two.raw.LA + o.two.raw.LB) + 1e-14,
+     "averaging the predictions of two runs cost more than their mean, which convexity forbids");
+
+  // --- the rate sweep
+  ck(o.rates.length > 2, "the rate sweep did not run");
+  for (i = 1; i < o.rates.length; i++)
+    ck(o.rates[i].lr > o.rates[i - 1].lr, "the rate sweep is not sorted");
+  ck(o.rates[o.rates.length - 1].frac > o.rates[0].frac,
+     "the largest rate did not leave a larger share of the risk as disagreement between iterates");
+  o.rates.forEach(function(r){
+    ck(r.ens <= r.mean + 1e-12, "an ensemble cost more than its members' mean at lr " + r.lr);
+    ck(Math.abs(r.mean - r.ens - r.amb) <= 64 * eps * Math.max(r.mean, 1),
+       "the decomposition does not close at lr " + r.lr);
+    ck(r.spread >= 0, "a negative spread at lr " + r.lr);
+    ck(r.gain > 0, "a non-positive averaging gain at lr " + r.lr);
+  });
+
+  // --- the mechanism, as an IDENTITY: an interpolating solution has NO minibatch noise
+  ck(o.probe0.trainLoss === 0, "the teacher does not interpolate the realizable task exactly");
+  ck(o.probe0.gmax === 0,
+     "a minibatch gradient at an interpolating solution is not exactly zero (" + o.probe0.gmax + ")");
+  ck(o.probe0.full === 0, "the full-batch gradient at an interpolating solution is not exactly zero");
+  ck(o.probe0.batches > 1, "the probe saw fewer than two minibatches");
+  ck(o.cfg.noise > 0 ? o.probeN.gmax > 0 : o.probeN.gmax === 0,
+     "the offset did not put a gradient back at the true function");
+
+  // --- the offset sweep: the floor is exactly quadratic in the offset
+  ck(o.noises.length > 2, "the offset sweep did not run");
+  ck(o.noises[0].noise === 0, "the offset sweep does not start at a realizable task");
+  ck(o.noises[0].floor === 0, "a realizable task has a non-zero training floor");
+  var q = null;
+  for (i = 1; i < o.noises.length; i++){
+    ck(o.noises[i].noise > o.noises[i - 1].noise, "the offset sweep is not sorted");
+    ck(o.noises[i].floor > o.noises[i - 1].floor, "a larger offset did not raise the training floor");
+    var qi = o.noises[i].floor / (o.noises[i].noise * o.noises[i].noise);
+    if (q === null) q = qi;
+    ck(Math.abs(qi - q) <= 1e-12 * q, "the training floor is not exactly quadratic in the offset");
+  }
+  o.noises.forEach(function(r){
+    ck(r.spread >= 0, "a negative spread at offset " + r.noise);
+    ck(Math.abs(r.mean - r.ens - r.amb) <= 64 * eps * Math.max(r.mean, 1),
+       "the decomposition does not close at offset " + r.noise);
+  });
+
+  // --- averaging with a sign flip IS deleting units
+  ck(o.prune.exactZero,
+     "averaging a network with a sign-flipped copy did not zero exactly the flipped units");
+  ck(o.prune.n === (1 << h), "the prune ladder is not 2^h wide");
+  ck(o.prune.byK[0].count === 1 && o.prune.byK[0].best === o.orbit.L0,
+     "the empty sign pattern is not the network itself");
+  ck(o.prune.byK[h].count === 1, "there is more than one way to delete every unit");
+  o.prune.byK.forEach(function(r){
+    ck(r.zeroOK, "a sign pattern flipping " + r.k + " units did not zero exactly those units");
+  });
+  ck(o.prune.best.risk <= o.orbit.L0, "no pruned copy matched the network it came from");
+  // delete every unit and the network IS a constant, so it cannot beat the best constant there is
+  ck(o.prune.byK[h].best >= o.floor.constant - 1e-12,
+     "deleting every unit beat the best constant predictor, which a constant cannot");
+
+  // --- aligning by distance is a PROXY for aligning by risk
+  ck(o.alignS.tried === o.two.tried, "the two exhaustive searches disagree on the group size");
+  ck(o.alignS.bestRisk <= o.alignS.riskAtBestD + 1e-15,
+     "the distance-optimal element beat the risk-optimal one, which is impossible by definition");
+  ck(o.alignS.d2 <= o.alignS.raw2 + 1e-12, "the best alignment is further than doing nothing");
+  ck(o.alignS.conc >= 0 && o.alignS.conc <= 1, "the proxy's concordance is outside [0,1]");
+
+  // --- the ranker, once the pool has been trained
+  if (o.pool){
+    ck(o.pool.n > 10, "the pool is too small to rank anything");
+    ck(o.pool.ensLegal === o.pool.n,
+       "an ensemble cost more than the mean of its members, which a convex loss forbids");
+    ck(o.pool.aliWins >= o.pool.midWins, "aligning the pair helped less often than not aligning it");
+    ck(o.pool.aliBeatsMid > o.pool.n / 2, "alignment did not lower the cost on most pairs");
+    o.pool.cands.forEach(function(c){
+      ck(c.auc >= 0 && c.auc <= 1, "an AUC outside [0,1] for " + c.name);
+      ck(c.pairs > 0, "no comparable pairs for " + c.name);
+      ck(c.aliPairs === c.pairs, "the two outcomes were scored on different pair counts");
+    });
+    ck(o.pool.worstCost >= o.pool.bestCost, "the cost range is inverted");
+    ck(o.pool.cands[0].auc >= o.pool.cands[o.pool.cands.length - 1].auc,
+       "the candidate table is not sorted by what it claims to be sorted by");
+  }
+  return { pass: n - out.length, total: n, lines: out };
+}
+// ===== ENGINE:END =====
+
+// ---------------------------------------------------------------- small view helpers
+function $(id){ return document.getElementById(id); }
+function f1(x){ return (Math.round(x * 10) / 10).toFixed(1); }
+function f2(x){ return (Math.round(x * 100) / 100).toFixed(2); }
+function f3(x){ return (Math.round(x * 1000) / 1000).toFixed(3); }
+function f4(x){ return (Math.round(x * 10000) / 10000).toFixed(4); }
+function num(n){ return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+function ex(x){ return x === 0 ? "0.0e+0" : Number(x).toExponential(1); }
+function ex2(x){ return x === 0 ? "0.0e+0" : Number(x).toExponential(2); }
+function pct(x){ return f1(x * 100) + "%"; }
+function cls(good){ return good ? "ok" : "bad"; }
+function mult(x){
+  if (!isFinite(x)) return "&infin;&times;";
+  if (x >= 10 && Math.abs(x - Math.round(x)) < 0.005) return num(Math.round(x)) + "&times;";
+  return (x >= 100 ? num(Math.round(x)) : f2(x)) + "&times;";
+}
+
+var NTRS = [44, 48, 52, 56, 60];
+var LRS = [0.02, 0.05, 0.1, 0.16, 0.24];
+var ZS = [0, 0.12, 0.22, 0.35, 0.5];
+var STEPS = [1000, 2000, 3000, 4500];
+var FIX = { d: 6, ht: 3, batch: 8, every: 20, snaps: 30, burnFrac: 0.5,
+            rateLrs: [0.01, 0.03, 0.06, 0.12, 0.24], noiseLevels: [0, 0.08, 0.16, 0.35, 0.6] };
+var B = null, POOL = null;
+
+function opts(){
+  return { d: FIX.d, ht: FIX.ht, batch: FIX.batch, every: FIX.every, snaps: FIX.snaps,
+           burnFrac: FIX.burnFrac, rateLrs: FIX.rateLrs, noiseLevels: FIX.noiseLevels,
+           ntr: NTRS[+$("sN").value], h: +$("sH").value, lr: LRS[+$("sL").value],
+           noise: ZS[+$("sZ").value], steps: STEPS[+$("sT").value], seed: +$("sS").value };
+}
+function showOpts(){
+  var o = opts();
+  $("vN").textContent = o.ntr;
+  $("vH").textContent = o.h;
+  $("vL").textContent = f2(o.lr);
+  $("vZ").textContent = f2(o.noise);
+  $("vT").textContent = num(o.steps);
+  $("vS").textContent = o.seed;
+}
+
+// ---------------------------------------------------------------- charts
+function orbitChart(rows, L0){
+  var W = 520, H = 220, PADL = 44, PADB = 30, PADT = 12, PADR = 10;
+  var vals = rows.map(function(r){ return Math.log10(Math.max(r.L, 1e-12)); });
+  var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+  if (hi - lo < 1e-9){ hi = lo + 1; }
+  var NB = 32, bins = [], i;
+  for (i = 0; i < NB; i++) bins[i] = 0;
+  vals.forEach(function(v){
+    var b = Math.min(NB - 1, Math.floor((v - lo) / (hi - lo) * NB));
+    bins[b]++;
+  });
+  var mx = Math.max.apply(null, bins);
+  var bw = (W - PADL - PADR) / NB;
+  var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img">';
+  s += '<line x1="' + PADL + '" y1="' + (H - PADB) + '" x2="' + (W - PADR) + '" y2="' +
+       (H - PADB) + '" stroke="#cbd5e1" />';
+  for (i = 0; i < NB; i++){
+    if (!bins[i]) continue;
+    var hgt = (H - PADB - PADT) * bins[i] / mx;
+    s += '<rect x="' + (PADL + i * bw + 0.6) + '" y="' + (H - PADB - hgt) + '" width="' +
+         (bw - 1.2) + '" height="' + hgt + '" fill="#f43f5e" opacity="0.75" />';
+  }
+  var x0 = PADL + (Math.log10(Math.max(L0, 1e-12)) - lo) / (hi - lo) * (W - PADL - PADR);
+  s += '<line x1="' + x0 + '" y1="' + PADT + '" x2="' + x0 + '" y2="' + (H - PADB) +
+       '" stroke="#0f172a" stroke-width="2" />';
+  s += '<text x="' + (x0 + 5) + '" y="' + (PADT + 12) + '" font-size="10" fill="#0f172a">' +
+       'the network itself</text>';
+  s += '<text x="' + PADL + '" y="' + (H - 10) + '" font-size="10" fill="#64748b">' +
+       f4(Math.pow(10, lo)) + '</text>';
+  s += '<text x="' + (W - PADR) + '" y="' + (H - 10) + '" font-size="10" fill="#64748b" ' +
+       'text-anchor="end">' + f4(Math.pow(10, hi)) + '</text>';
+  s += '<text x="' + (W / 2) + '" y="' + (H - 10) + '" font-size="10" fill="#64748b" ' +
+       'text-anchor="middle">risk of the average, log scale</text>';
+  s += '<text x="6" y="' + (PADT + 10) + '" font-size="10" fill="#64748b">' + num(mx) + '</text>';
+  return s + '</svg>';
+}
+function pathChart(a, b, c){
+  var W = 520, H = 230, PADL = 48, PADB = 30, PADT = 12, PADR = 10;
+  var all = a.pts.concat(b.pts, c.pts).map(function(p){ return p.L; });
+  var hi = Math.max.apply(null, all), lo = Math.min.apply(null, all);
+  if (hi - lo < 1e-12) hi = lo + 1;
+  function X(al){ return PADL + al * (W - PADL - PADR); }
+  function Y(v){ return H - PADB - (v - lo) / (hi - lo) * (H - PADB - PADT); }
+  function poly(pts, col, dash){
+    return '<polyline fill="none" stroke="' + col + '" stroke-width="2"' +
+      (dash ? ' stroke-dasharray="' + dash + '"' : '') + ' points="' +
+      pts.map(function(p){ return X(p.a).toFixed(1) + "," + Y(p.L).toFixed(1); }).join(" ") + '" />';
+  }
+  var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img">';
+  s += '<line x1="' + PADL + '" y1="' + (H - PADB) + '" x2="' + (W - PADR) + '" y2="' +
+       (H - PADB) + '" stroke="#cbd5e1" />';
+  s += poly(a.pts, "#b91c1c", "");
+  s += poly(b.pts, "#0ea5e9", "5 3");
+  s += poly(c.pts, "#15803d", "");
+  s += '<text x="' + (PADL + 6) + '" y="' + (PADT + 12) + '" font-size="10" fill="#b91c1c">' +
+       'as trained</text>';
+  s += '<text x="' + (PADL + 6) + '" y="' + (PADT + 26) + '" font-size="10" fill="#0ea5e9">' +
+       'aligned by distance</text>';
+  s += '<text x="' + (PADL + 6) + '" y="' + (PADT + 40) + '" font-size="10" fill="#15803d">' +
+       'aligned by risk</text>';
+  s += '<text x="6" y="' + (PADT + 10) + '" font-size="10" fill="#64748b">' + f3(hi) + '</text>';
+  s += '<text x="6" y="' + (H - PADB) + '" font-size="10" fill="#64748b">' + f3(lo) + '</text>';
+  s += '<text x="' + PADL + '" y="' + (H - 10) + '" font-size="10" fill="#64748b">run A</text>';
+  s += '<text x="' + (W - PADR) + '" y="' + (H - 10) + '" font-size="10" fill="#64748b" ' +
+       'text-anchor="end">run B</text>';
+  return s + '</svg>';
+}
+function curveChart(curve){
+  var W = 520, H = 200, PADL = 50, PADB = 28, PADT = 12, PADR = 10;
+  var vals = curve.map(function(c){ return Math.log10(Math.max(c.risk, 1e-9)); })
+    .concat(curve.map(function(c){ return Math.log10(Math.max(c.tr, 1e-9)); }));
+  var hi = Math.max.apply(null, vals), lo = Math.min.apply(null, vals);
+  if (hi - lo < 1e-9) hi = lo + 1;
+  var n = curve.length;
+  function X(i){ return PADL + i / Math.max(n - 1, 1) * (W - PADL - PADR); }
+  function Y(v){ return H - PADB - (Math.log10(Math.max(v, 1e-9)) - lo) / (hi - lo) * (H - PADB - PADT); }
+  function poly(key, col){
+    return '<polyline fill="none" stroke="' + col + '" stroke-width="2" points="' +
+      curve.map(function(c, i){ return X(i).toFixed(1) + "," + Y(c[key]).toFixed(1); }).join(" ") + '" />';
+  }
+  var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img">';
+  s += '<line x1="' + PADL + '" y1="' + (H - PADB) + '" x2="' + (W - PADR) + '" y2="' +
+       (H - PADB) + '" stroke="#cbd5e1" />';
+  s += poly("tr", "#0ea5e9") + poly("risk", "#b91c1c");
+  s += '<text x="' + (W - PADR - 4) + '" y="' + (PADT + 12) + '" font-size="10" fill="#b91c1c" ' +
+       'text-anchor="end">population risk</text>';
+  s += '<text x="' + (W - PADR - 4) + '" y="' + (PADT + 26) + '" font-size="10" fill="#0ea5e9" ' +
+       'text-anchor="end">training loss</text>';
+  s += '<text x="6" y="' + (PADT + 10) + '" font-size="10" fill="#64748b">' +
+       f3(Math.pow(10, hi)) + '</text>';
+  s += '<text x="6" y="' + (H - PADB) + '" font-size="10" fill="#64748b">' +
+       ex(Math.pow(10, lo)) + '</text>';
+  s += '<text x="' + (W / 2) + '" y="' + (H - 8) + '" font-size="10" fill="#64748b" ' +
+       'text-anchor="middle">SGD steps</text>';
+  return s + '</svg>';
+}
+function aucChart(cands){
+  var W = 520, rowH = 30, H = cands.length * rowH + 34, PADL = 250, PADR = 20;
+  var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img">';
+  function X(v){ return PADL + (v - 0.35) / 0.5 * (W - PADL - PADR); }
+  s += '<line x1="' + X(0.5) + '" y1="8" x2="' + X(0.5) + '" y2="' + (H - 22) +
+       '" stroke="#0f172a" stroke-dasharray="4 3" />';
+  s += '<text x="' + X(0.5) + '" y="' + (H - 8) + '" font-size="10" fill="#0f172a" ' +
+       'text-anchor="middle">a coin, 0.500</text>';
+  cands.forEach(function(c, i){
+    var y = 14 + i * rowH;
+    s += '<text x="0" y="' + (y + 11) + '" font-size="11" fill="#334155">' +
+         (c.name.length > 44 ? c.name.slice(0, 42) + "&hellip;" : c.name) + '</text>';
+    var x0 = Math.min(X(0.5), X(c.auc)), x1 = Math.max(X(0.5), X(c.auc));
+    s += '<rect x="' + x0 + '" y="' + y + '" width="' + Math.max(x1 - x0, 1) + '" height="14" fill="' +
+         (c.auc >= 0.5 ? "#15803d" : "#b91c1c") + '" opacity="0.85" />';
+    s += '<circle cx="' + X(c.within) + '" cy="' + (y + 7) + '" r="4" fill="#0f172a" />';
+    s += '<text x="' + (W - 2) + '" y="' + (y + 11) + '" font-size="10" fill="#64748b" ' +
+         'text-anchor="end">' + f3(c.auc) + ' &middot; ' + f3(c.within) + '</text>';
+  });
+  return s + '</svg>';
+}
+
+// ---------------------------------------------------------------- rendering
+function renderAll(){
+  var o = B, t = o.task, h = o.cfg.h;
+  $("setup").innerHTML =
+    "<strong>" + num(t.N) + "</strong> inputs enumerated (" + t.d + " binary features), <strong>" +
+    num(t.ntr) + "</strong> of them shown to the student with a fixed per-point offset of " +
+    f2(o.cfg.noise) + "; the teacher has " + t.ht + " hidden units and the student <strong>" + h +
+    "</strong>, for <strong>" + num(t.P) + "</strong> parameters. Constant-rate SGD, batch " +
+    FIX.batch + ", <strong>" + num(o.cfg.steps) + "</strong> steps, " + o.cfg.snaps +
+    " snapshots taken over the second half. The score is the risk against the true function over " +
+    "all " + num(t.N) + " inputs &mdash; an exact expectation, not a held-out estimate.";
+
+  // --- the floor
+  $("floor").innerHTML = [
+    ["the teacher, on the population", f4(o.floor.teacher) === "0.0000" && o.floor.teacher === 0 ?
+      "<span class='ok'>0.0e+0</span>" : ex2(o.floor.teacher),
+      "the student holds it exactly, so this is a zero and not a small number"],
+    ["the teacher, on the training set", f4(o.floor.teacherTrain),
+      "the mean square of the offset, " + ex2(o.floor.noiseMS) + " &mdash; the same number"],
+    ["the best constant", f4(o.floor.constant), "the variance of the true function"],
+    ["predicting zero", f4(o.floor.zero), "the variance plus the squared mean"],
+    ["the true function's range", f4(o.floor.spread), "what the numbers above are measured against"]
+  ].map(function(r){
+    return "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td><td style='text-align:left;" +
+      "white-space:normal'><span class='lg'>" + r[2] + "</span></td></tr>";
+  }).join("");
+  $("floorNote").innerHTML =
+    "Every row is a computation over the whole input space. The teacher's population risk is " +
+    "<strong class='ok'>exactly 0</strong> &mdash; the student copies its units and gives every " +
+    "spare unit an output weight of 0, which contributes 0 to the sum rather than something small " +
+    "&mdash; and its training loss is the mean square of the offset to " +
+    ex2(Math.abs(o.floor.teacherTrain - o.floor.noiseMS)) + ". With <strong>" + num(t.P) +
+    "</strong> parameters against <strong>" + num(t.ntr) + "</strong> training points the student " +
+    "cannot interpolate this data, which is what gives the run a floor at all.";
+
+  // --- gradients
+  $("grad").innerHTML = [
+    ["the network", o.grad], ["the linear twin <span class='lg'>tanh removed</span>", o.gradLin]
+  ].map(function(r){
+    var g = r[1];
+    return "<tr><td style='white-space:normal'>" + r[0] + "</td><td>" + num(o.grad.P) + "</td><td class='" +
+      cls(g.lossGap === 0) + "'>" + (g.lossGap === 0 ? "identical" : ex2(g.lossGap)) +
+      "</td><td class='" + cls(g.dual < 1e-13) + "'>" + ex2(g.dual) + "</td><td>" +
+      ex2(g.dual / g.gmax) + "</td><td>" + ex2(g.cd) + "</td><td>" + f4(g.gmax) + "</td></tr>";
+  }).join("");
+  $("gradNote").innerHTML =
+    "Forward mode reproduces the loss <strong>bit for bit</strong> and its gradient agrees with the " +
+    "hand-written backward pass to <strong>" + ex2(o.grad.dual) + "</strong>, which is <strong>" +
+    ex2(o.grad.dual / o.grad.gmax) + "</strong> of the largest gradient. A central difference on the " +
+    "same code manages " + ex2(o.grad.cd) + " &mdash; <strong>" +
+    mult(o.grad.cd / Math.max(o.grad.dual, 1e-300)) + "</strong> worse, and that gap is the whole " +
+    "reason the check is not a difference. It runs at <em>initialisation</em>: at convergence the " +
+    "gradient itself has decayed towards the difference's own floor and the test stops being about " +
+    "the code.";
+
+  // --- the orbit
+  var ob = o.orbit, os = o.orbitSigned;
+  $("orbit").innerHTML = [
+    ["permutations only", ob], ["permutations and sign flips", os]
+  ].map(function(r, i){
+    var g = r[1];
+    return "<tr" + (i === 1 ? " class='hl'" : "") + "><td>" + r[0] + "</td><td>" + num(g.n) +
+      "</td><td>" + ex2(g.funcMax) + "</td><td class='" + cls(g.min <= ob.L0) + "'>" + f4(g.min) +
+      "</td><td>" + f4(g.median) + "</td><td class='bad'>" + f4(g.max) + "</td><td>" +
+      num(g.worseThanBase) + " of " + num(g.n) + "</td></tr>";
+  }).join("");
+  $("orbitNote").innerHTML =
+    "The network scores <strong>" + f4(ob.L0) + "</strong>. Every one of those <strong>" +
+    num(os.n) + "</strong> weight vectors computes the same function &mdash; the outputs move by at " +
+    "most <strong>" + ex2(os.funcMax) + "</strong>, which is the summation order and nothing else, " +
+    "and their own risks agree to " + ex2(ob.ownMax) + ". <span class='red'>Averaging the network " +
+    "with each of them gives " + num(os.n) + " different models</span> spanning <strong>" +
+    f4(os.min) + "</strong> to <strong>" + f4(os.max) + "</strong>, a factor of <strong>" +
+    mult(os.max / os.min) + "</strong>. <strong>" + num(ob.worseThanBase) + " of " + num(ob.n) +
+    "</strong> permutations make it worse, and the one that does not is the identity, which returns " +
+    "the network <em>exactly</em> &mdash; not to a tolerance: " + f4(ob.identity.L) + " is the same " +
+    "double as " + f4(ob.L0) + ", because <code>(p + p) / 2</code> is <code>p</code>. So the " +
+    "average of two models is not a function of the two models.";
+  $("orbitSVG").innerHTML = orbitChart(os.rows, ob.L0);
+
+  // --- pruning
+  var pr = o.prune;
+  $("prune").innerHTML = pr.byK.map(function(r, i){
+    return "<tr" + (r.best === pr.best.risk ? " class='hl'" : "") + "><td>" + r.k + " of " + h +
+      "</td><td>" + num(r.count) + "</td><td class='" + cls(r.zeroOK) + "'>" +
+      (r.zeroOK ? r.k : "NOT " + r.k) +
+      "</td><td class='" + cls(r.best <= o.orbit.L0) + "'>" + f4(r.best) + "</td><td>" +
+      f4(r.worst) + "</td><td class='" + cls(r.best <= o.orbit.L0) + "'>" +
+      (i === 0 ? "&mdash;" : mult(r.best / o.orbit.L0)) + "</td></tr>";
+  }).join("");
+  $("pruneNote").innerHTML =
+    "Every sign pattern zeroed exactly the units it flipped &mdash; <strong class='ok'>" +
+    (pr.exactZero ? "all " + num(pr.n) + " of them" : "NOT verified") + "</strong> &mdash; so this " +
+    "table is not an analogy. The best of them deletes <strong>" + pr.best.k + " of " + h +
+    "</strong> units and scores <strong>" + f4(pr.best.risk) + "</strong> against the full " +
+    "network's <strong>" + f4(o.orbit.L0) + "</strong>, <strong class='ok'>" +
+    mult(o.orbit.L0 / pr.best.risk) + " better</strong>, because a " + num(t.P) +
+    "-parameter network fitted to " + num(t.ntr) + " offset points has capacity it is using badly. " +
+    "Delete all " + h + " and the network is the constant <code>b&#8322;</code>, scoring " +
+    f4(pr.byK[h].best) + " against the best constant's " + f4(o.floor.constant) + " &mdash; worse, " +
+    "as it has to be.";
+
+  // --- second order
+  $("order").innerHTML = o.order.rows.map(function(r, i){
+    return "<tr><td>" + (r.s === 1 ? "1" : "1/" + Math.round(1 / r.s)) + "</td><td>" + ex2(r.gap) +
+      "</td><td class='" + cls(i === 0 || Math.abs(o.order.ratios[i - 1] - 4) < 0.4) + "'>" +
+      (i === 0 ? "&mdash;" : f4(o.order.ratios[i - 1])) + "</td><td>" + ex2(o.orderLin.rows[i].gap) +
+      "</td><td class='ok'>" + (i === 0 ? "&mdash;" : o.orderLin.ratios[i - 1].toFixed(10)) +
+      "</td><td class='ok'>" + ex2(o.orderAff.rows[i].gap) + "</td></tr>";
+  }).join("");
+  $("orderNote").innerHTML =
+    "The weight average never moves &mdash; it stays within <strong>" + ex2(o.order.maxCentre) +
+    "</strong> of the centre at every scale, which is the rounding left by centring the deviations " +
+    "and not a tolerance anybody chose. What moves is the prediction average, and it moves " +
+    "<em>quadratically</em>: the ratios read " +
+    o.order.ratios.map(function(x){ return "<strong>" + f4(x) + "</strong>"; }).join(", ") +
+    " against a second-order term's 4. In the twin with the nonlinearity removed the model is " +
+    "exactly bilinear in its two blocks and every ratio is <strong class='ok'>4</strong> to within " +
+    ex2(Math.max.apply(null, o.orderLin.ratios.map(function(x){ return Math.abs(x - 4); }))) +
+    ", with the closed form " +
+    "<code>&minus;&frac14;&#916;w&#8322;&#8901;(&#916;Vx)</code> matching the model to <strong>" +
+    ex2(o.bilinear.worst) + "</strong>. In the twin that is affine in what is averaged, the gap is " +
+    "<strong class='ok'>identically zero</strong> to " + ex2(Math.max.apply(null,
+      o.orderAff.rows.map(function(r){ return r.gap; }))) + " &mdash; the two operations are the " +
+    "same operation there, which is the whole condition.";
+
+  var af = o.affine;
+  $("affine").innerHTML = [
+    ["averaging their weights", f4(af.wRisk), ""],
+    ["averaging their predictions", f4(af.pRisk), ""],
+    ["largest pointwise difference", ex2(af.pointwise), "<span class='ok'>rounding</span>"],
+    ["difference in risk", ex2(Math.abs(af.wRisk - af.pRisk)), "<span class='ok'>rounding</span>"],
+    ["the three members", af.members.map(f4).join(" &middot; "), ""],
+    ["the ensemble's gain", ex2(af.amb.amb), "exactly the spread of the three"]
+  ].map(function(r){
+    return "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td><td>" + r[2] + "</td></tr>";
+  }).join("");
+  $("affineNote").innerHTML =
+    "Freeze the first layer and the model is affine in every parameter that moves, so " +
+    "<code>f(mean w)</code> and <code>mean f(w)</code> are the same thing by linearity. They agree " +
+    "pointwise to <strong>" + ex2(af.pointwise) + "</strong>. This is the control the rest of the " +
+    "page is measured against: every gap between the two averages elsewhere is the curvature that " +
+    "this network does not have.";
+
+  // --- trajectory
+  var tj = o.traj;
+  $("traj").innerHTML = [
+    ["the last iterate", tj.finalRisk, tj.finalTrain, true],
+    ["the best single iterate <span class='lg'>an oracle</span>", tj.bestIter, null, false],
+    ["a typical iterate <span class='lg'>the mean member</span>", tj.meanRisk, null, false],
+    ["averaging the WEIGHTS", tj.swaRisk, tj.swaTrain, false],
+    ["averaging the PREDICTIONS", tj.ensRisk, null, false]
+  ].map(function(r){
+    return "<tr" + (r[0].indexOf("WEIGHTS") >= 0 ? " class='hl'" : "") + "><td style='white-space:normal'>" +
+      r[0] + "</td><td>" + f4(r[1]) + "</td><td class='" +
+      cls(r[1] <= tj.finalRisk) + "'>" + (r[3] ? "&mdash;" : mult(tj.finalRisk / r[1])) +
+      "</td><td>" + (r[2] === null ? "&mdash;" : f4(r[2])) + "</td></tr>";
+  }).join("");
+  $("trajNote").innerHTML =
+    "Averaging the weights of the tail scores <strong>" + f4(tj.swaRisk) + "</strong> against the " +
+    "last iterate's <strong>" + f4(tj.finalRisk) + "</strong>, <strong class='" +
+    cls(tj.swaRisk < tj.finalRisk) + "'>" + mult(tj.finalRisk / tj.swaRisk) + "</strong>. " +
+    "<span class='red'>And its training loss is " + mult(tj.swaTrain / tj.finalTrain) +
+    " worse</span> (" + f4(tj.swaTrain) + " against " + f4(tj.finalTrain) + ") &mdash; if you were " +
+    "watching the number you were optimising, this would look like a mistake. Averaging the " +
+    "predictions of the same snapshots scores " + f4(tj.ensRisk) + ", within " +
+    ex2(Math.abs(tj.ensRisk - tj.swaRisk)) + " of the weight average, because the snapshots are " +
+    "close together and the gap between the two averages is second order in how far apart they are.";
+  $("amb").innerHTML = [
+    ["the mean member's risk", f4(tj.amb.mean)],
+    ["the ensemble's risk", f4(tj.amb.ens)],
+    ["the spread of the members", ex2(tj.amb.amb)],
+    ["mean &minus; ensemble &minus; spread", "<span class='ok'>" + ex2(tj.amb.gap) + "</span>"],
+    ["spread of the snapshots in weight space", f4(tj.spread)]
+  ].map(function(r){ return "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td></tr>"; }).join("");
+  $("curveSVG").innerHTML = curveChart(tj.run.curve);
+
+  // --- two runs
+  var tw = o.two, al = o.alignS, better = Math.min(tw.raw.LA, tw.raw.LB);
+  $("tried").textContent = num(al.tried);
+  $("two").innerHTML = [
+    ["run A alone", null, tw.raw.LA, null],
+    ["run B alone", null, tw.raw.LB, null],
+    ["their predictions", null, tw.ens, null],
+    ["their weights, as trained", tw.dRaw, tw.raw.mid, tw.raw.barrier],
+    ["aligned by distance <span class='lg'>permutations only</span>", tw.dPerm, tw.alignedPerm.mid,
+      tw.alignedPerm.barrier],
+    ["aligned by distance <span class='lg'>the whole group</span>", tw.dSign, tw.aligned.mid,
+      tw.aligned.barrier],
+    ["aligned by RISK <span class='lg'>the whole group</span>", null, tw.oracle.mid, tw.oracle.barrier]
+  ].map(function(r, i){
+    return "<tr" + (i === 6 ? " class='hl'" : "") + "><td style='white-space:normal'>" + r[0] +
+      "</td><td>" + (r[1] === null ? "&mdash;" : f4(r[1])) + "</td><td class='" +
+      cls(r[2] <= better) + "'>" + f4(r[2]) + "</td><td>" +
+      (r[3] === null ? "&mdash;" : (r[3] === 0 ? "<span class='ok'>0.0e+0</span>" : f4(r[3]))) +
+      "</td><td class='" + cls(r[2] <= better) + "'>" + mult(r[2] / better) + "</td></tr>";
+  }).join("");
+  $("twoNote").innerHTML =
+    "Averaging the two as trained costs <strong class='bad'>" + mult(tw.raw.mid / better) +
+    "</strong> the better of them, with a barrier of " + f4(tw.raw.barrier) + " peaking at " +
+    "&alpha; = " + f2(tw.raw.at) + ". Averaging their <em>predictions</em> instead costs " +
+    "<strong class='" + cls(tw.ens <= better) + "'>" + mult(tw.ens / better) + "</strong>. " +
+    "<span class='red'>The alignment everyone runs finds the wrong element:</span> minimising the " +
+    "weight distance over all " + num(al.tried) + " gets the distance from " + f4(tw.dRaw) +
+    " down to " + f4(tw.dSign) + " and the midpoint to <strong>" + f4(al.riskAtBestD) +
+    "</strong>, while the element minimising the <em>risk</em> gives <strong class='ok'>" +
+    f4(al.bestRisk) + "</strong> &mdash; <strong>" + mult(al.riskAtBestD / al.bestRisk) +
+    "</strong> better, below both endpoints, and with a barrier of exactly <strong class='ok'>" +
+    (tw.oracle.barrier === 0 ? "0.0e+0" : f4(tw.oracle.barrier)) + "</strong>. Scored as a ranker " +
+    "over those same " + num(al.tried) + " elements the distance manages <strong>" + f3(al.conc) +
+    "</strong> against a coin's 0.500: better than nothing, and a long way from the thing it stands " +
+    "in for. " +
+    "<span class='red'>And widening the search made it worse:</span> minimising the distance over " +
+    "the " + num(tw.triedPerm) + " permutations alone gives " + f4(tw.alignedPerm.mid) +
+    ", while adding the sign flips finds a strictly closer point (" + f4(tw.dSign) +
+    " against " + f4(tw.dPerm) + ") whose average is " + f4(tw.aligned.mid) + " &mdash; " +
+    mult(tw.aligned.mid / tw.alignedPerm.mid) + " the risk, for " + (1 << h) + " times the work. " +
+    "Aligning changes nothing about the function &mdash; the aligned copy's outputs move by " +
+    ex2(tw.funcAlign) + " and its own risk by " + ex2(Math.abs(tw.aligned.LB - tw.raw.LB)) + ".";
+  $("pathSVG").innerHTML = pathChart(tw.raw, tw.aligned, tw.oracle);
+
+  // --- the probe and the sweeps
+  $("probe").innerHTML = [
+    ["with the offset turned off <span class='lg'>realizable</span>", o.probe0],
+    ["as configured, offset " + f2(o.cfg.noise), o.probeN]
+  ].map(function(r, i){
+    var p = r[1];
+    return "<tr" + (i === 0 ? " class='hl'" : "") + "><td style='white-space:normal'>" + r[0] +
+      "</td><td class='" + cls(p.trainLoss === 0) + "'>" +
+      (p.trainLoss === 0 ? "0.0e+0" : f4(p.trainLoss)) + "</td><td class='" +
+      cls(p.gmax === 0) + "'>" + (p.gmax === 0 ? "0.0e+0" : f4(p.gmax)) + "</td><td>" +
+      (p.full === 0 ? "0.0e+0" : f4(p.full)) + "</td><td>" + p.batches + "</td></tr>";
+  }).join("");
+  $("probeNote").innerHTML =
+    "No training involved: this is the true function, put into the student, on the training set it " +
+    "would be asked to fit. With no offset it interpolates, so every residual is zero and every " +
+    "minibatch gradient is <strong class='ok'>exactly 0.0e+0</strong> across all " + o.probe0.batches +
+    " minibatches &mdash; a zero, not a small number. SGD's noise <em>is</em> the disagreement " +
+    "between minibatch gradients, so on a realizable task the noise switches itself off, the run " +
+    "never hovers, and averaging the tail can only average in the past. Put the offset back and " +
+    "the same probe reads <strong>" + f4(o.probeN.gmax) + "</strong>.";
+
+  $("rates").innerHTML = o.rates.map(function(r){
+    return "<tr><td>" + f2(r.lr) + "</td><td>" + f4(r.spread) + "</td><td>" + pct(r.frac) +
+      "</td><td>" + f4(r.final) + "</td><td>" + f4(r.swa) + "</td><td class='" +
+      cls(r.gain > 1) + "'>" + mult(r.gain) + "</td></tr>";
+  }).join("");
+  var r0 = o.rates[0], rN = o.rates[o.rates.length - 1];
+  $("ratesNote").innerHTML =
+    "The share of the risk that is pure disagreement between iterates goes from <strong>" +
+    pct(r0.frac) + "</strong> at rate " + f2(r0.lr) + " to <strong>" + pct(rN.frac) +
+    "</strong> at " + f2(rN.lr) + ", <strong>" + mult(rN.frac / r0.frac) + "</strong>. At the " +
+    "smallest rate averaging is <strong class='" + cls(r0.gain > 1) + "'>" + mult(r0.gain) +
+    "</strong> &mdash; there is nothing to average.";
+
+  $("noises").innerHTML = o.noises.map(function(r, i){
+    return "<tr" + (i === 0 ? " class='hl'" : "") + "><td>" + f2(r.noise) + "</td><td>" +
+      (r.floor === 0 ? "<span class='ok'>0.0e+0</span>" : f4(r.floor)) + "</td><td>" +
+      f4(r.spread) + "</td><td>" + f4(r.final) + "</td><td>" + f4(r.swa) + "</td><td class='" +
+      cls(r.gain > 1) + "'>" + mult(r.gain) + "</td></tr>";
+  }).join("");
+  var wins = 0;
+  o.noises.forEach(function(r){ if (r.beatsFinal) wins++; });
+  $("noisesNote").innerHTML =
+    "With no offset the task is realizable and averaging the tail is <strong class='bad'>" +
+    mult(1 / o.noises[0].gain) + " worse</strong> than keeping the last iterate. The training floor " +
+    "is exactly quadratic in the offset &mdash; every row's floor divided by the offset squared is " +
+    "the same number to 1e-12. The iterates sit " + f4(o.noises[0].spread) + " from their own " +
+    "centre with no offset and " + f4(o.noises[o.noises.length - 1].spread) + " at the largest. " +
+    "Averaging beats " +
+    "the last iterate on <strong>" + wins + " of " + o.noises.length + "</strong> rows: the gain " +
+    "needs a floor, and it is not monotone in how big that floor is.";
+}
+
+// ---------------------------------------------------------------- the self-check
+function runChecks(){
+  var r = selfCheck(B);
+  var bad = r.lines.length;
+  $("selftest").innerHTML =
+    (bad ? "<span class='bad'>" + bad + " FAILING</span> of " + r.total + " checks\n\n" +
+           r.lines.join("\n") + "\n\n"
+         : "<span class='ok'>" + r.pass + " / " + r.total + " checks passed</span>\n\n") +
+    ("the input space is enumerated and the student has fewer parameters than training points; the\n" +
+     "teacher scores exactly zero on the population and exactly the mean square of the offset on the\n" +
+     "training set; forward-mode duals reproduce the loss bit for bit and beat a central difference\n" +
+     "against the same backward pass, for the network and for its linear twin; every element of the\n" +
+     "symmetry group leaves the function alone to the summation order, the identity returns the\n" +
+     "network exactly, and at least one element does not; a sign flip zeroes exactly the units it\n" +
+     "flipped, deleting every unit cannot beat the best constant, and the whole group is 2^h times\n" +
+     "the permutations; the ambiguity decomposition closes as an equation and no ensemble beats it;\n" +
+     "shrinking the deviations by a half quarters the gap between the two averages, exactly so in\n" +
+     "the bilinear twin, and the affine twin has no gap at all; the closed form for a bilinear\n" +
+     "midpoint matches the model; a minibatch gradient at an interpolating solution is exactly zero;\n" +
+     "the training floor is exactly quadratic in the offset; the best alignment by distance cannot\n" +
+     "beat the best by risk, and neither is further away than doing nothing." +
+     (POOL ? "" : "\n\n(the ranker assertions run once the pool has been trained)"));
+}
+
+// ---------------------------------------------------------------- wiring
+$("runPool").addEventListener("click", function(){
+  var btn = this;
+  btn.disabled = true;
+  $("poolStatus").textContent = "training the pool…";
+  setTimeout(function(){
+    var t0 = Date.now();
+    var pl = rankerStudy(B.task, { h: B.cfg.h, batch: FIX.batch, steps: Math.round(B.cfg.steps / 2),
+      lrs: [0.03, 0.06, 0.12, 0.24],
+      pairs: [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12], [13, 14], [15, 16]] });
+    POOL = pl;
+    B.pool = pl;
+    $("auc").innerHTML = pl.cands.map(function(c, i){
+      return "<tr" + (i === 0 ? " class='hl'" : "") + "><td style='white-space:normal'>" + c.name +
+        "</td><td class='" + cls(c.auc > 0.5) + "'>" + f3(c.auc) + "</td><td class='" +
+        cls(c.auc > 0.5) + "'>" + (c.auc >= 0.5 ? "+" : "&minus;") + f3(Math.abs(c.auc - 0.5)) +
+        "</td><td class='" + cls(c.within > 0.5) + "'>" + f3(c.within) + "</td><td class='" +
+        cls(c.aucAli > 0.5) + "'>" + f3(c.aucAli) + "</td><td>" + num(c.pairs) + "</td></tr>";
+    }).join("");
+    $("aucSVG").innerHTML = aucChart(pl.cands);
+    var top = pl.cands[0], dist = null, ali = null;
+    pl.cands.forEach(function(c){
+      if (c.key === "raw") dist = c;
+      if (c.key === "aligned") ali = c;
+    });
+    $("aucNote").innerHTML =
+      "Over <strong>" + num(pl.n) + "</strong> trained pairs, averaging the weights beat the better " +
+      "member on <strong class='bad'>" + pl.midWins + " of " + pl.n + "</strong>, costing between " +
+      "<strong>" + mult(pl.bestCost) + "</strong> and <strong>" + mult(pl.worstCost) + "</strong>. " +
+      "Aligning first lowers that on <strong>" + pl.aliBeatsMid + " of " + pl.n + "</strong> pairs, " +
+      "to between " + mult(pl.bestAli) + " and " + mult(pl.worstAli) + ", and beats both members on " +
+      pl.aliWins + ". Averaging their predictions cost no more than the mean member on <strong " +
+      "class='ok'>" + pl.ensLegal + " of " + pl.n + "</strong> &mdash; it cannot, that is the " +
+      "theorem &mdash; but beat the <em>better</em> member on only <strong>" + pl.ensBeatsBest +
+      "</strong>, which is the distinction the guarantee is usually quoted past. " +
+      "<span class='red'>Nothing predicts what averaging will cost:</span> the best candidate scores " +
+      "<strong>" + f3(top.auc) + "</strong> against a coin's 0.500 and <strong>" + f3(top.within) +
+      "</strong> inside one rate. The weight distance, the number everyone reaches for, scores " +
+      "<strong>" + f3(dist.auc) + "</strong> and <strong>" + f3(dist.within) + "</strong>. " +
+      "The same distance <em>after</em> aligning scores " + f3(ali.auc) + " and <strong class='" +
+      cls(ali.within > 0.5) + "'>" + f3(ali.within) + "</strong> &mdash; aligning changes which " +
+      "question is being asked, and against the aligned average that same number scores " +
+      f3(ali.aucAli) + ".";
+    $("poolStatus").textContent = "done in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    btn.disabled = false;
+    runChecks();
+  }, 30);
+});
+
+function recompute(){
+  $("mainStatus").textContent = "enumerating the input space…";
+  setTimeout(function(){
+    var t0 = Date.now();
+    B = runAll(opts());
+    POOL = null;
+    $("auc").innerHTML = "";
+    $("aucSVG").innerHTML = "";
+    $("aucNote").innerHTML = "";
+    $("poolStatus").textContent = "not run yet for these settings";
+    $("mainStatus").textContent = "rendering…";
+    setTimeout(function(){
+      renderAll();
+      $("mainStatus").textContent = "rebuilt in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+      runChecks();
+    }, 20);
+  }, 20);
+}
+
+["sN", "sH", "sL", "sZ", "sT", "sS"].forEach(function(id){
+  $(id).addEventListener("input", function(){
+    showOpts();
+    $("mainStatus").textContent = "release to recompute";
+  });
+  $(id).addEventListener("change", recompute);
+});
+
+var tabs = $("tabs").querySelectorAll("button");
+for (var ti = 0; ti < tabs.length; ti++){
+  tabs[ti].addEventListener("click", function(){
+    var name = this.getAttribute("data-tab");
+    for (var k = 0; k < tabs.length; k++) tabs[k].className = tabs[k] === this ? "tab-active" : "";
+    ["look", "understand", "build"].forEach(function(s){
+      $(s).className = (s === "look" ? "panel" : "panel light") + (s === name ? "" : " hidden");
+    });
+    window.scrollTo(0, 0);
+  });
+}
+
+showOpts();
+recompute();
+</script>
+</body>
+</html>

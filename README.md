@@ -75,6 +75,9 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 71 — Tokenisation & the loss you report](https://dev48.infy.uk/dl/day71-tokenisation-and-the-loss-you-report.html) — `day71-tokenisation-and-the-loss-you-report.html`
 - [DeepLearningFromZero · Day 72 — Residual scaling & depth stability](https://dev48.infy.uk/dl/day72-residual-scaling-and-depth-stability.html) — `day72-residual-scaling-and-depth-stability.html`
 - [DeepLearningFromZero · Day 73 — LoRA / Low-Rank Adaptation](https://dev48.infy.uk/dl/day73-lora-low-rank-adaptation.html) — `day73-lora-low-rank-adaptation.html`
+- [DeepLearningFromZero · Day 74 — Straight-through estimators](https://dev48.infy.uk/dl/day74-straight-through-estimators.html) — `day74-straight-through-estimators.html`
+- [DeepLearningFromZero · Day 75 — The softmax bottleneck](https://dev48.infy.uk/dl/day75-softmax-bottleneck.html) — `day75-softmax-bottleneck.html`
+- [DeepLearningFromZero · Day 76 — Weight averaging](https://dev48.infy.uk/dl/day76-weight-averaging.html) — `day76-weight-averaging.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk
