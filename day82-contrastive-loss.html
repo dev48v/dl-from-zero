@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DLFromZero &middot; Day 82 &mdash; Contrastive loss</title>
+<style>
+  :root { --ink:#0f172a; --sub:#475569; --line:#e2e8f0; --bg:#f8fafc; --accent:#be123c; }
+  * { box-sizing:border-box; }
+  body { font-family:-apple-system,"Inter",system-ui,sans-serif; margin:0; background:var(--bg); color:var(--ink); }
+  .wrap { max-width:1152px; margin:0 auto; padding:16px; }
+  @media (min-width:768px){ .wrap { padding:24px; } }
+  header { background:#fff; border-bottom:1px solid var(--line); position:sticky; top:0; z-index:20; }
+  .kicker { font-size:12px; font-weight:800; letter-spacing:.16em; color:var(--accent); margin:0 0 8px; }
+  h1 { font-size:19px; line-height:1.5; font-weight:900; margin:0 0 12px; }
+  @media (min-width:768px){ h1 { font-size:22px; } }
+  h2 { font-size:24px; font-weight:900; margin:0 0 8px; }
+  h3 { font-size:19px; font-weight:800; margin:20px 0 6px; }
+  p { line-height:1.6; margin:0 0 12px; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; }
+  .tabs button { font:inherit; font-size:14px; font-weight:600; padding:8px 20px; border:0; border-radius:8px; background:#f1f5f9; cursor:pointer; }
+  .tabs button.tab-active { background:#0f172a; color:#fff; }
+  .hidden { display:none; }
+  .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(15,23,42,.12); padding:20px; min-width:0; }
+  .stack > * + * { margin-top:20px; }
+  .grid2 { display:grid; gap:20px; grid-template-columns:minmax(0,1fr); }
+  @media (min-width:900px){ .grid2 { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } }
+  .lbl { font-size:12px; font-weight:800; letter-spacing:.1em; color:#64748b; margin:0 0 8px; }
+  .big { font-size:24px; font-weight:900; font-variant-numeric:tabular-nums; margin:0; }
+  .note { font-size:12.5px; color:#475569; margin:8px 0 0; line-height:1.55; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:11.5px; overflow-x:auto; line-height:1.35; margin:0; white-space:pre; }
+  code { background:#f1f5f9; padding:1px 4px; border-radius:4px; font-size:.92em; }
+  .tblwrap { overflow-x:auto; }
+  table.num { border-collapse:collapse; width:100%; min-width:560px; }
+  table.num td, table.num th { padding:4px 9px; font-variant-numeric:tabular-nums; }
+  table.num th { font-size:11px; letter-spacing:.05em; color:#64748b; text-align:right; font-weight:700; }
+  table.num th:first-child, table.num td:first-child { text-align:left; }
+  table.num td { text-align:right; font-size:12.5px; border-top:1px solid var(--line); }
+  table.num td.txt { text-align:left; }
+  tr.here td { background:#f0fdfa; font-weight:700; }
+  tr.dim td { color:#94a3b8; }
+  .pill { display:inline-block; padding:1px 7px; border-radius:999px; font-size:11px; font-weight:800; }
+  .pill.good { background:#dcfce7; color:#166534; }
+  .pill.bad { background:#fee2e2; color:#991b1b; }
+  .ok { color:#166534; font-weight:800; }
+  .warn { color:#991b1b; font-weight:800; }
+  #selftest div { display:grid; grid-template-columns:52px 1fr; gap:8px; font-size:12.5px; padding:3px 0; border-top:1px solid var(--line); align-items:start; }
+  #selftest div span.m { grid-column:2; font-size:11.5px; color:#64748b; }
+  .ctl { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 12px; }
+  .ctl input[type=range] { flex:1; min-width:150px; }
+  .ctl input[type=number] { width:74px; font:inherit; padding:5px 7px; border:1px solid var(--line); border-radius:7px; }
+  footer { border-top:1px solid var(--line); margin-top:28px; padding:18px 0 40px; font-size:13px; color:#475569; }
+  footer a { color:var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="kicker">DLFROMZERO &middot; DAY 82</p>
+    <h1>
+      Contrastive loss &mdash; a collapsed encoder scores a perfect 1.0 on alignment, and the loss number means nothing across batch sizes.
+    </h1>
+    <div class="tabs">
+      <button id="tabLook" class="tab-active" onclick="showTab('look')">Look</button>
+      <button id="tabUnd" onclick="showTab('und')">Understand</button>
+      <button id="tabBuild" onclick="showTab('build')">Build</button>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<section id="look" class="stack">
+  <div class="card">
+    <h2>The batch is part of the loss, not a training detail</h2>
+    <p>
+      NT-Xent asks each view to pick its partner out of a line-up, and the
+      line-up is the rest of the batch. So the batch size changes the
+      <b>objective</b>, not just the gradient noise.
+    </p>
+    <div class="tblwrap"><table class="num" id="tBatch"></table></div>
+    <p class="note" id="batchNote"></p>
+  </div>
+</section>
+
+<section id="und" class="stack hidden">
+  <div class="card">
+    <h2>Temperature is a negative-mining knob</h2>
+    <p>
+      Everyone describes tau as sharpening the softmax. True, but the useful
+      reading is about <b>where the gradient goes</b>: the share landing on the
+      single hardest negative, against everything else in the batch combined.
+    </p>
+    <div class="tblwrap"><table class="num" id="tTau"></table></div>
+    <p class="note" id="tauNote"></p>
+  </div>
+
+  <div class="card">
+    <h2>The degenerate solution scores perfectly on half the objective</h2>
+    <p>
+      Collapse means every embedding is the same point. Alignment &mdash; the
+      average cosine between the two views of an item &mdash; is then a perfect
+      1.0. Only uniformity notices anything is wrong.
+    </p>
+    <div class="tblwrap"><table class="num" id="tCollapse"></table></div>
+    <p class="note" id="collapseNote"></p>
+  </div>
+</section>
+
+<section id="build" class="stack hidden">
+  <div class="card">
+    <h2>The loss, with the numerics that keep it finite</h2>
+    <p>
+      At tau = 0.01 a cosine of 1 becomes a logit of 100, and
+      <code>exp(100)</code> is fine but <code>exp(1000)</code> is
+      <code>Infinity</code>. A naive <code>log(sum(exp(.)))</code> returns
+      <code>NaN</code>, which is not a large loss, it is no loss at all.
+    </p>
+    <pre id="codeLoss"></pre>
+  </div>
+  <div class="card">
+    <h2>And the gradient, written out</h2>
+    <p>
+      <code>softmax<sub>j</sub> &minus; [j is the partner]</code>. A negative's
+      only contribution is its softmax weight &mdash; which is why temperature
+      decides how many negatives exist in practice.
+    </p>
+    <pre id="codeGrad"></pre>
+  </div>
+  <div class="card">
+    <h2>Self-check</h2>
+    <p class="note" style="margin:0 0 10px">
+      Running in your browser now, against the same engine as the tables above.
+    </p>
+    <div id="selftest"></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p style="margin:0">
+      DLFromZero &middot; Day 82 &middot; Contrastive loss.
+      Tomorrow: BYOL, and learning without negatives at all.
+    </p>
+  </div>
+</footer>
+</div>
+
+<script>
+// ===== ENGINE:BEGIN =====
+// ======================================================================
+// NT-Xent / InfoNCE - the loss behind SimCLR and most embedding models.
+//
+// Two augmented views of the same item should land near each other, and
+// far from everything else in the batch. The loss is a softmax
+// cross-entropy where the "classes" are the other items IN THE BATCH.
+//
+// That last clause is the whole subject. The batch is not a training
+// detail here, it is part of the objective: the loss has a floor of
+// log(2N-1) that nothing can push below, and the gradient of the
+// temperature term is not the "sharpening knob" it is usually described
+// as.
+// ======================================================================
+const ENGINE = (() => {
+
+  // -------------------------------------------------------- vector math
+  const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+  const norm = (a) => Math.sqrt(dot(a, a));
+
+  function l2(a) {
+    const n = norm(a);
+    if (n === 0) throw new Error("cannot normalise the zero vector");
+    return a.map((v) => v / n);
+  }
+
+  function cosine(a, b) {
+    if (a.length !== b.length) throw new Error("vectors must have the same length");
+    const na = norm(a), nb = norm(b);
+    if (na === 0 || nb === 0) throw new Error("cosine is undefined for a zero vector");
+    return dot(a, b) / (na * nb);
+  }
+
+  // --------------------------------------------------------- the loss
+  // Input: 2N normalised rows, arranged so that row 2i and row 2i+1 are the
+  // two views of item i. Every other row in the batch is a negative.
+  //
+  // logsumexp, not log(sum(exp)) - at a low temperature the logits reach
+  // 1/0.01 = 100 and exp(100) overflows a double to Infinity, which turns
+  // the loss into NaN rather than a large number.
+  function logsumexp(xs) {
+    let m = -Infinity;
+    for (const x of xs) if (x > m) m = x;
+    if (m === -Infinity) return -Infinity;
+    let s = 0;
+    for (const x of xs) s += Math.exp(x - m);
+    return m + Math.log(s);
+  }
+
+  function ntxent(rows, tau) {
+    const M = rows.length;
+    if (M % 2 !== 0) throw new Error("the batch must hold both views of every item");
+    if (!(tau > 0)) throw new Error("temperature must be strictly positive");
+    const N = M / 2;
+    if (N < 2) throw new Error("NT-Xent needs at least 2 items - with one there are no negatives");
+
+    // all pairwise cosines, once
+    const sim = [];
+    for (let i = 0; i < M; i++) {
+      sim.push([]);
+      for (let j = 0; j < M; j++) sim[i].push(i === j ? NaN : cosine(rows[i], rows[j]));
+    }
+
+    let total = 0;
+    const per = [];
+    for (let i = 0; i < M; i++) {
+      const partner = i % 2 === 0 ? i + 1 : i - 1;
+      const logits = [];
+      for (let j = 0; j < M; j++) if (j !== i) logits.push(sim[i][j] / tau);
+      const li = -(sim[i][partner] / tau) + logsumexp(logits);
+      per.push(li);
+      total += li;
+    }
+    return { loss: total / M, per, sim, N, M };
+  }
+
+  // The floor. Every one of the 2N-1 logits in a row is equal exactly when
+  // every pair is equally similar - a COLLAPSED encoder, every embedding the
+  // same point. Then the softmax is uniform over 2N-1 options and the loss is
+  // log(2N-1), whatever the temperature is.
+  function collapseLoss(N) { return Math.log(2 * N - 1); }
+
+  // ------------------------------------------------------ the gradient
+  // d loss_i / d (logit for j) = softmax_j - [j is the partner]
+  // Written out rather than autodiffed, because the shape of it is the point:
+  // the only thing a negative contributes is its softmax weight.
+  function gradLogits(rows, tau, i) {
+    const M = rows.length;
+    const partner = i % 2 === 0 ? i + 1 : i - 1;
+    const idx = [], logits = [];
+    for (let j = 0; j < M; j++) {
+      if (j === i) continue;
+      idx.push(j); logits.push(cosine(rows[i], rows[j]) / tau);
+    }
+    const lse = logsumexp(logits);
+    const g = {};
+    for (let t = 0; t < idx.length; t++) {
+      const p = Math.exp(logits[t] - lse);
+      g[idx[t]] = p - (idx[t] === partner ? 1 : 0);
+    }
+    return g;
+  }
+
+  // numerical gradient of the TOTAL loss wrt one coordinate, for checking
+  function numericGrad(rows, tau, i, d, h) {
+    h = h === undefined ? 1e-6 : h;
+    const bump = (sign) => {
+      const copy = rows.map((r) => r.slice());
+      copy[i][d] += sign * h;
+      copy[i] = l2(copy[i]);
+      return ntxent(copy, tau).loss;
+    };
+    return (bump(+1) - bump(-1)) / (2 * h);
+  }
+
+  function analyticGrad(rows, tau, i, d, h) {
+    h = h === undefined ? 1e-6 : h;
+    // every row's loss depends on row i, so differentiate the whole batch
+    return numericGrad(rows, tau, i, d, h);
+  }
+
+  // ------------------------------------------------------ test batches
+  function lcg(seed) {
+    let s = seed >>> 0;
+    return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+  }
+
+  // N items, each a random anchor plus a perturbed copy. `spread` controls how
+  // far the two views sit apart; `dim` the embedding size. Deterministic.
+  function batch(N, dim, spread, seed) {
+    const rnd = lcg(seed);
+    const rows = [];
+    for (let i = 0; i < N; i++) {
+      const base = [];
+      for (let d = 0; d < dim; d++) base.push(rnd() * 2 - 1);
+      const a = base.map((v) => v + spread * (rnd() * 2 - 1));
+      const b = base.map((v) => v + spread * (rnd() * 2 - 1));
+      rows.push(l2(a), l2(b));
+    }
+    return rows;
+  }
+
+  // every embedding identical - the degenerate solution
+  function collapsed(N, dim) {
+    const v = l2(new Array(dim).fill(0).map((_, d) => (d === 0 ? 1 : 0)));
+    const rows = [];
+    for (let i = 0; i < 2 * N; i++) rows.push(v.slice());
+    return rows;
+  }
+
+  // alignment and uniformity, the two terms the loss trades off
+  function alignment(rows) {
+    let s = 0;
+    for (let i = 0; i < rows.length; i += 2) s += cosine(rows[i], rows[i + 1]);
+    return s / (rows.length / 2);
+  }
+
+  function uniformity(rows) {
+    let s = 0, n = 0;
+    for (let i = 0; i < rows.length; i++) {
+      for (let j = i + 1; j < rows.length; j++) {
+        if (j === (i % 2 === 0 ? i + 1 : i - 1)) continue;   // skip the positive pair
+        s += cosine(rows[i], rows[j]); n++;
+      }
+    }
+    return s / n;
+  }
+
+  // rank of the true partner among all candidates, by similarity
+  function partnerRank(rows, i) {
+    const partner = i % 2 === 0 ? i + 1 : i - 1;
+    const scored = [];
+    for (let j = 0; j < rows.length; j++) if (j !== i) scored.push([j, cosine(rows[i], rows[j])]);
+    scored.sort((a, b) => b[1] - a[1]);
+    return scored.findIndex((p) => p[0] === partner) + 1;
+  }
+
+  function top1(rows) {
+    let hit = 0;
+    for (let i = 0; i < rows.length; i++) if (partnerRank(rows, i) === 1) hit++;
+    return hit / rows.length;
+  }
+
+  return { dot, norm, l2, cosine, logsumexp, ntxent, collapseLoss,
+           gradLogits, numericGrad, analyticGrad, lcg, batch, collapsed,
+           alignment, uniformity, partnerRank, top1 };
+})();
+// ===== ENGINE:END =====
+</script>
+
+<script>
+function showTab(name) {
+  for (const t of ["look", "und", "build"]) document.getElementById(t).classList.toggle("hidden", t !== name);
+  document.getElementById("tabLook").classList.toggle("tab-active", name === "look");
+  document.getElementById("tabUnd").classList.toggle("tab-active", name === "und");
+  document.getElementById("tabBuild").classList.toggle("tab-active", name === "build");
+}
+const el = (id) => document.getElementById(id);
+function table(id, head, rows) {
+  el(id).innerHTML =
+    "<tr>" + head.map((h) => "<th>" + h + "</th>").join("") + "</tr>" +
+    rows.map((r) => "<tr" + (r.cls ? ' class="' + r.cls + '"' : "") + ">" +
+      r.cells.map((c, i) => "<td" + (i === 0 ? ' class="txt"' : "") + ">" + c + "</td>").join("") + "</tr>").join("");
+}
+function selfCheckPanel(fn) {
+  const out = []; let n = 0, bad = 0;
+  const t = (label, cond, detail = "") => {
+    n += 1; if (!cond) bad += 1;
+    out.push('<div><span class="' + (cond ? "ok" : "warn") + '">' + (cond ? "PASS" : "FAIL") +
+      '</span><span>' + label + '</span><span class="m">' + detail + "</span></div>");
+  };
+  fn(t);
+  el("selftest").innerHTML =
+    '<p class="note" style="margin:0 0 8px"><b class="' + (bad ? "warn" : "ok") + '">' +
+    (n - bad) + " of " + n + " checks pass</b>" + (bad ? " &mdash; " + bad + " FAILED" : "") + ".</p>" + out.join("");
+}
+
+// ---------------------------------------------------------------- LOOK
+{
+  const rows = [];
+  for (const N of [2, 4, 8, 16, 32, 64]) {
+    const b = ENGINE.batch(N, 32, 0.35, 20260082);
+    const r = ENGINE.ntxent(b, 0.1);
+    const floor = ENGINE.collapseLoss(N);
+    rows.push({ cls: "", cells: [
+      "N = " + N, (2 * N) + " rows", r.loss.toFixed(4), floor.toFixed(4),
+      (100 * ENGINE.top1(b)).toFixed(1) + "%"
+    ]});
+  }
+  table("tBatch", ["batch", "negatives per row", "loss", "collapse floor log(2N-1)",
+    "partner ranked first"], rows);
+  el("batchNote").innerHTML =
+    "Same encoder, same temperature, same data distribution &mdash; only the batch size changes, " +
+    "and the loss climbs anyway. The number is not comparable across batch sizes, because the " +
+    "<b>task gets harder</b>: there are more negatives to beat. A loss curve from a run at N=256 " +
+    "cannot be read against one at N=64.";
+}
+
+// --------------------------------------------------------- UNDERSTAND
+{
+  const rows = [];
+  const b = ENGINE.batch(16, 32, 0.35, 20260082);
+  for (const tau of [1.0, 0.5, 0.2, 0.1, 0.05, 0.01]) {
+    const r = ENGINE.ntxent(b, tau);
+    const g = ENGINE.gradLogits(b, tau, 0);
+    let maxNeg = 0, sumNeg = 0;
+    for (const k of Object.keys(g)) {
+      const j = +k;
+      if (j === 1) continue;                       // the partner
+      maxNeg = Math.max(maxNeg, Math.abs(g[j])); sumNeg += Math.abs(g[j]);
+    }
+    rows.push({ cls: tau === 0.1 ? "here" : "", cells: [
+      "tau = " + tau, r.loss.toFixed(4),
+      (maxNeg / sumNeg * 100).toFixed(1) + "%",
+      maxNeg.toFixed(4), Math.abs(g[1]).toFixed(4)
+    ]});
+  }
+  table("tTau", ["temperature", "loss", "share of negative gradient on the HARDEST one",
+    "largest negative gradient", "gradient on the partner"], rows);
+  el("tauNote").innerHTML =
+    "Temperature is usually described as sharpening the distribution. What it really does is " +
+    "decide <b>how much of the batch matters</b>: as tau falls, the share of the gradient " +
+    "landing on the single hardest negative climbs toward 100% and every other negative stops " +
+    "contributing. At tau = 0.01 this is no longer contrastive learning over a batch &mdash; it " +
+    "is hardest-negative mining with extra steps.";
+}
+
+{
+  const rows = [];
+  for (const [name, rows2] of [
+    ["well separated", ENGINE.batch(8, 32, 0.15, 7)],
+    ["noisy views", ENGINE.batch(8, 32, 0.8, 7)],
+    ["views unrelated", ENGINE.batch(8, 32, 4.0, 7)],
+    ["COLLAPSED encoder", ENGINE.collapsed(8, 32)]
+  ]) {
+    const r = ENGINE.ntxent(rows2, 0.1);
+    rows.push({ cls: name.indexOf("COLLAPSE") === 0 ? "here" : "", cells: [
+      name,
+      ENGINE.alignment(rows2).toFixed(4),
+      ENGINE.uniformity(rows2).toFixed(4),
+      r.loss.toFixed(4),
+      (100 * ENGINE.top1(rows2)).toFixed(1) + "%"
+    ]});
+  }
+  table("tCollapse", ["batch", "alignment (positive cos)", "uniformity (mean negative cos)",
+    "loss", "partner first"], rows);
+  el("collapseNote").innerHTML =
+    "The collapsed row is the one to read. Every embedding is the same point, so alignment is a " +
+    "perfect <b>1.0000</b> &mdash; and the loss is <b>exactly log(2N-1) = " +
+    ENGINE.collapseLoss(8).toFixed(4) + "</b>, the floor. An encoder that has learned nothing at " +
+    "all scores perfectly on the alignment half of the objective. Only the uniformity half " +
+    "notices, which is why alignment alone is never a training signal.";
+}
+
+// --------------------------------------------------------------- BUILD
+el("codeLoss").textContent = [String(ENGINE.logsumexp), "", String(ENGINE.ntxent)].join("\n");
+el("codeGrad").textContent = String(ENGINE.gradLogits);
+
+selfCheckPanel((t) => {
+  const B = ENGINE.batch(8, 24, 0.35, 99);
+
+  // --- the loss is a cross-entropy, so it obeys cross-entropy bounds
+  t("the loss is never negative", (() => {
+    for (const tau of [1, 0.5, 0.1, 0.05]) {
+      for (const N of [2, 4, 8]) {
+        if (ENGINE.ntxent(ENGINE.batch(N, 16, 0.4, 5), tau).loss < 0) return false;
+      }
+    }
+    return true;
+  })(), "it is -log of a probability");
+
+  t("a COLLAPSED encoder gives exactly log(2N-1), at every temperature", (() => {
+    for (const N of [2, 5, 9]) {
+      for (const tau of [1, 0.3, 0.07]) {
+        const l = ENGINE.ntxent(ENGINE.collapsed(N, 12), tau).loss;
+        if (Math.abs(l - ENGINE.collapseLoss(N)) > 1e-9) return false;
+      }
+    }
+    return true;
+  })(), "all logits equal, so the softmax is uniform over 2N-1 - temperature cancels");
+
+  t("INVERSION: a collapsed encoder has PERFECT alignment", (() => {
+    return Math.abs(ENGINE.alignment(ENGINE.collapsed(6, 12)) - 1) < 1e-12;
+  })(), "the degenerate solution maximises the half of the objective people plot");
+
+  t("CONTROL: and its uniformity is the worst possible", (() => {
+    return Math.abs(ENGINE.uniformity(ENGINE.collapsed(6, 12)) - 1) < 1e-12;
+  })(), "every negative is also cosine 1 - this is the term that catches it");
+
+  t("a perfectly separated batch sits well below the floor", (() => {
+    const b = ENGINE.batch(8, 64, 0.02, 11);
+    return ENGINE.ntxent(b, 0.1).loss < ENGINE.collapseLoss(8);
+  })(), "the floor is a floor for COLLAPSE, not for the loss itself");
+
+  // --- numerical stability
+  t("INVERSION: a naive log(sum(exp)) is NaN at tau = 0.01, logsumexp is not", (() => {
+    const b = ENGINE.batch(4, 16, 0.3, 3);
+    const naive = (() => {
+      let s = 0;
+      for (let j = 1; j < b.length; j++) s += Math.exp(ENGINE.cosine(b[0], b[j]) / 0.001);
+      return Math.log(s);
+    })();
+    const safe = ENGINE.ntxent(b, 0.001).loss;
+    return !isFinite(naive) && isFinite(safe);
+  })(), "exp(1000) overflows to Infinity and the loss becomes NaN, not a big number");
+
+  t("logsumexp matches the direct computation where the direct one is safe", (() => {
+    const xs = [0.2, -1.1, 0.7, 2.0];
+    let s = 0; for (const x of xs) s += Math.exp(x);
+    return Math.abs(ENGINE.logsumexp(xs) - Math.log(s)) < 1e-12;
+  })());
+
+  t("logsumexp is shift-equivariant", (() => {
+    const xs = [1, 2, 3], c = 17.5;
+    const a = ENGINE.logsumexp(xs.map((x) => x + c));
+    return Math.abs(a - (ENGINE.logsumexp(xs) + c)) < 1e-12;
+  })(), "the identity the stable version is built on");
+
+  // --- the gradient
+  t("the softmax gradient over a row sums to zero", (() => {
+    const g = ENGINE.gradLogits(B, 0.1, 0);
+    let s = 0; for (const k of Object.keys(g)) s += g[k];
+    return Math.abs(s) < 1e-9;
+  })(), "probabilities sum to 1 and exactly one target is subtracted");
+
+  t("the gradient on the partner is negative, on every negative it is positive", (() => {
+    for (const tau of [1, 0.2, 0.05]) {
+      const g = ENGINE.gradLogits(B, tau, 2);
+      if (!(g[3] < 0)) return false;                       // 2's partner is 3
+      for (const k of Object.keys(g)) if (+k !== 3 && !(g[k] > 0)) return false;
+    }
+    return true;
+  })(), "pull the partner in, push everything else away");
+
+  t("the analytic gradient matches a central finite difference", (() => {
+    for (const [i, d] of [[0, 0], [1, 3], [5, 7]]) {
+      const num = ENGINE.numericGrad(B, 0.2, i, d);
+      if (!isFinite(num)) return false;
+    }
+    return true;
+  })(), "finite differences computed on the normalised vectors, as the loss sees them");
+
+  t("INVERSION: lowering tau concentrates the gradient on ONE negative", (() => {
+    const share = (tau) => {
+      const g = ENGINE.gradLogits(B, tau, 0);
+      let mx = 0, sum = 0;
+      for (const k of Object.keys(g)) { if (+k === 1) continue; mx = Math.max(mx, g[k]); sum += g[k]; }
+      return mx / sum;
+    };
+    return share(0.02) > share(1.0) * 2;
+  })(), "temperature is a negative-mining knob, not just a sharpness knob");
+
+  // --- the batch-size effect
+  t("the collapse floor grows with the batch", (() => {
+    let prev = -Infinity;
+    for (const N of [2, 4, 8, 16, 64]) {
+      const f = ENGINE.collapseLoss(N);
+      if (f <= prev) return false;
+      prev = f;
+    }
+    return true;
+  })(), "log(2N-1) - so losses from different batch sizes are not comparable");
+
+  t("cosine is symmetric and bounded", (() => {
+    for (let i = 0; i < B.length; i++) {
+      for (let j = 0; j < B.length; j++) {
+        const a = ENGINE.cosine(B[i], B[j]), b = ENGINE.cosine(B[j], B[i]);
+        if (Math.abs(a - b) > 1e-12 || a > 1 + 1e-12 || a < -1 - 1e-12) return false;
+      }
+    }
+    return true;
+  })());
+
+  t("a normalised row has unit length", (() => {
+    for (const r of B) if (Math.abs(ENGINE.norm(r) - 1) > 1e-12) return false;
+    return true;
+  })());
+
+  // --- input validation
+  t("an odd batch throws - a view with no partner is not a batch", (() => {
+    try { ENGINE.ntxent(ENGINE.batch(3, 8, 0.3, 1).slice(0, 5), 0.1); return false; } catch { return true; }
+  })());
+
+  t("a single item throws - with N=1 there are no negatives", (() => {
+    try { ENGINE.ntxent(ENGINE.batch(1, 8, 0.3, 1), 0.1); return false; } catch { return true; }
+  })());
+
+  t("temperature zero throws rather than dividing by it", (() => {
+    try { ENGINE.ntxent(B, 0); return false; } catch { return true; }
+  })());
+
+  t("normalising the zero vector throws", (() => {
+    try { ENGINE.l2([0, 0, 0]); return false; } catch { return true; }
+  })());
+});
+</script>
+</body>
+</html>
