@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DLFromZero &middot; Day 81 &mdash; Rotary position embeddings</title>
+<style>
+  :root { --ink:#0f172a; --sub:#475569; --line:#e2e8f0; --bg:#f8fafc; --accent:#be123c; }
+  * { box-sizing:border-box; }
+  body { font-family:-apple-system,"Inter",system-ui,sans-serif; margin:0; background:var(--bg); color:var(--ink); }
+  .wrap { max-width:1152px; margin:0 auto; padding:16px; }
+  @media (min-width:768px){ .wrap { padding:24px; } }
+  header { background:#fff; border-bottom:1px solid var(--line); position:sticky; top:0; z-index:20; }
+  .kicker { font-size:12px; font-weight:800; letter-spacing:.16em; color:var(--accent); margin:0 0 8px; }
+  h1 { font-size:19px; line-height:1.5; font-weight:900; margin:0 0 12px; }
+  @media (min-width:768px){ h1 { font-size:22px; } }
+  h2 { font-size:24px; font-weight:900; margin:0 0 8px; }
+  h3 { font-size:19px; font-weight:800; margin:20px 0 6px; }
+  p { line-height:1.6; margin:0 0 12px; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; }
+  .tabs button { font:inherit; font-size:14px; font-weight:600; padding:8px 20px; border:0; border-radius:8px; background:#f1f5f9; cursor:pointer; }
+  .tabs button.tab-active { background:#0f172a; color:#fff; }
+  .hidden { display:none; }
+  .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(15,23,42,.12); padding:20px; min-width:0; }
+  .stack > * + * { margin-top:20px; }
+  .grid2 { display:grid; gap:20px; grid-template-columns:minmax(0,1fr); }
+  @media (min-width:900px){ .grid2 { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } }
+  .lbl { font-size:12px; font-weight:800; letter-spacing:.1em; color:#64748b; margin:0 0 8px; }
+  .big { font-size:24px; font-weight:900; font-variant-numeric:tabular-nums; margin:0; }
+  .note { font-size:12.5px; color:#475569; margin:8px 0 0; line-height:1.55; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:11.5px; overflow-x:auto; line-height:1.35; margin:0; white-space:pre; }
+  code { background:#f1f5f9; padding:1px 4px; border-radius:4px; font-size:.92em; }
+  .tblwrap { overflow-x:auto; }
+  table.num { border-collapse:collapse; width:100%; min-width:560px; }
+  table.num td, table.num th { padding:4px 9px; font-variant-numeric:tabular-nums; }
+  table.num th { font-size:11px; letter-spacing:.05em; color:#64748b; text-align:right; font-weight:700; }
+  table.num th:first-child, table.num td:first-child { text-align:left; }
+  table.num td { text-align:right; font-size:12.5px; border-top:1px solid var(--line); }
+  table.num td.txt { text-align:left; }
+  tr.here td { background:#fff1f2; font-weight:700; }
+  tr.dim td { color:#94a3b8; }
+  .pill { display:inline-block; padding:1px 7px; border-radius:999px; font-size:11px; font-weight:800; }
+  .pill.good { background:#dcfce7; color:#166534; }
+  .pill.bad { background:#fee2e2; color:#991b1b; }
+  .ok { color:#166534; font-weight:800; }
+  .warn { color:#991b1b; font-weight:800; }
+  #selftest div { display:grid; grid-template-columns:52px 1fr; gap:8px; font-size:12.5px; padding:3px 0; border-top:1px solid var(--line); align-items:start; }
+  #selftest div span.m { grid-column:2; font-size:11.5px; color:#64748b; }
+  .ctl { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 12px; }
+  .ctl input[type=range] { flex:1; min-width:150px; }
+  .ctl input[type=number] { width:74px; font:inherit; padding:5px 7px; border:1px solid var(--line); border-radius:7px; }
+  svg { display:block; max-width:100%; height:auto; }
+  footer { border-top:1px solid var(--line); margin-top:28px; padding:18px 0 40px; font-size:13px; color:#475569; }
+  footer a { color:var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="kicker">DLFROMZERO &middot; DAY 81</p>
+    <h1>
+      Rotary position embeddings &mdash; absolute positions going in, relative
+      positions coming out, and a decay curve that is mostly noise.
+    </h1>
+    <div class="tabs">
+      <button id="tabLook" class="tab-active" onclick="showTab('look')">Look</button>
+      <button id="tabUnd" onclick="showTab('und')">Understand</button>
+      <button id="tabBuild" onclick="showTab('build')">Build</button>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<section id="look" class="stack">
+  <div class="card">
+    <h2>Rotate the query, rotate the key, and the dot product forgets where they were</h2>
+    <p>
+      RoPE does something that sounds impossible. It injects each token's
+      <b>absolute</b> position into the query and key vectors &mdash; and yet the
+      attention score between any two tokens depends only on the <b>distance</b>
+      between them. Move a whole sentence ten tokens later and every score inside
+      it is unchanged.
+    </p>
+    <p>
+      The mechanism is rotation. Split the vector into 2-D pairs, and rotate pair
+      <i>i</i> of the token at position <i>m</i> by angle <i>m&theta;<sub>i</sub></i>.
+      Because a dot product of two rotated vectors depends only on the
+      <b>difference</b> of their angles, <i>m&theta; &minus; n&theta; =
+      (m&minus;n)&theta;</i>, the absolute part cancels.
+    </p>
+    <div class="ctl">
+      <span class="lbl" style="margin:0">POSITIONS</span>
+      m = <input type="number" id="mN" min="0" max="2048" value="5" />
+      n = <input type="number" id="nN" min="0" max="2048" value="2" />
+      <span class="lbl" style="margin:0">SHIFT BOTH BY</span>
+      <input type="range" id="shR" min="0" max="500" value="0" />
+      <span id="shLbl" style="font-variant-numeric:tabular-nums;font-weight:700">0</span>
+    </div>
+    <div class="grid2">
+      <div class="stack">
+        <div class="grid2">
+          <div><p class="lbl">RoPE SCORE</p><p class="big" id="kRope">&mdash;</p><p class="note" id="kRopeNote"></p></div>
+          <div><p class="lbl">AFTER THE SHIFT</p><p class="big" id="kRope2">&mdash;</p><p class="note" id="kRope2Note"></p></div>
+        </div>
+        <div class="grid2">
+          <div><p class="lbl">ADDITIVE SCORE</p><p class="big" id="kAdd">&mdash;</p><p class="note">sinusoidal, added not rotated</p></div>
+          <div><p class="lbl">AFTER THE SHIFT</p><p class="big" id="kAdd2">&mdash;</p><p class="note" id="kAdd2Note"></p></div>
+        </div>
+      </div>
+      <div>
+        <p class="lbl">THE FIRST FOUR PAIRS, AS ROTATIONS</p>
+        <div id="dial"></div>
+        <p class="note" id="dialNote"></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Every pair of positions with the same gap, scored</h2>
+    <p>
+      The table fixes one query and one key vector and walks them across the
+      sequence keeping the distance constant. If relative-position invariance is
+      real, each block must be flat to the last bit.
+    </p>
+    <div class="tblwrap"><table class="num" id="tInvariance"></table></div>
+    <p class="note" id="invNote"></p>
+  </div>
+
+  <div class="card">
+    <h2>The frequency ladder</h2>
+    <p>
+      Each 2-D pair gets its own rotation speed,
+      <code>theta_i = base^(-2i/d)</code>. The first pairs spin fast and encode
+      fine, local distinctions; the last pairs spin so slowly that across the
+      entire training window they barely turn at all.
+    </p>
+    <div class="tblwrap"><table class="num" id="tFreq"></table></div>
+    <p class="note" id="freqNote"></p>
+  </div>
+</section>
+
+<section id="und" class="stack hidden">
+  <div class="card">
+    <h2>The identity, in one line</h2>
+    <p>
+      Write a 2-D pair of the query at position <i>m</i> as a complex number
+      <i>q</i>, and the key at <i>n</i> as <i>k</i>. RoPE multiplies them by
+      <i>e<sup>im&theta;</sup></i> and <i>e<sup>in&theta;</sup></i>. The real part
+      of the Hermitian product is the dot product, and
+    </p>
+    <pre>Re[ (q e^(i m theta)) * conj(k e^(i n theta)) ]
+  = Re[ q conj(k) e^(i (m - n) theta) ]</pre>
+    <p>
+      The absolute positions appear only as their difference. That is the whole
+      theorem, and everything else on this page is a consequence of it.
+    </p>
+    <h3>What it costs</h3>
+    <p>
+      Nothing is learned and nothing is stored: the rotation is computed from the
+      position on the fly. There is no embedding table to run off the end of, which
+      is why RoPE models can be <i>asked</i> about positions past their training
+      length &mdash; the next section is about what happens when you do.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>The decay curve, and why the obvious way to plot it is noise</h2>
+    <p>
+      People say attention under RoPE decays with distance. Plot it carelessly and
+      you get a flat line of random scatter, because <b>two independent random
+      vectors have an expected dot product of zero at every distance</b> &mdash; the
+      curve you drew was sampling noise, not decay.
+    </p>
+    <p>
+      Averaging the <i>magnitude</i> instead does not rescue it. The table below
+      measures that too, and it is also flat: a random query and a random key are
+      no more and no less aligned at distance 256 than at distance 1.
+    </p>
+    <p>
+      The decay is real, and it is a statement about a <b>fixed</b> vector. Score a
+      query against <i>itself</i> across a growing offset and the pairs, which
+      started perfectly in phase, drift out of step at different rates until their
+      cosines cancel. That column collapses. It is dephasing, not attenuation, and
+      it is the only one of the three that shows the effect people are describing.
+    </p>
+    <div class="tblwrap"><table class="num" id="tDecay"></table></div>
+    <p class="note" id="decayNote"></p>
+  </div>
+
+  <div class="card">
+    <h2>Going past the training length</h2>
+    <p>
+      It is tempting to blame the <i>fast</i> pairs, but they were already wrapping
+      constantly inside the training window - another twenty turns is nothing new.
+      The pair that leaves familiar ground is the <b>slowest</b> one. Its period is
+      longer than the whole context, so across training it only ever swept a small
+      arc; push the position eightfold and it swings into angles that never once
+      appeared during training.
+    </p>
+    <p>
+      Two standard repairs: <b>position interpolation</b> squeezes the new range
+      back into the old one by scaling positions down; <b>NTK-aware scaling</b>
+      raises the base instead, stretching the slow end's period so the same
+      absolute position lands at the same angle.
+    </p>
+    <div class="tblwrap"><table class="num" id="tExtend"></table></div>
+    <p class="note" id="extendNote"></p>
+  </div>
+</section>
+
+<section id="build" class="stack hidden">
+  <div class="card">
+    <h2>The implementation</h2>
+    <pre id="codeEngine"></pre>
+  </div>
+  <div class="card">
+    <h2>Self-check</h2>
+    <p class="note" style="margin:0 0 10px">
+      Running in your browser now, against the same engine as the tables above.
+    </p>
+    <div id="selftest"></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p style="margin:0">
+      DLFromZero &middot; Day 81 &middot; Rotary position embeddings.
+      Tomorrow: contrastive loss &mdash; and why the negatives matter more than the positives.
+    </p>
+  </div>
+</footer>
+</div>
+
+<script>
+// ===== ENGINE:BEGIN =====
+const ENGINE = (() => {
+
+  // ======================================================================
+  // RoPE. A vector of even dimension d is read as d/2 planes. Pair i of the
+  // token at position m is rotated by m * theta_i, where
+  //     theta_i = base ^ (-2i/d)
+  // The point of the construction is that a dot product between a rotated
+  // query and a rotated key depends only on (m - n).
+  // ======================================================================
+
+  const DEFAULT_BASE = 10000;
+
+  function thetas(d, base = DEFAULT_BASE) {
+    if (d % 2 !== 0) throw new Error("dimension must be even");
+    const out = [];
+    for (let i = 0; i < d / 2; i++) out.push(Math.pow(base, (-2 * i) / d));
+    return out;
+  }
+
+  // rotate in place-free fashion: returns a new array
+  function rope(vec, pos, base = DEFAULT_BASE) {
+    const d = vec.length;
+    if (d % 2 !== 0) throw new Error("dimension must be even");
+    const th = thetas(d, base);
+    const out = new Array(d);
+    for (let i = 0; i < d / 2; i++) {
+      const a = vec[2 * i], b = vec[2 * i + 1];
+      const ang = pos * th[i];
+      const c = Math.cos(ang), s = Math.sin(ang);
+      out[2 * i] = a * c - b * s;
+      out[2 * i + 1] = a * s + b * c;
+    }
+    return out;
+  }
+
+  const dot = (a, b) => {
+    if (a.length !== b.length) throw new Error("length mismatch");
+    let s = 0;
+    for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+    return s;
+  };
+
+  const norm = (a) => Math.sqrt(dot(a, a));
+
+  // the attention score RoPE actually produces
+  function score(q, k, m, n, base = DEFAULT_BASE) {
+    return dot(rope(q, m, base), rope(k, n, base));
+  }
+
+  // ---------------------------------------------------------- the closed form
+  // Pair by pair, the contribution is
+  //   (q0 k0 + q1 k1) cos((m-n)theta) - (q1 k0 - q0 k1) sin((m-n)theta)
+  // which contains m and n only through their difference. Computed here
+  // directly from the relative offset, never by rotating anything.
+  function scoreFromOffset(q, k, offset, base = DEFAULT_BASE) {
+    const d = q.length;
+    const th = thetas(d, base);
+    let s = 0;
+    for (let i = 0; i < d / 2; i++) {
+      const q0 = q[2 * i], q1 = q[2 * i + 1], k0 = k[2 * i], k1 = k[2 * i + 1];
+      const ang = offset * th[i];
+      s += (q0 * k0 + q1 * k1) * Math.cos(ang) - (q1 * k0 - q0 * k1) * Math.sin(ang);
+    }
+    return s;
+  }
+
+  // --------------------------------------------------------- the control: APE
+  // Classic sinusoidal position embeddings, ADDED to the vector. The score then
+  // depends on m and n separately, which is exactly what RoPE fixes.
+  function sinusoidal(d, pos, base = DEFAULT_BASE) {
+    const out = new Array(d);
+    for (let i = 0; i < d / 2; i++) {
+      const ang = pos * Math.pow(base, (-2 * i) / d);
+      out[2 * i] = Math.sin(ang);
+      out[2 * i + 1] = Math.cos(ang);
+    }
+    return out;
+  }
+
+  function additiveScore(q, k, m, n, base = DEFAULT_BASE) {
+    const pm = sinusoidal(q.length, m, base), pn = sinusoidal(k.length, n, base);
+    const qa = q.map((v, i) => v + pm[i]);
+    const ka = k.map((v, i) => v + pn[i]);
+    return dot(qa, ka);
+  }
+
+  // ------------------------------------------------------------------ the PRNG
+  // Park-Miller. below(n) multiplies before dividing; a high-bit shortcut would
+  // be uniform and completely predictable, which a histogram cannot see.
+  function rng(seed) {
+    let s = seed % 2147483647;
+    if (s <= 0) s += 2147483646;
+    const nextInt = () => (s = (s * 16807) % 2147483647);
+    return {
+      nextInt,
+      below: (n) => Math.floor((nextInt() * n) / 2147483648),
+      unit: () => nextInt() / 2147483647,
+      normal: function () {
+        // Box-Muller, from two uniforms
+        const u1 = Math.max(this.unit(), 1e-12), u2 = this.unit();
+        return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+      }
+    };
+  }
+
+  function randomVec(d, seed) {
+    const r = rng(seed);
+    const out = [];
+    for (let i = 0; i < d; i++) out.push(r.normal());
+    return out;
+  }
+
+  // ------------------------------------------------------------ the decay study
+  // Three ways of looking at the same thing, so the difference is measurable:
+  //   fixedPair  - ONE q and ONE k, score as the offset grows
+  //   meanSigned - average raw score over many INDEPENDENT pairs  (this is the
+  //                one that is noise: E[q.k] = 0 at every offset)
+  //   meanAbs    - average |score| over the same pairs            (this decays)
+  // 🔴 One generator for the whole study. Giving each vector its own Park-Miller
+  // seeded by a nearby integer produces CORRELATED streams - the "independent"
+  // pairs were not independent, and the mean score wandered an order of
+  // magnitude further from zero than the standard error allows.
+  function decayStudy(d, offsets, pairs = 200, seed = 1, base = DEFAULT_BASE) {
+    const r = rng(seed);
+    const draw = () => { const v = []; for (let i = 0; i < d; i++) v.push(r.normal()); return v; };
+    const q0 = draw(), k0 = draw();
+    const qs = [], ks = [];
+    for (let p = 0; p < pairs; p++) { qs.push(draw()); ks.push(draw()); }
+    // the self case: q against itself, which is where the decay is real
+    const qSelf = draw();
+    return offsets.map((off) => {
+      let sum = 0, sumAbs = 0;
+      for (let p = 0; p < pairs; p++) {
+        const s = scoreFromOffset(qs[p], ks[p], off, base);
+        sum += s; sumAbs += Math.abs(s);
+      }
+      return {
+        offset: off,
+        fixedPair: scoreFromOffset(q0, k0, off, base),
+        selfScore: scoreFromOffset(qSelf, qSelf, off, base),
+        meanSigned: sum / pairs,
+        meanAbs: sumAbs / pairs
+      };
+    });
+  }
+
+  // How far each pair has dephased by a given offset. The decay people describe
+  // is this: the pairs start aligned and drift out of step, and the sum of their
+  // cosines collapses. It is a statement about a FIXED vector, not an average.
+  function dephasing(d, offset, base = DEFAULT_BASE) {
+    return thetas(d, base).map((th) => Math.cos(offset * th));
+  }
+
+  // ------------------------------------------------------- context extension
+  // Position interpolation: squeeze new positions back into the trained range.
+  const interpolated = (pos, trained, target) => (pos * trained) / target;
+  // NTK-aware: raise the base so the fast pairs slow down and the slow ones
+  // are left essentially untouched.
+  const ntkBase = (base, d, trained, target) =>
+    base * Math.pow(target / trained, d / (d - 2));
+
+  // the largest angle any pair reaches at a given position
+  function maxAngle(d, pos, base = DEFAULT_BASE) {
+    return pos * thetas(d, base)[0];
+  }
+  // how many full turns the FASTEST pair has made by a position
+  function turns(d, pos, base = DEFAULT_BASE) {
+    return maxAngle(d, pos, base) / (2 * Math.PI);
+  }
+
+  return {
+    DEFAULT_BASE, thetas, rope, dot, norm, score, scoreFromOffset,
+    sinusoidal, additiveScore, rng, randomVec, decayStudy, dephasing,
+    interpolated, ntkBase, maxAngle, turns
+  };
+})();
+// ===== ENGINE:END =====
+</script>
+
+<script>
+function showTab(name) {
+  for (const t of ["look", "und", "build"]) document.getElementById(t).classList.toggle("hidden", t !== name);
+  document.getElementById("tabLook").classList.toggle("tab-active", name === "look");
+  document.getElementById("tabUnd").classList.toggle("tab-active", name === "und");
+  document.getElementById("tabBuild").classList.toggle("tab-active", name === "build");
+}
+const el = (id) => document.getElementById(id);
+function table(id, head, rows) {
+  el(id).innerHTML =
+    "<tr>" + head.map((h) => "<th>" + h + "</th>").join("") + "</tr>" +
+    rows.map((r) => "<tr" + (r.cls ? ' class="' + r.cls + '"' : "") + ">" +
+      r.cells.map((c, i) => "<td" + (i === 0 ? ' class="txt"' : "") + ">" + c + "</td>").join("") + "</tr>").join("");
+}
+function selfCheckPanel(fn) {
+  const out = []; let n = 0, bad = 0;
+  const t = (label, cond, detail = "") => {
+    n += 1; if (!cond) bad += 1;
+    out.push('<div><span class="' + (cond ? "ok" : "warn") + '">' + (cond ? "PASS" : "FAIL") +
+      '</span><span>' + label + '</span><span class="m">' + detail + "</span></div>");
+  };
+  fn(t);
+  el("selftest").innerHTML =
+    '<p class="note" style="margin:0 0 8px"><b class="' + (bad ? "warn" : "ok") + '">' +
+    (n - bad) + " of " + n + " checks pass</b>" + (bad ? " &mdash; " + bad + " FAILED" : "") + ".</p>" + out.join("");
+}
+
+const D = 16;
+const Q = ENGINE.randomVec(D, 7), K = ENGINE.randomVec(D, 13);
+
+function render() {
+  const m = parseInt(el("mN").value, 10) || 0;
+  const n = parseInt(el("nN").value, 10) || 0;
+  const sh = parseInt(el("shR").value, 10) || 0;
+  el("shLbl").textContent = String(sh);
+
+  const r1 = ENGINE.score(Q, K, m, n);
+  const r2 = ENGINE.score(Q, K, m + sh, n + sh);
+  const a1 = ENGINE.additiveScore(Q, K, m, n);
+  const a2 = ENGINE.additiveScore(Q, K, m + sh, n + sh);
+
+  el("kRope").textContent = r1.toFixed(6);
+  el("kRopeNote").textContent = "offset m - n = " + (m - n);
+  el("kRope2").innerHTML = '<span class="' + (Math.abs(r1 - r2) < 1e-9 ? "ok" : "warn") + '">' +
+    r2.toFixed(6) + "</span>";
+  el("kRope2Note").textContent = Math.abs(r1 - r2) < 1e-9
+    ? "identical - the shift cancelled"
+    : "moved by " + (r2 - r1).toExponential(2);
+
+  el("kAdd").textContent = a1.toFixed(6);
+  el("kAdd2").innerHTML = '<span class="' + (Math.abs(a1 - a2) < 1e-9 ? "ok" : "warn") + '">' +
+    a2.toFixed(6) + "</span>";
+  el("kAdd2Note").textContent = Math.abs(a1 - a2) < 1e-9
+    ? "unchanged"
+    : "moved by " + (a2 - a1).toFixed(4) + " - the absolute position leaked in";
+
+  // the dials
+  const th = ENGINE.thetas(D);
+  const R = 34, PAD = 10, SH = 4;
+  let s = '<svg width="' + (4 * (2 * R + PAD) + PAD) + '" height="' + (2 * R + 2 * PAD + 20) + '">';
+  for (let i = 0; i < 4; i++) {
+    const cx = PAD + R + i * (2 * R + PAD), cy = PAD + R;
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="#fff" stroke="#e2e8f0"/>';
+    for (const [pos, col, w] of [[m + sh, "#be123c", 3], [n + sh, "#0f172a", 2]]) {
+      const ang = pos * th[i];
+      s += '<line x1="' + cx + '" y1="' + cy + '" x2="' + (cx + R * Math.cos(ang)) +
+        '" y2="' + (cy - R * Math.sin(ang)) + '" stroke="' + col + '" stroke-width="' + w + '"/>';
+    }
+    s += '<text x="' + cx + '" y="' + (cy + R + 14) + '" text-anchor="middle" font-size="10" fill="#64748b">pair ' + i + "</text>";
+  }
+  s += "</svg>";
+  el("dial").innerHTML = s;
+  el("dialNote").innerHTML =
+    "Red is the query at m, black the key at n. The <b>angle between the hands</b> is " +
+    "(m - n) &times; theta and never changes when you shift both - which is the whole trick.";
+}
+
+// ---------------------------------------------------------------- the tables
+{
+  const rows = [];
+  for (const off of [1, 5, 20]) {
+    for (const m of [off, off + 50, off + 400]) {
+      const n = m - off;
+      const r = ENGINE.score(Q, K, m, n);
+      const a = ENGINE.additiveScore(Q, K, m, n);
+      rows.push({
+        cls: m === off ? "here" : "",
+        cells: ["offset " + off, m, n, r.toFixed(10), a.toFixed(6)]
+      });
+    }
+  }
+  table("tInvariance", ["block", "m", "n", "RoPE score", "additive score"], rows);
+  // worst spread inside a block
+  let worstRope = 0, worstAdd = 0;
+  for (const off of [1, 5, 20]) {
+    const rs = [off, off + 50, off + 400].map((m) => ENGINE.score(Q, K, m, m - off));
+    const as = [off, off + 50, off + 400].map((m) => ENGINE.additiveScore(Q, K, m, m - off));
+    worstRope = Math.max(worstRope, Math.max(...rs) - Math.min(...rs));
+    worstAdd = Math.max(worstAdd, Math.max(...as) - Math.min(...as));
+  }
+  el("invNote").innerHTML =
+    "Within a block the RoPE score varies by at most <b>" + worstRope.toExponential(2) +
+    "</b> - floating point, not physics. The additive control varies by <b>" + worstAdd.toFixed(4) +
+    "</b>, which is the absolute position leaking into a score that should not know about it.";
+}
+
+{
+  const th = ENGINE.thetas(D);
+  const rows = th.map((t, i) => {
+    const period = (2 * Math.PI) / t;
+    return {
+      cls: i === 0 || i === th.length - 1 ? "here" : "",
+      cells: ["pair " + i, t.toExponential(3), period.toFixed(1),
+        (512 * t / (2 * Math.PI)).toFixed(3),
+        period > 4096 ? "never completes a turn in context"
+          : period < 20 ? "many turns - fine local detail" : "a few turns"]
+    };
+  });
+  table("tFreq", ["pair", "theta", "period in tokens", "turns by position 512", "what it encodes"], rows);
+  el("freqNote").innerHTML =
+    "The fastest pair turns <b>" + (512 * th[0] / (2 * Math.PI)).toFixed(1) +
+    "</b> times inside a 512-token window; the slowest turns <b>" +
+    (512 * th[th.length - 1] / (2 * Math.PI)).toExponential(2) +
+    "</b> times - it is still almost pointing where it started. That spread is the whole reason " +
+    "one mechanism can carry both 'the previous word' and 'somewhere much earlier'.";
+}
+
+{
+  const offsets = [0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 1024];
+  const S = ENGINE.decayStudy(D, offsets, 600, 5);
+  const rows = S.map((r) => ({
+    cls: r.offset === 0 ? "here" : "",
+    cells: [r.offset, r.selfScore.toFixed(3), (r.selfScore / S[0].selfScore).toFixed(3),
+      r.meanSigned.toFixed(4), r.meanAbs.toFixed(3)]
+  }));
+  table("tDecay", ["offset", "q against ITSELF", "relative to offset 0",
+    "mean raw score, 600 random pairs", "mean |score|, same pairs"], rows);
+  const signedRange = Math.max(...S.map((r) => Math.abs(r.meanSigned)));
+  const absDrop = 1 - S[S.length - 1].meanAbs / S[0].meanAbs;
+  const selfDrop = 1 - S[S.length - 1].selfScore / S[0].selfScore;
+  el("decayNote").innerHTML =
+    "Three columns, same engine, same offsets. The <b>self</b> column falls to <b>" +
+    ((S[S.length - 1].selfScore / S[0].selfScore) * 100).toFixed(0) +
+    "%</b> of its starting value - that is the decay, and it is dephasing between pairs " +
+    "turning at different speeds. The <b>mean raw score</b> never leaves &plusmn;<b>" +
+    signedRange.toFixed(2) + "</b> against a typical magnitude of " + S[0].meanAbs.toFixed(1) +
+    ", because its expectation is zero at every offset. And the <b>mean |score|</b> moves by just <b>" +
+    (absDrop * 100).toFixed(1) + "%</b> across the whole range - taking absolute values does not " +
+    "rescue the plot. Only one of these three is a measurement of anything.";
+}
+
+{
+  const trained = 512, target = 4096;
+  const nb = ENGINE.ntkBase(ENGINE.DEFAULT_BASE, D, trained, target);
+  const th = ENGINE.thetas(D), thN = ENGINE.thetas(D, nb);
+  const slow = th.length - 1;
+  const trainedAngle = trained * th[slow];
+  const rows = [
+    { cls: "", cells: ["trained range, at position " + trained, trained,
+      trainedAngle.toFixed(3), (trainedAngle / (2 * Math.PI)).toFixed(4),
+      '<span class="pill good">what the model saw</span>'] },
+    { cls: "", cells: ["no change, at position " + target, target,
+      (target * th[slow]).toFixed(3), ((target * th[slow]) / (2 * Math.PI)).toFixed(4),
+      '<span class="pill bad">' + ((target * th[slow]) / trainedAngle).toFixed(1) +
+      "x past anything in training</span>"] },
+    { cls: "here", cells: ["position interpolation",
+      ENGINE.interpolated(target, trained, target).toFixed(0),
+      (ENGINE.interpolated(target, trained, target) * th[slow]).toFixed(3),
+      ((ENGINE.interpolated(target, trained, target) * th[slow]) / (2 * Math.PI)).toFixed(4),
+      '<span class="pill good">back exactly where it trained</span>'] },
+    { cls: "here", cells: ["NTK-aware, base " + nb.toExponential(2), target,
+      (target * thN[slow]).toFixed(3), ((target * thN[slow]) / (2 * Math.PI)).toFixed(4),
+      '<span class="pill good">back exactly where it trained</span>'] }
+  ];
+  table("tExtend", ["strategy", "effective position", "slowest pair's angle (rad)",
+    "fraction of a turn", "verdict"], rows);
+  el("extendNote").innerHTML =
+    "The slowest pair sweeps only <b>" + (trainedAngle / (2 * Math.PI) * 100).toFixed(1) +
+    "%</b> of a turn across the entire training window. Ask for position " + target +
+    " untouched and it swings to <b>" + ((target * th[slow]) / (2 * Math.PI) * 100).toFixed(1) +
+    "%</b> - angles with no training signal behind them. Both repairs land it back at " +
+    trainedAngle.toFixed(3) + " rad. They differ at the <b>fast</b> end: theta_0 is base^0 = 1 " +
+    "whatever you do to the base, so NTK cannot slow the fastest pair at all, while interpolation " +
+    "slows every pair equally and costs resolution between adjacent tokens.";
+}
+
+el("codeEngine").textContent = [
+  "// the rotation itself",
+  String(ENGINE.rope), "",
+  "// the same score computed from the OFFSET alone - no absolute position anywhere",
+  String(ENGINE.scoreFromOffset)
+].join("\n");
+
+for (const id of ["mN", "nN", "shR"]) el(id).addEventListener("input", render);
+render();
+
+// --------------------------------------------------------------- the self-check
+selfCheckPanel((t) => {
+  const close = (a, b, e = 1e-9) => Math.abs(a - b) <= e;
+
+  // --- the rotation is a rotation
+  t("rotating preserves the length of every vector", (() => {
+    for (const seed of [1, 2, 3, 4]) {
+      const v = ENGINE.randomVec(D, seed);
+      for (const pos of [0, 1, 7, 99, 5000]) {
+        if (!close(ENGINE.norm(ENGINE.rope(v, pos)), ENGINE.norm(v), 1e-9)) return false;
+      }
+    }
+    return true;
+  })(), "4 vectors x 5 positions");
+
+  t("position 0 is the identity", (() => {
+    const v = ENGINE.randomVec(D, 9);
+    return ENGINE.rope(v, 0).every((x, i) => close(x, v[i], 1e-12));
+  })());
+
+  t("rotations compose: rope(rope(v,a),b) = rope(v,a+b)", (() => {
+    const v = ENGINE.randomVec(D, 11);
+    const twice = ENGINE.rope(ENGINE.rope(v, 13), 29);
+    const once = ENGINE.rope(v, 42);
+    return twice.every((x, i) => close(x, once[i], 1e-9));
+  })());
+
+  t("and a negative position undoes a positive one", (() => {
+    const v = ENGINE.randomVec(D, 12);
+    const back = ENGINE.rope(ENGINE.rope(v, 77), -77);
+    return back.every((x, i) => close(x, v[i], 1e-9));
+  })());
+
+  t("an odd dimension throws rather than silently dropping a component", (() => {
+    try { ENGINE.rope([1, 2, 3], 1); return false; } catch { return true; }
+  })());
+
+  // --- THE theorem
+  t("the score depends only on m - n, not on m and n", (() => {
+    for (const off of [0, 1, 3, 17, 64]) {
+      const base = ENGINE.score(Q, K, off, 0);
+      for (const shift of [1, 10, 250, 4000]) {
+        if (!close(ENGINE.score(Q, K, off + shift, shift), base, 1e-8)) return false;
+      }
+    }
+    return true;
+  })(), "5 offsets x 4 shifts, including a shift of 4000");
+
+  t("the rotated score matches the closed form computed from the offset alone", (() => {
+    for (const [m, n] of [[5, 2], [100, 37], [999, 1], [0, 0], [3, 9]]) {
+      if (!close(ENGINE.score(Q, K, m, n), ENGINE.scoreFromOffset(Q, K, m - n), 1e-8)) return false;
+    }
+    return true;
+  })(), "two unrelated routes to the same number");
+
+  t("a negative offset is not the same as a positive one - direction survives", (() => {
+    return !close(ENGINE.scoreFromOffset(Q, K, 7), ENGINE.scoreFromOffset(Q, K, -7), 1e-6);
+  })(), "attention can tell before from after");
+
+  t("at offset 0 the score is the plain dot product",
+    close(ENGINE.scoreFromOffset(Q, K, 0), ENGINE.dot(Q, K), 1e-12));
+
+  t("CONTROL: additive sinusoidal embeddings do NOT have the property", (() => {
+    const a = ENGINE.additiveScore(Q, K, 5, 2);
+    const b = ENGINE.additiveScore(Q, K, 405, 402);
+    return !close(a, b, 1e-6);
+  })(), "same offset, different absolute positions, different score");
+
+  // --- the frequency ladder
+  t("thetas descend strictly from 1", (() => {
+    const th = ENGINE.thetas(D);
+    if (!close(th[0], 1, 1e-12)) return false;
+    for (let i = 1; i < th.length; i++) if (!(th[i] < th[i - 1])) return false;
+    return true;
+  })(), ENGINE.thetas(D).length + " pairs, theta_0 = 1");
+
+  t("the slowest pair barely turns inside the training window", (() => {
+    const th = ENGINE.thetas(D);
+    return ENGINE.turns(D, 512) > 50 && (512 * th[th.length - 1]) / (2 * Math.PI) < 0.05;
+  })(), "fastest " + ENGINE.turns(D, 512).toFixed(0) + " turns, slowest " +
+    ((512 * ENGINE.thetas(D)[ENGINE.thetas(D).length - 1]) / (2 * Math.PI)).toExponential(1));
+
+  t("a larger base slows every pair except the first", (() => {
+    const a = ENGINE.thetas(D, 10000), b = ENGINE.thetas(D, 50000);
+    if (!close(a[0], b[0], 1e-12)) return false;
+    for (let i = 1; i < a.length; i++) if (!(b[i] < a[i])) return false;
+    return true;
+  })());
+
+  // --- the decay study, and the trap
+  const S = ENGINE.decayStudy(D, [0, 1, 4, 16, 64, 256, 1024], 600, 5);
+
+  t("scoring a query against ITSELF really does decay with distance",
+    S[S.length - 1].selfScore < S[0].selfScore * 0.3,
+    S[0].selfScore.toFixed(2) + " at offset 0, " + S[S.length - 1].selfScore.toFixed(2) +
+    " at " + S[S.length - 1].offset);
+
+  t("CONTROL: and taking |score| does NOT rescue the averaged plot - it is flat too",
+    Math.abs(1 - S[S.length - 1].meanAbs / S[0].meanAbs) < 0.15,
+    S[0].meanAbs.toFixed(2) + " at offset 0, " + S[S.length - 1].meanAbs.toFixed(2) +
+    " at " + S[S.length - 1].offset + " - neither averaged column shows anything");
+
+  t("the decay is dephasing: the pair cosines spread out with distance", (() => {
+    const spread = (a) => Math.max(...a) - Math.min(...a);
+    return spread(ENGINE.dephasing(D, 1024)) > spread(ENGINE.dephasing(D, 1));
+  })(), "they start in phase and drift apart at different rates");
+
+  t("CONTROL: the mean RAW score does not - it is noise around zero", (() => {
+    const far = S.slice(1).map((r) => Math.abs(r.meanSigned));
+    const scale = S[0].meanAbs;
+    return far.every((x) => x < 0.2 * scale);
+  })(), "every offset within 20% of zero relative to the typical magnitude");
+
+  t("and that is not a bug in the study - the expectation IS zero", (() => {
+    // independent q and k: E[q.k] = 0 regardless of the rotation applied
+    const big = ENGINE.decayStudy(D, [32], 2000, 77);
+    return Math.abs(big[0].meanSigned) < big[0].meanAbs * 0.12;
+  })(), "2000 pairs and it still sits at zero");
+
+  t("a single fixed pair shows structure the average destroys", (() => {
+    const vals = S.map((r) => r.fixedPair);
+    return Math.max(...vals) - Math.min(...vals) > 0.3;
+  })(), "which is why 'plot one pair' and 'plot the mean' answer different questions");
+
+  // --- context extension
+  t("position interpolation brings the angle back inside the trained range", (() => {
+    const trained = 512, target = 4096;
+    return close(ENGINE.maxAngle(D, ENGINE.interpolated(target, trained, target)),
+                 ENGINE.maxAngle(D, trained), 1e-9);
+  })());
+
+  t("NTK-aware scaling returns the SLOW pair to its trained angle too", (() => {
+    const th = ENGINE.thetas(D), slow = th.length - 1;
+    const nb = ENGINE.ntkBase(ENGINE.DEFAULT_BASE, D, 512, 4096);
+    return close(4096 * ENGINE.thetas(D, nb)[slow], 512 * th[slow], 1e-6);
+  })(), "a different route from interpolation, to the same angle");
+
+  t("CONTROL: but NTK cannot touch the FASTEST pair, because theta_0 = base^0 = 1", (() => {
+    const nb = ENGINE.ntkBase(ENGINE.DEFAULT_BASE, D, 512, 4096);
+    return close(ENGINE.thetas(D, nb)[0], ENGINE.thetas(D)[0], 1e-15) &&
+           close(ENGINE.turns(D, 4096, nb), ENGINE.turns(D, 4096), 1e-9);
+  })(), "raising the base is powerless at the fast end, by construction");
+
+  t("whereas interpolation slows every pair, which costs adjacent-token resolution", (() => {
+    const th = ENGINE.thetas(D);
+    return ENGINE.interpolated(1, 512, 4096) * th[0] < th[0] / 7;
+  })(), "neighbouring tokens end up " + ENGINE.interpolated(1, 512, 4096).toFixed(3) +
+    " of a position apart on the fast pair");
+
+  t("an unextended model is far outside its training range",
+    ENGINE.turns(D, 4096) > 4 * ENGINE.turns(D, 512),
+    ENGINE.turns(D, 4096).toFixed(0) + " turns vs " + ENGINE.turns(D, 512).toFixed(0));
+
+  // --- the generator
+  t("the vector generator is reproducible", (() => {
+    return ENGINE.randomVec(8, 3).join(",") === ENGINE.randomVec(8, 3).join(",");
+  })());
+
+  t("and different seeds give different vectors",
+    ENGINE.randomVec(8, 1).join(",") !== ENGINE.randomVec(8, 2).join(","));
+
+  t("below(n) is in range and covers it", (() => {
+    const r = ENGINE.rng(5);
+    const seen = new Set();
+    for (let i = 0; i < 4000; i++) {
+      const v = r.below(8);
+      if (!Number.isInteger(v) || v < 0 || v > 7) return false;
+      seen.add(v);
+    }
+    return seen.size === 8;
+  })());
+
+  t("dot() refuses vectors of different length", (() => {
+    try { ENGINE.dot([1, 2], [1, 2, 3]); return false; } catch { return true; }
+  })());
+});
+</script>
+</body>
+</html>

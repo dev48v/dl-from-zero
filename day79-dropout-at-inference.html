@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero &middot; Day 79 &mdash; Dropout at inference</title>
+<style>
+  :root { --ink:#0f172a; --sub:#475569; --line:#e2e8f0; --bg:#f8fafc; --accent:#be123c; }
+  * { box-sizing:border-box; }
+  body { font-family:-apple-system,"Inter",system-ui,sans-serif; margin:0; background:var(--bg); color:var(--ink); }
+  .wrap { max-width:1152px; margin:0 auto; padding:16px; }
+  @media (min-width:768px){ .wrap { padding:24px; } }
+  header { background:#fff; border-bottom:1px solid var(--line); position:sticky; top:0; z-index:20; }
+  .kicker { font-size:12px; font-weight:800; letter-spacing:.16em; color:var(--accent); margin:0 0 8px; }
+  h1 { font-size:19px; line-height:1.5; font-weight:900; margin:0 0 12px; }
+  @media (min-width:768px){ h1 { font-size:22px; } }
+  h2 { font-size:24px; font-weight:900; margin:0 0 8px; }
+  h3 { font-size:19px; font-weight:800; margin:20px 0 6px; }
+  p { line-height:1.6; margin:0 0 12px; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; }
+  .tabs button { font:inherit; font-size:14px; font-weight:600; padding:8px 20px; border:0; border-radius:8px; background:#f1f5f9; cursor:pointer; }
+  .tabs button.tab-active { background:#0f172a; color:#fff; }
+  .hidden { display:none; }
+  .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(15,23,42,.12); padding:20px; min-width:0; }
+  .stack > * + * { margin-top:20px; }
+  .grid2 { display:grid; gap:20px; grid-template-columns:minmax(0,1fr); }
+  .grid3 { display:grid; gap:16px; grid-template-columns:minmax(0,1fr); }
+  .grid4 { display:grid; gap:16px; grid-template-columns:minmax(0,1fr); }
+  @media (min-width:900px){ .grid2 { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } }
+  @media (min-width:768px){ .grid3 { grid-template-columns:repeat(3,minmax(0,1fr)); }
+                            .grid4 { grid-template-columns:repeat(4,minmax(0,1fr)); } }
+  .lbl { font-size:12px; font-weight:800; letter-spacing:.1em; color:#64748b; margin:0 0 8px; }
+  .big { font-size:24px; font-weight:900; font-variant-numeric:tabular-nums; margin:0; }
+  .note { font-size:12.5px; color:#475569; margin:8px 0 0; line-height:1.55; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:11.5px; overflow-x:auto; line-height:1.35; margin:0; white-space:pre; }
+  code { background:#f1f5f9; padding:1px 4px; border-radius:4px; font-size:.92em; }
+  .tblwrap { overflow-x:auto; }
+  table.num { border-collapse:collapse; width:100%; min-width:520px; }
+  table.num td, table.num th { padding:4px 9px; font-variant-numeric:tabular-nums; }
+  table.num th { font-size:11px; letter-spacing:.05em; color:#64748b; text-align:right; font-weight:700; }
+  table.num th:first-child, table.num td:first-child { text-align:left; }
+  table.num td { text-align:right; font-size:12.5px; border-top:1px solid var(--line); }
+  table.num tr.here td { background:#eef2ff; font-weight:700; }
+  table.num tr.dim td { color:#94a3b8; }
+  table.num td.txt { text-align:left; font-size:11.5px; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:99px; font-size:11px; font-weight:800; }
+  .good { background:#dcfce7; color:#166534; }
+  .stop { background:#fef3c7; color:#92400e; }
+  .bad { background:#fee2e2; color:#991b1b; }
+  .ok { color:#166534; font-weight:800; }
+  .warn { color:#991b1b; font-weight:800; }
+  select, input[type=range], input[type=text] { border:1px solid #cbd5e1; border-radius:8px; padding:7px 10px; font:inherit; font-size:13px; width:100%; margin-top:4px; background:#fff; }
+  input[type=range] { padding:0; }
+  label.f { font-size:13px; display:block; }
+  .callout { background:#eef2ff; border-left:4px solid var(--accent); padding:14px; border-radius:0 8px 8px 0; }
+  .callout p { font-size:13.5px; margin:0; }
+  a { color:var(--accent); }
+  .prose { max-width:760px; margin:0 auto; }
+  .bar { display:block; height:9px; background:#e0e7ff; border-radius:3px; position:relative; min-width:110px; }
+  .bar i { position:absolute; top:0; left:0; height:9px; background:var(--accent); border-radius:3px; }
+  .sc { font-size:12.5px; line-height:1.6; }
+  .sc div { display:flex; gap:8px; align-items:baseline; }
+  .sc .m { color:#94a3b8; font-variant-numeric:tabular-nums; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="kicker">DEEPLEARNINGFROMZERO &middot; DAY 79</p>
+    <h1>
+      &#127922; Dropout at inference &mdash; you train with dropout, turn it off at test time, and the
+      whole network answers. MC dropout says leave it on, run k forward passes and average. Both are
+      approximations to the same object, the mean of the dropout <em>ensemble</em>, and
+      <strong>this computes that object exactly instead of approximating it</strong>: 12 dropout units
+      means 2&#8311;&sup1;&sup2; = <strong>4096 masks, every one enumerated</strong>, so the ensemble
+      mean and variance are sums over a complete set rather than Monte Carlo estimates. Five
+      independently seeded networks carry every claim. &#128308; <strong>Turning dropout off does not
+      give you the ensemble mean.</strong> The gap reaches <strong>0.5397</strong> on the main network
+      against a typical output magnitude of 0.5537 &mdash; and the control pins the cause exactly:
+      make the layer after dropout linear and the gap collapses to <strong>2.75&times;10&#8315;&sup1;&#8308;</strong>,
+      floating-point zero, in all five networks. &#128308; <strong>And the MC-dropout run people
+      actually do is worse than not doing it.</strong> The break-even is
+      <code>&sigma;&sup2;/bias&sup2;</code> = <strong>13.9</strong> passes here (5.8 to 29.8 across the
+      five), and the measured curve agrees: at k=5 the averaged answer is <strong>69% further</strong>
+      from the truth than simply switching dropout off, at k=10 still 18% further, and only at k=30 does
+      it win. &#128308; &#128308; <strong>The number it reports as uncertainty is a function of a
+      hyperparameter you chose during training.</strong> Move the keep probability from 0.5 to 0.95 and
+      the reported spread falls <strong>3.89&times;</strong> while the model&rsquo;s actual output is
+      bit-identical at every one of the 61 inputs. Same network, same input, same answer, a quarter of
+      the &ldquo;uncertainty&rdquo;.
+    </h1>
+
+    <div class="tabs">
+      <button id="tabLook" class="tab-active" onclick="showTab('look')">&#128065; LOOK</button>
+      <button id="tabUnd" onclick="showTab('und')">&#129504; UNDERSTAND</button>
+      <button id="tabBuild" onclick="showTab('build')">&#128296; BUILD</button>
+    </div>
+  </div>
+</header>
+
+<main id="look" class="wrap stack">
+  <div class="callout">
+    <p>
+      <strong>Inverted dropout, so the comparison is fair.</strong> A kept unit is divided by the keep
+      probability, which makes the <em>expected</em> post-dropout activation equal the plain activation.
+      That is precisely why &ldquo;turn dropout off at test time&rdquo; is supposed to give you the
+      ensemble mean &mdash; and it is why the gap below is a real discrepancy rather than a missing
+      rescale.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>The ensemble, computed rather than sampled</h2>
+    <div class="grid2" style="margin:12px 0">
+      <label class="f">Network
+        <select id="netSel"></select>
+      </label>
+      <div>
+        <p class="lbl" style="margin-bottom:2px">ACROSS 61 INPUTS</p>
+        <p class="note" style="margin:0" id="netNote"></p>
+      </div>
+    </div>
+    <div class="tblwrap"><table class="num" id="tGrid"></table></div>
+    <p class="note">
+      Every row is a complete 4096-mask enumeration at that input. <code>ensemble mean</code> is the
+      average over all of them, <code>dropout off</code> is the ordinary test-time forward pass, and
+      <code>break-even k</code> is how many stochastic passes you would need before averaging them beats
+      just using the second column.
+    </p>
+  </div>
+
+  <div class="grid4">
+    <div class="card"><p class="lbl">LARGEST GAP, DROPOUT-OFF vs ENSEMBLE MEAN</p><p class="big warn" id="kGap">&mdash;</p>
+      <p class="note" id="kGapNote"></p></div>
+    <div class="card"><p class="lbl">CONTROL: THE SAME GAP WITH A LINEAR HEAD</p><p class="big ok" id="kCtl">&mdash;</p>
+      <p class="note">floating-point zero</p></div>
+    <div class="card"><p class="lbl">BREAK-EVEN PASSES</p><p class="big" id="kBreak">&mdash;</p>
+      <p class="note">below this, MC dropout is worse than no dropout</p></div>
+    <div class="card"><p class="lbl">SPREAD AT KEEP 0.5 vs 0.95</p><p class="big bad" id="kSweep">&mdash;</p>
+      <p class="note">same prediction either way</p></div>
+  </div>
+</main>
+
+<main id="und" class="wrap stack hidden">
+  <div class="card">
+    <h3 style="margin-top:0">1. The gap is the nonlinearity, and the control proves it</h3>
+    <div class="tblwrap"><table class="num" id="tNets"></table></div>
+    <p class="note">
+      Weight scaling is exact when the thing after dropout is linear, because the expectation passes
+      straight through. Put a ReLU there and it stops being exact, and the last column is the evidence:
+      with the same weights, the same masks and the same code path, removing that one nonlinearity drops
+      the discrepancy from <strong>0.25&ndash;0.83</strong> to about
+      <strong>10&#8315;&sup1;&#8308;</strong>. That is what makes this a property of the architecture
+      rather than a bug in the enumeration &mdash; a bug would not switch itself off when the ReLU does.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">2. How many passes before averaging is worth it</h3>
+    <div class="tblwrap"><table class="num" id="tMc"></table></div>
+    <p class="note">
+      &#128308; The k-sample mean is unbiased, so its RMS error is <code>&sigma;/&radic;k</code>; the
+      deterministic pass has no variance but a fixed bias. Setting them equal gives
+      <code>k* = &sigma;&sup2;/bias&sup2;</code>, which is <strong>13.9</strong> for this network, and
+      the measured curve crosses exactly where it should. The point is not that 30 passes is expensive
+      &mdash; it is that <strong>5 and 10, the numbers that actually appear in code, sit on the wrong
+      side of the line</strong>. Averaging a handful of stochastic passes is a more elaborate way of
+      being further from the answer.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">3. The uncertainty moves; the prediction does not</h3>
+    <div class="tblwrap"><table class="num" id="tSweep"></table></div>
+    <p class="note">
+      &#128308; The keep probability is a training hyperparameter. Sweeping it from 0.5 to 0.95 changes
+      the reported spread by <strong>3.89&times;</strong> &mdash; and the deterministic output is
+      <strong>bit-identical</strong> at all 61 inputs, because that pass never sees a mask at all. So
+      the model&rsquo;s answer and the confidence attached to it come from different places: one from
+      the weights, the other from a number chosen during training. Two teams who picked 0.5 and 0.9 will
+      report different uncertainties for the same prediction from the same network, and neither is more
+      right.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">4. What I expected to find, and did not</h3>
+    <div class="tblwrap"><table class="num" id="tCorr"></table></div>
+    <p class="note">
+      The hypothesis going in was that this spread is just a restatement of how large the activations
+      are &mdash; that it would track the output magnitude and carry nothing else. In four of the five
+      networks it does, at r = 0.73, 0.96, 0.96 and 0.71. In the fifth it is
+      <strong>&minus;0.19</strong>. One counterexample out of five is not a rounding error, so
+      <strong>that claim is not established and is not being made here</strong>.
+      <br><br>
+      What the table does show is a cleaner negative. The spread does not tell you where the
+      deterministic approximation is worst: correlating it against the actual gap gives
+      <strong>&minus;0.33 to +0.83</strong> across the five networks &mdash; not merely weak, but with
+      an unstable <em>sign</em>. Whatever this number is measuring, it is not the size of the error it
+      is standing next to.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">What this covers, and what it does not</h3>
+    <p class="note" style="margin-top:0">
+      These networks are <strong>not trained</strong>: the weights are generated deterministically from
+      a stated seed, so nothing here is a statement about what dropout does to a fitted model. There is
+      one dropout layer, one scalar input and one scalar output. There is no label noise anywhere, so
+      the spread measured here is purely the ensemble's own disagreement and there is no aleatoric term
+      to separate it from. A &ldquo;stochastic forward pass&rdquo; in section 2 is an index into the
+      enumerated mask outputs &mdash; the same distribution a real run would draw from, but the page
+      never executes a fresh forward pass per sample. And none of this evaluates MC dropout as a
+      calibration method: no labels, no reliability diagram, no comparison against an ensemble that was
+      actually trained. The claims are about the arithmetic relationship between three things that are
+      often assumed to be the same.
+    </p>
+  </div>
+</main>
+
+<main id="build" class="wrap stack hidden">
+  <div class="card prose">
+    <h2>How it works</h2>
+    <pre>// every mask, not a sample of them
+for (let m = 0; m &lt; 4096; m++) {
+  for (let i = 0; i &lt; 12; i++) drop[i] = (m &gt;&gt; i) &amp; 1 ? h[i] / keep : 0;
+  out[m] = head(net, drop);
+}
+
+// the control: with a linear head the expectation passes straight through,
+// so E[head(drop)] == head(E[drop]) == the dropout-off pass, exactly.
+y += w3[j] * (linear ? z : relu(z));
+
+// and the crossover, solved rather than eyeballed
+breakEven = variance / (bias * bias);   // sigma^2/k &lt; bias^2</pre>
+    <h3>Self-check</h3>
+    <p class="note">
+      Runs on load. The controls do the work here: a claim that two things differ is worth nothing
+      without the configuration in which they provably coincide, so the linear-head case is checked to
+      agree to <code>1e-12</code>, and the enumeration is checked to be a complete 4096 rather than a
+      sample of it.
+    </p>
+    <div class="sc" id="selfcheck"></div>
+    <p style="margin-top:20px"><a href="../deeplearningfromzero.php">&larr; DeepLearningFromZero</a></p>
+  </div>
+</main>
+
+<script>
+// ===== ENGINE:BEGIN =====
+// ---------------------------------------------------------------------------
+// Dropout at inference: the ensemble you never actually average.
+//
+// Dropout is a training trick, and at test time you turn it off and use the
+// whole network. MC dropout says: leave it on, run the forward pass k times,
+// average the answers, and read the spread as uncertainty. Both of those are
+// approximations to the same object - the mean of the dropout ENSEMBLE - and
+// this computes that object EXACTLY rather than approximating it.
+//
+// The dropout layer is 12 units at keep-probability 1/2, so there are 2^12 =
+// 4096 masks and every one is equally likely. The ensemble mean is therefore a
+// plain average over an ENUMERATED 4096, not a Monte Carlo estimate, and the
+// ensemble variance is exact in the same sense. Everything else on the page is
+// measured against that.
+//
+// The networks are not trained. Their weights are generated deterministically
+// from a stated seed by Park-Miller, and five independent weight sets are
+// carried through every claim so that nothing rests on one lucky draw.
+//
+// DOM-free, clock-free, Math.random-free.
+// ---------------------------------------------------------------------------
+
+// ------------------------------------------------------------ the generator
+// Park-Miller. The draw is taken from the HIGH bits: `(nextInt() * n) >>> 31`
+// would coerce to 32 bits and overflow, so the division is written out.
+function Rng(seed) {
+  let s = seed % 2147483647;
+  if (s <= 0) s += 2147483646;
+  this.nextInt = () => (s = (s * 16807) % 2147483647);
+  this.unit = () => (this.nextInt() - 1) / 2147483646;
+  this.below = (n) => Math.floor((this.nextInt() * n) / 2147483648);
+  this.sym = () => this.unit() * 2 - 1;
+}
+
+const NH1 = 12;          // the dropout layer: 2^12 = 4096 masks
+const NH2 = 8;
+const MASKS = 1 << NH1;
+const KEEP = 0.5;
+const GRID = [];
+for (let i = -30; i <= 30; i++) GRID.push(i / 10);   // 61 inputs, -3.0 .. 3.0
+const SEEDS = [7, 101, 2027, 31337, 90210];
+
+const relu = (z) => (z > 0 ? z : 0);
+
+function net(seed) {
+  const r = new Rng(seed);
+  const w1 = [], b1 = [], w2 = [], b2 = [], w3 = [];
+  for (let i = 0; i < NH1; i++) { w1.push(r.sym() * 2); b1.push(r.sym()); }
+  for (let j = 0; j < NH2; j++) {
+    const row = [];
+    for (let i = 0; i < NH1; i++) row.push(r.sym() / Math.sqrt(NH1));
+    w2.push(row); b2.push(r.sym() * 0.5); w3.push(r.sym());
+  }
+  return { seed, w1, b1, w2, b2, w3, b3: r.sym() * 0.25 };
+}
+
+// The first layer does not see dropout, so it is computed once per input.
+function layer1(n, x) {
+  const h = new Array(NH1);
+  for (let i = 0; i < NH1; i++) h[i] = relu(n.w1[i] * x + n.b1[i]);
+  return h;
+}
+
+// `drop` is the post-dropout activation vector. `linear` removes the second
+// nonlinearity, which is the control: with it, weight scaling is EXACT.
+function head(n, drop, linear) {
+  let y = n.b3;
+  for (let j = 0; j < NH2; j++) {
+    let z = n.b2[j];
+    const row = n.w2[j];
+    for (let i = 0; i < NH1; i++) z += row[i] * drop[i];
+    y += n.w3[j] * (linear ? z : relu(z));
+  }
+  return y;
+}
+
+// Inverted dropout: a kept unit is divided by the keep probability, so the
+// EXPECTED post-dropout activation equals the plain activation. That is what
+// makes "turn dropout off at test time" the deterministic approximation.
+function outputsForInput(n, x, linear, q) {
+  const keep = q === undefined ? KEEP : q;
+  const h = layer1(n, x);
+  const scaled = h.map((v) => v / keep);
+  const out = new Float64Array(MASKS);
+  const drop = new Array(NH1);
+  for (let m = 0; m < MASKS; m++) {
+    for (let i = 0; i < NH1; i++) drop[i] = (m >> i) & 1 ? scaled[i] : 0;
+    out[m] = head(n, drop, linear);
+  }
+  return out;
+}
+
+// dropout OFF, activations unscaled - the standard test-time forward pass
+function deterministic(n, x, linear) {
+  return head(n, layer1(n, x), linear);
+}
+
+// popcount per mask, so a keep-probability other than 1/2 can be handled by
+// WEIGHTING the enumerated masks rather than by sampling them.
+const POP = new Uint8Array(MASKS);
+for (let m = 1; m < MASKS; m++) POP[m] = POP[m >> 1] + (m & 1);
+
+function maskWeights(q) {
+  if (q === 0.5) return null;            // uniform: every mask is 1/4096
+  const w = new Float64Array(MASKS);
+  let tot = 0;
+  for (let m = 0; m < MASKS; m++) {
+    const k = POP[m];
+    w[m] = Math.pow(q, k) * Math.pow(1 - q, NH1 - k);
+    tot += w[m];
+  }
+  for (let m = 0; m < MASKS; m++) w[m] /= tot;
+  return w;
+}
+
+function statsOf(out, w) {
+  let mean = 0;
+  if (w) { for (let m = 0; m < MASKS; m++) mean += w[m] * out[m]; }
+  else { let s = 0; for (let m = 0; m < MASKS; m++) s += out[m]; mean = s / MASKS; }
+  let v = 0;
+  if (w) { for (let m = 0; m < MASKS; m++) { const d = out[m] - mean; v += w[m] * d * d; } }
+  else { let s = 0; for (let m = 0; m < MASKS; m++) { const d = out[m] - mean; s += d * d; } v = s / MASKS; }
+  return { mean, variance: v, sd: Math.sqrt(v) };
+}
+
+// The deterministic pass does not depend on q at all, so a sweep over q moves
+// the reported uncertainty while leaving the model's actual output untouched.
+function keepSweep(seed, qs) {
+  const n = net(seed);
+  const det = GRID.map((x) => deterministic(n, x, false));
+  return qs.map((q) => {
+    const w = maskWeights(q);
+    let sv = 0, bv = 0;
+    GRID.forEach((x, i) => {
+      const st = statsOf(outputsForInput(n, x, false, q), w);
+      sv += st.sd * st.sd;
+      const b = det[i] - st.mean;
+      bv += b * b;
+    });
+    return { q, sdRms: Math.sqrt(sv / GRID.length), biasRms: Math.sqrt(bv / GRID.length) };
+  });
+}
+
+// ---------------------------------------------------------------- per network
+function analyse(seed, linear) {
+  const n = net(seed);
+  const rows = GRID.map((x) => {
+    const out = outputsForInput(n, x, linear);
+    const st = statsOf(out);
+    const det = deterministic(n, x, linear);
+    const bias = det - st.mean;
+    return {
+      x, out, mean: st.mean, sd: st.sd, variance: st.variance, det, bias,
+      // how many stochastic passes before the k-sample mean beats the
+      // deterministic pass in expected squared error: sigma^2/k < bias^2
+      breakEven: bias === 0 ? Infinity : st.variance / (bias * bias),
+    };
+  });
+  const rms = (a) => Math.sqrt(a.reduce((s, v) => s + v * v, 0) / a.length);
+  const biasRms = rms(rows.map((r) => r.bias));
+  const sdRms = rms(rows.map((r) => r.sd));
+  return {
+    seed, rows,
+    maxAbsBias: Math.max(...rows.map((r) => Math.abs(r.bias))),
+    biasRms, sdRms,
+    meanAbs: rows.reduce((s, r) => s + Math.abs(r.mean), 0) / rows.length,
+    // aggregate break-even over the whole grid
+    breakEvenGrid: biasRms === 0 ? Infinity : (sdRms * sdRms) / (biasRms * biasRms),
+    // is the reported uncertainty just a restatement of the output magnitude?
+    rSdVsMag: pearson(rows.map((r) => r.sd), rows.map((r) => Math.abs(r.mean))),
+    rSdVsBias: pearson(rows.map((r) => r.sd), rows.map((r) => Math.abs(r.bias))),
+  };
+}
+
+function pearson(a, b) {
+  const n = a.length;
+  const ma = a.reduce((s, v) => s + v, 0) / n, mb = b.reduce((s, v) => s + v, 0) / n;
+  let sab = 0, saa = 0, sbb = 0;
+  for (let i = 0; i < n; i++) { const u = a[i] - ma, v = b[i] - mb; sab += u * v; saa += u * u; sbb += v * v; }
+  return saa === 0 || sbb === 0 ? 0 : sab / Math.sqrt(saa * sbb);
+}
+
+// ------------------------------------------------------- the MC dropout run
+// Every mask's output is already enumerated, so a "stochastic forward pass" is
+// one index into that array. That makes the empirical curve cheap enough to
+// average over many repeats, and it is exactly the same distribution the real
+// thing would sample from.
+function mcCurve(an, ks, repeats, seed) {
+  const r = new Rng(seed);
+  return ks.map((k) => {
+    let se = 0;
+    for (let rep = 0; rep < repeats; rep++) {
+      for (const row of an.rows) {
+        let s = 0;
+        for (let i = 0; i < k; i++) s += row.out[r.below(MASKS)];
+        const d = s / k - row.mean;
+        se += d * d;
+      }
+    }
+    return { k, rmse: Math.sqrt(se / (repeats * an.rows.length)) };
+  });
+}
+
+// ---------------------------------------------------------------- the report
+function report() {
+  const nets = SEEDS.map((s) => analyse(s, false));
+  const controls = SEEDS.map((s) => analyse(s, true));
+  const main = nets[0];
+  const KS = [1, 2, 5, 10, 30, 100, 300, 1000];
+  const QS = [0.5, 0.6, 0.7, 0.8, 0.9, 0.95];
+  return {
+    nets, controls, main,
+    ks: KS, qs: QS,
+    sweep: keepSweep(SEEDS[0], QS),
+    detUnchanged: GRID.map((x) => deterministic(net(SEEDS[0]), x, false)),
+    mc: mcCurve(main, KS, 40, 4242),
+    grid: GRID.length, masks: MASKS, nh1: NH1, nh2: NH2, keep: KEEP, seeds: SEEDS,
+  };
+}
+
+const ENGINE = {
+  Rng, NH1, NH2, MASKS, KEEP, GRID, SEEDS, relu, net, layer1, head,
+  outputsForInput, deterministic, statsOf, maskWeights, keepSweep, POP,
+  analyse, pearson, mcCurve, report,
+};
+if (typeof module !== "undefined" && module.exports) module.exports = ENGINE;
+
+// ===== ENGINE:END =====
+</script>
+
+<script>
+function showTab(name) {
+  for (const t of ["look", "und", "build"]) document.getElementById(t).classList.toggle("hidden", t !== name);
+  document.getElementById("tabLook").classList.toggle("tab-active", name === "look");
+  document.getElementById("tabUnd").classList.toggle("tab-active", name === "und");
+  document.getElementById("tabBuild").classList.toggle("tab-active", name === "build");
+}
+const el = (id) => document.getElementById(id);
+function table(id, head, rows) {
+  el(id).innerHTML =
+    "<tr>" + head.map((h) => "<th>" + h + "</th>").join("") + "</tr>" +
+    rows.map((r) => "<tr" + (r.cls ? ' class="' + r.cls + '"' : "") + ">" +
+      r.cells.map((c, i) => "<td" + (i === 0 ? ' class="txt"' : "") + ">" + c + "</td>").join("") + "</tr>").join("");
+}
+function selfCheckPanel(fn) {
+  const out = []; let n = 0, bad = 0;
+  const t = (label, cond, detail = "") => {
+    n += 1; if (!cond) bad += 1;
+    out.push('<div><span class="' + (cond ? "ok" : "warn") + '">' + (cond ? "PASS" : "FAIL") +
+      '</span><span>' + label + '</span><span class="m">' + detail + "</span></div>");
+  };
+  fn(t);
+  el("selfcheck").innerHTML =
+    '<p class="note" style="margin:0 0 8px"><b class="' + (bad ? "warn" : "ok") + '">' +
+    (n - bad) + " of " + n + " checks pass</b>" + (bad ? " &mdash; " + bad + " FAILED" : "") + ".</p>" + out.join("");
+}
+
+const R = ENGINE.report();
+const n4 = (v) => (Number.isFinite(v) ? v.toFixed(4) : "&infin;");
+const n2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : "&infin;");
+const sci = (v) => v.toExponential(2).replace("e", "&times;10<sup>").replace("+", "") + "</sup>";
+
+const main = R.main;
+el("kGap").textContent = main.maxAbsBias.toFixed(4);
+el("kGapNote").innerHTML = "typical |output| is " + main.meanAbs.toFixed(4);
+el("kCtl").innerHTML = sci(Math.max(...R.controls.map((c) => c.maxAbsBias)));
+el("kBreak").textContent = main.breakEvenGrid.toFixed(1);
+el("kSweep").textContent = (R.sweep[0].sdRms / R.sweep[R.sweep.length - 1].sdRms).toFixed(2) + "×";
+
+el("netSel").innerHTML = R.nets.map((a, i) =>
+  '<option value="' + i + '">seed ' + a.seed + "</option>").join("");
+
+function renderNet(i) {
+  const a = R.nets[i];
+  el("netNote").innerHTML =
+    "largest gap <b>" + a.maxAbsBias.toFixed(4) + "</b> &middot; RMS gap " + a.biasRms.toFixed(4) +
+    " &middot; RMS spread " + a.sdRms.toFixed(4) + " &middot; break-even <b>" +
+    a.breakEvenGrid.toFixed(1) + "</b> passes";
+  const step = 5;
+  const rows = a.rows.filter((_, k) => k % step === 0);
+  table("tGrid", ["input x", "ensemble mean", "dropout off", "gap", "ensemble sd", "break-even k"],
+    rows.map((r) => ({
+      cls: Math.abs(r.bias) === a.maxAbsBias ? "here" : "",
+      cells: [r.x.toFixed(1), n4(r.mean), n4(r.det),
+        '<b class="' + (Math.abs(r.bias) > 0.2 ? "warn" : "") + '">' + n4(r.bias) + "</b>",
+        n4(r.sd), n2(r.breakEven)],
+    })));
+}
+renderNet(0);
+el("netSel").addEventListener("change", (e) => renderNet(parseInt(e.target.value, 10)));
+
+table("tNets", ["network", "largest gap", "RMS gap", "RMS spread", "typical |output|",
+                "break-even k", "CONTROL: gap with a linear head"],
+  R.nets.map((a, i) => ({
+    cls: i === 0 ? "here" : "",
+    cells: ["seed " + a.seed, "<b>" + a.maxAbsBias.toFixed(4) + "</b>", a.biasRms.toFixed(4),
+      a.sdRms.toFixed(4), a.meanAbs.toFixed(4), a.breakEvenGrid.toFixed(1),
+      '<span class="ok">' + sci(R.controls[i].maxAbsBias) + "</span>"],
+  })));
+
+const detRmse = main.biasRms;
+table("tMc", ["stochastic passes k", "measured RMS error of the average", "dropout-off RMS error",
+              "which is better?", "how much"],
+  R.mc.map((c) => {
+    const better = c.rmse < detRmse;
+    return {
+      cls: better && c.k <= 30 ? "here" : "",
+      cells: [c.k, c.rmse.toFixed(4), detRmse.toFixed(4),
+        better ? '<span class="pill good">MC dropout</span>' : '<span class="pill bad">dropout off</span>',
+        better ? (((detRmse - c.rmse) / detRmse) * 100).toFixed(0) + "% closer"
+               : (((c.rmse - detRmse) / detRmse) * 100).toFixed(0) + "% further"],
+    };
+  }));
+
+table("tSweep", ["keep probability", "RMS reported spread", "RMS gap to the ensemble mean",
+                 "deterministic output"],
+  R.sweep.map((s, i) => ({
+    cls: i === 0 ? "here" : "",
+    cells: [s.q.toFixed(2), "<b>" + s.sdRms.toFixed(4) + "</b>", s.biasRms.toFixed(4),
+      '<span class="ok">identical</span>'],
+  })));
+
+table("tCorr", ["network", "r( spread , |output| )", "r( spread , |gap| )", "the magnitude hypothesis"],
+  R.nets.map((a) => ({
+    cls: a.rSdVsMag < 0 ? "here" : "",
+    cells: ["seed " + a.seed,
+      '<b class="' + (a.rSdVsMag > 0.7 ? "ok" : "bad") + '">' + a.rSdVsMag.toFixed(4) + "</b>",
+      '<b class="' + (a.rSdVsBias < 0 ? "bad" : "") + '">' + a.rSdVsBias.toFixed(4) + "</b>",
+      a.rSdVsMag > 0.7 ? "holds" : '<span class="warn">fails</span>'],
+  })));
+
+selfCheckPanel((t) => {
+  const E = ENGINE;
+
+  // --- the enumeration is complete
+  t("the mask set is a complete 2^12", E.MASKS === 4096 && E.MASKS === (1 << E.NH1));
+  t("every input enumerates all 4096 masks",
+    E.outputsForInput(E.net(7), 0.7, false).length === 4096);
+  t("the grid is 61 inputs from -3 to 3",
+    E.GRID.length === 61 && E.GRID[0] === -3 && E.GRID[60] === 3);
+  t("five independent networks, not one", new Set(E.SEEDS).size === 5);
+  t("the generator is reproducible from a seed", (() => {
+    const a = new E.Rng(9), b = new E.Rng(9);
+    for (let i = 0; i < 200; i++) if (a.nextInt() !== b.nextInt()) return false;
+    return true;
+  })());
+  t("two seeds give genuinely different weights",
+    E.net(7).w1.join(",") !== E.net(101).w1.join(","));
+
+  // --- the CONTROL: with a linear head, weight scaling is exact
+  t("CONTROL: with a linear head the dropout-off pass IS the ensemble mean",
+    R.controls.every((c) => c.maxAbsBias < 1e-12),
+    "max " + Math.max(...R.controls.map((c) => c.maxAbsBias)).toExponential(2));
+  t("...in all five networks", R.controls.length === 5);
+  t("CONTROL: and the ensemble still has real spread there, so it is not a degenerate case",
+    R.controls.every((c) => c.sdRms > 0.5), R.controls.map((c) => c.sdRms.toFixed(2)).join(" "));
+
+  // --- the gap, with the nonlinearity back
+  t("with a ReLU head the gap is large in every network",
+    R.nets.every((a) => a.maxAbsBias > 0.2), R.nets.map((a) => a.maxAbsBias.toFixed(3)).join(" "));
+  t("on the main network it reaches 0.5397", Math.abs(main.maxAbsBias - 0.5397) < 5e-4,
+    main.maxAbsBias.toFixed(4));
+  t("and the RMS gap is a large fraction of the typical output",
+    main.biasRms / main.meanAbs > 0.3, (main.biasRms / main.meanAbs).toFixed(3));
+
+  // --- break-even, analytic and measured
+  t("the analytic break-even is about 14 passes",
+    main.breakEvenGrid > 12 && main.breakEvenGrid < 16, main.breakEvenGrid.toFixed(2));
+  t("at k=10 the measured average is FURTHER from the truth than dropout-off",
+    R.mc.find((c) => c.k === 10).rmse > detRmse,
+    R.mc.find((c) => c.k === 10).rmse.toFixed(4) + " vs " + detRmse.toFixed(4));
+  t("at k=5 it is more than half as bad again",
+    R.mc.find((c) => c.k === 5).rmse > 1.5 * detRmse);
+  t("CONTROL: at k=30 it does win, so the crossover is real and not an artefact",
+    R.mc.find((c) => c.k === 30).rmse < detRmse);
+  t("the measured curve falls like 1/sqrt(k)", (() => {
+    const a = R.mc.find((c) => c.k === 10).rmse, b = R.mc.find((c) => c.k === 1000).rmse;
+    const ratio = a / b;                       // expected sqrt(100) = 10
+    return ratio > 8 && ratio < 12;
+  })());
+
+  // --- the hyperparameter
+  t("sweeping the keep probability changes the reported spread by ~4x",
+    R.sweep[0].sdRms / R.sweep[R.sweep.length - 1].sdRms > 3.5);
+  t("the spread falls monotonically as fewer units are dropped",
+    R.sweep.every((s, i) => i === 0 || s.sdRms < R.sweep[i - 1].sdRms));
+  t("CONTROL: the deterministic output never depends on the keep probability", (() => {
+    const n = E.net(E.SEEDS[0]);
+    return E.GRID.every((x, i) => E.deterministic(n, x, false) === R.detUnchanged[i]);
+  })(), "it never sees a mask");
+  t("CONTROL: and the gap shrinks toward zero as keep -> 1",
+    R.sweep[R.sweep.length - 1].biasRms < 0.15 * R.sweep[0].biasRms);
+
+  // --- the honest negative
+  t("the magnitude hypothesis FAILS in one of the five networks",
+    R.nets.filter((a) => a.rSdVsMag < 0.5).length === 1,
+    R.nets.map((a) => a.rSdVsMag.toFixed(2)).join(" "));
+  t("so it is reported as not established, not as a finding",
+    R.nets.some((a) => a.rSdVsMag < 0) && R.nets.some((a) => a.rSdVsMag > 0.9));
+  t("the spread-vs-gap correlation changes SIGN across the five networks",
+    R.nets.some((a) => a.rSdVsBias < -0.2) && R.nets.some((a) => a.rSdVsBias > 0.7),
+    R.nets.map((a) => a.rSdVsBias.toFixed(2)).join(" "));
+
+  // --- determinism
+  t("a repeated analysis is identical",
+    ENGINE.analyse(7, false).maxAbsBias === main.maxAbsBias);
+});
+
+</script>
+</body>
+</html>

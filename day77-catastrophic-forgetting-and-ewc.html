@@ -1,0 +1,2371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero &middot; Day 77 &mdash; Catastrophic forgetting and EWC</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin:0; background:#f8fafc; color:#0f172a; line-height:1.55;
+         font-family:-apple-system, "Segoe UI", "Inter", Roboto, Helvetica, Arial, sans-serif; }
+  header { background:#fff; }
+  /* the tab bar sticks, not the header: a header taller than the viewport would pin forever */
+  .tabbar { background:#fff; border-bottom:1px solid #e2e8f0; position:sticky; top:0; z-index:20; }
+  .tabbar .wrap { padding-top:10px; padding-bottom:10px; }
+  .wrap { max-width:1120px; margin:0 auto; padding:16px; }
+  .narrow { max-width:780px; margin:0 auto; padding:16px; }
+  @media (min-width:768px){ .wrap, .narrow { padding:26px; } }
+  .kicker { font-size:11px; font-weight:800; letter-spacing:.18em; color:#be123c; margin:0 0 10px; }
+  h1 { font-size:17px; font-weight:800; line-height:1.55; margin:0; }
+  @media (min-width:768px){ h1 { font-size:19px; } }
+  h2 { font-size:23px; font-weight:800; margin:34px 0 10px; line-height:1.25; }
+  h3 { font-size:17px; font-weight:700; margin:26px 0 8px; }
+  p { margin:0 0 12px; }
+  em { font-style:italic; }
+  code { font-family:"SF Mono", Consolas, "Liberation Mono", monospace; font-size:12.5px;
+         background:#eef2f7; padding:1px 4px; border-radius:4px; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px 14px; border-radius:8px; font-size:12px;
+        overflow-x:auto; line-height:1.5;
+        font-family:"SF Mono", Consolas, "Liberation Mono", monospace; }
+  pre code { background:none; padding:0; color:inherit; font-size:inherit; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; }
+  .tabs button { border:0; background:#f1f5f9; color:#0f172a; padding:9px 18px; border-radius:9px;
+                 font-size:13.5px; font-weight:650; cursor:pointer; font-family:inherit; }
+  .tabs button.tab-active { background:#0f172a; color:#fff; }
+  .panel { background:#f1f5f9; }
+  .panel.light { background:#f8fafc; }
+  .hidden { display:none; }
+  .stack > * + * { margin-top:20px; }
+  .card { background:#fff; border-radius:16px; padding:18px;
+          box-shadow:0 1px 3px rgba(15,23,42,.10), 0 1px 2px rgba(15,23,42,.06); }
+  .cap { font-size:11px; font-weight:800; letter-spacing:.12em; color:#64748b; margin:0 0 10px; }
+  .lede { font-size:13.5px; color:#475569; margin:0 0 12px; }
+  .note { font-size:12px; color:#64748b; margin:10px 0 0; }
+  .grid2 { display:grid; gap:20px; }
+  @media (min-width:1000px){ .grid2 { grid-template-columns:1fr 1fr; } }
+  .ctrls { display:grid; gap:12px 22px; grid-template-columns:1fr; }
+  @media (min-width:640px){ .ctrls { grid-template-columns:1fr 1fr; } }
+  @media (min-width:1000px){ .ctrls { grid-template-columns:repeat(3,1fr); } }
+  label.ctl { font-size:13px; display:block; }
+  label.ctl b { float:right; font-variant-numeric:tabular-nums; }
+  input[type=range] { width:100%; margin:4px 0 0; }
+  .scroll { overflow-x:auto; }
+  table.num { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
+  table.num th, table.num td { padding:4px 9px; text-align:right; white-space:nowrap; }
+  table.num th { font-size:10.5px; letter-spacing:.05em; color:#64748b; font-weight:800; }
+  table.num td { font-size:12.5px; border-top:1px solid #e2e8f0; }
+  table.num th:first-child, table.num td:first-child { text-align:left; white-space:normal;
+    min-width:112px; }
+  table.num tr.hl td { background:#f1f5f9; }
+  .ok { color:#15803d; font-weight:800; }
+  .bad { color:#b91c1c; font-weight:800; }
+  .lg { font-size:10px; color:#64748b; font-weight:400; letter-spacing:0; }
+  button.run { border:0; background:#0f172a; color:#fff; padding:9px 17px; border-radius:9px;
+               font-size:13px; font-weight:650; cursor:pointer; font-family:inherit; }
+  button.run:disabled { opacity:.5; cursor:default; }
+  .runbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  .status { font-size:12px; color:#64748b; }
+  svg { max-width:100%; height:auto; display:block; }
+  ul { margin:0 0 12px; padding-left:22px; }
+  li { margin:0 0 6px; }
+  .red { color:#b91c1c; font-weight:800; }
+  .mono { font-family:"SF Mono", Consolas, "Liberation Mono", monospace; font-size:12px;
+          word-break:break-all; color:#334155; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="kicker">DEEPLEARNINGFROMZERO &middot; DAY 77</p>
+    <h1 id="headline">
+      &#129504; Catastrophic forgetting &mdash; train a network on task A, then on task B, and it
+      does not <em>degrade</em> on A, it <em>becomes</em> task B: after 300 steps it scores
+      <strong>1.1139</strong> on the old task and task B's own teacher scores
+      <strong>1.1180</strong> on it. Elastic weight consolidation prices the move away from A's
+      solution with the <em>Fisher information</em>, one number per parameter. The task here is a
+      teacher network over an <em>enumerated</em> 64-point input space, so the score is an exact
+      mean KL &mdash; the teacher scores exactly <strong>0</strong>, above a
+      <strong>1.0878</strong>-nat floor &mdash; and the Fisher is a closed-form sum rather than an
+      estimate: three separately written code paths agree to <strong>1.7e-16</strong>, and it
+      <em>is</em> the Hessian of the loss whose labels come from the model itself, exactly, for any
+      architecture.
+      <span class="red">THE headline:</span> what EWC charges you is not a property of the network.
+      Write the same model in different coordinates &mdash; an orthogonal change of basis that
+      leaves every function it can compute untouched, and leaves plain fine-tuning landing in the
+      same place to <strong>4.9e-15</strong>, no further than a 1e-13 nudge moves it &mdash; and
+      the <em>diagonal</em> of the Fisher becomes a different penalty:
+      <strong>84.8%</strong> of everything the Fisher's shape buys over a shapeless penalty of the
+      same mass is gone, and the run lands <strong>0.5670</strong> from the plain-L2 run and
+      <strong>1.9185</strong> from EWC's own.
+      <span class="red">And the FULL Fisher, the exact object the diagonal approximates, is worse
+      than the approximation at all four budgets</span> &mdash; 0.6754 against
+      <strong>0.5647</strong> &mdash; because the second-order model it minimises predicted the old
+      task would lose <strong>0.0226</strong> and it lost <strong>0.8796</strong>, a factor of
+      <strong>38.94</strong>, while the diagonal's over-charging accidentally keeps the run inside
+      the radius where that model is still true.
+      <span class="red">The empirical Fisher, the one that actually gets implemented, is worth
+      0.1%:</span> 0.5653 against 0.5647 &mdash; and at a model that has learned the task the two
+      are bit-identical, exactly <strong>0</strong>.
+      The diagonal understates the worst direction by exactly <strong>7.182&times;</strong>, a
+      generalised eigenvalue, and prices a move of length <strong>4.0</strong> that changes the
+      function by 1.3e-17 at <strong>2.1e-17</strong> &mdash; correctly. Per parameter it is nearly
+      perfect, <strong>0.997</strong> against the curvature's <strong>1.000</strong> and exactly
+      1.000 for both inside the last layer, where the Fisher <em>is</em> the curvature &mdash;
+      while weight magnitude scores <strong>0.474</strong> and gradient size
+      <strong>0.398</strong>, both below a coin. Gradients checked at initialisation against
+      forward-mode dual numbers to better than <strong>1e-14</strong> of the largest, where a
+      central difference manages <strong>1.3e-10</strong>. <strong>240</strong> in-page
+      assertions. Pure vanilla JavaScript, one file, no build step.
+    </h1>
+  </div>
+</header>
+
+<div class="tabbar">
+  <div class="wrap">
+    <div class="tabs" id="tabs">
+      <button data-tab="look" class="tab-active">&#128300; MEASURE</button>
+      <button data-tab="understand">&#129504; UNDERSTAND</button>
+      <button data-tab="build">&#128296; BUILD</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ MEASURE -->
+<section id="look" class="panel">
+  <div class="wrap stack">
+
+    <div class="card">
+      <p class="cap">THE SETTING</p>
+      <div class="ctrls">
+        <label class="ctl">hidden units <b id="vH">6</b>
+          <input type="range" id="sH" min="4" max="8" step="1" value="6" /></label>
+        <label class="ctl">how much task B shares with A <b id="vO">0.25</b>
+          <input type="range" id="sO" min="0" max="4" step="1" value="1" /></label>
+        <label class="ctl">steps on task B <b id="vT">300</b>
+          <input type="range" id="sT" min="0" max="3" step="1" value="2" /></label>
+        <label class="ctl">penalty strength <b id="vM">3</b>
+          <input type="range" id="sM" min="0" max="4" step="1" value="2" /></label>
+        <label class="ctl">learning rate <b id="vL">0.60</b>
+          <input type="range" id="sL" min="0" max="3" step="1" value="2" /></label>
+        <label class="ctl">seed <b id="vS">1</b>
+          <input type="range" id="sS" min="1" max="6" step="1" value="1" /></label>
+      </div>
+      <p class="note" id="setup"></p>
+      <p class="note"><span class="status" id="mainStatus"></span></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE FLOOR AND THE NULLS</p>
+      <p class="lede">Both tasks are teacher networks the student can hold exactly, over an input
+        space small enough to enumerate, so the loss is an expectation over labels and over every
+        input rather than a sample of either. The score is a mean KL from the true conditional:
+        zero is not a target the training reaches, it is what the network that generated the labels
+        gets, by construction. Three of the rows below are what a model that has learned nothing
+        scores.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>quantity</th><th>value</th><th>what it is</th>
+        </tr></thead><tbody id="floor"></tbody></table>
+      </div>
+      <p class="note" id="floorNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">1 &middot; THE GRADIENTS, CHECKED WITHOUT A STEP SIZE</p>
+      <p class="lede">Everything below rests on a hand-written backward pass, so it is checked
+        against forward-mode differentiation over dual numbers &mdash; value and derivative carried
+        side by side, one seed per parameter, no step size anywhere, and the opposite traversal to a
+        backward pass. At <em>initialisation</em>: at convergence the true gradient has decayed to
+        nothing and a difference test measures its own floor instead of the code.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>model</th><th>parameters</th><th>loss, forward vs reverse</th>
+          <th>gradient vs forward mode</th><th>relative to the largest</th>
+          <th>gradient vs a central difference</th><th>largest |g|</th>
+        </tr></thead><tbody id="grad"></tbody></table>
+      </div>
+      <p class="note" id="gradNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">2 &middot; THE FISHER, THREE WAYS &mdash; AND WHERE IT IS THE CURVATURE EXACTLY</p>
+      <p class="lede">The Fisher information of a classifier is an expectation over labels drawn
+        from <em>the model</em>, so on a finite label set it is a closed-form sum and not something
+        to sample. Three independent code paths compute it here: outer products of per-class
+        gradients, the Gauss-Newton form with the class loop on the inside, and minus the Hessian of
+        the loss whose targets are the model's own predictions. The last one is the definition doing
+        real work &mdash; it says the Fisher <em>is</em> a curvature, just not the curvature of the
+        loss anybody trains.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>identity</th><th>largest disagreement</th><th>relative to the Fisher's own scale</th>
+          <th>why it has to hold</th>
+        </tr></thead><tbody id="fisher"></tbody></table>
+      </div>
+      <p class="note" id="fisherNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">3 &middot; WHAT FORGETTING IS</p>
+      <p class="lede">Train on A, then fine-tune on B, and watch the old task. The last two columns
+        are the honest ones: every penalty on this page is minimising a <em>second-order model</em>
+        of the old task's loss, so the question is not what the penalty scored but what that model
+        predicted the old task would lose, against what it actually lost. A model is only worth
+        minimising where it is still true.</p>
+      <div class="grid2">
+        <div>
+          <div class="scroll">
+            <table class="num"><thead><tr>
+              <th>what was done after task A</th><th>task A</th><th>task B</th><th>distance moved</th>
+              <th>the model's prediction for A</th><th>what A actually lost</th><th>ratio</th>
+            </tr></thead><tbody id="runs"></tbody></table>
+          </div>
+          <p class="note" id="runsNote"></p>
+        </div>
+        <div>
+          <p class="cap">THE OLD TASK, DURING THE NEW ONE</p>
+          <div id="curveSVG"></div>
+          <p class="note" id="curveNote"></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="cap">4 &middot; A MOVE THAT COSTS NOTHING, AND A DIRECTION THE DIAGONAL UNDERPRICES</p>
+      <p class="lede">Add the same number to every class bias and the softmax does not move: the
+        function is untouched however far you go. That is a whole line through parameter space that
+        costs exactly nothing, and the Fisher prices it at nothing &mdash; which is the case
+        <em>for</em> the method. The case against the diagonal is the other quadratic form: the
+        largest ratio between what the full matrix charges for a direction and what the diagonal
+        charges is a generalised eigenvalue, computable exactly, and it is never below 1 because
+        every coordinate direction gives exactly 1.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>direction</th><th>length</th><th>what it does to the function</th>
+          <th>the full Fisher charges</th><th>the diagonal charges</th><th>plain L2 charges</th>
+        </tr></thead><tbody id="gauge"></tbody></table>
+      </div>
+      <p class="note" id="gaugeNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">5 &middot; HOW GOOD IS THE QUADRATIC MODEL, AND WHAT THE FISHER LEAVES BEHIND</p>
+      <p class="lede">Step away from A's solution along one direction and compare the true loss with
+        two second-order models: the real curvature, and the Fisher. The Hessian's leftover is
+        third order in the step and has to fall by 512 over three halvings; the Fisher's leftover
+        contains a term that is <em>second</em> order and falls by 64. The step is not hand-picked
+        &mdash; it is searched for over a dyadic grid, maximising the separation, and required to
+        stay clear of the rounding floor where a leftover stops shrinking and starts measuring the
+        arithmetic.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>direction</th><th>step</th><th>true change</th><th>curvature's leftover</th>
+          <th>Fisher's leftover</th><th>the exact quadratic gap</th>
+        </tr></thead><tbody id="ladder"></tbody></table>
+      </div>
+      <p class="note" id="ladderNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">6 &middot; WHICH PARAMETERS ACTUALLY MATTER</p>
+      <p class="lede">Nudge one parameter up and down and read the old task's loss: the symmetric
+        second difference cancels the linear term and leaves the true importance of that parameter,
+        exactly. Then ask every candidate importance measure to rank all of them. A coin scores
+        0.500. The last column is the control that separates an identity from an approximation: in
+        the last layer the logits are linear in the parameters, so the Fisher <em>is</em> the
+        curvature there and both have to be perfect.</p>
+      <div class="grid2">
+        <div>
+          <div class="scroll">
+            <table class="num"><thead><tr>
+              <th>importance measure</th><th>AUC</th><th>vs a coin</th>
+              <th>the last layer <span class="lg">where it is exact</span></th>
+              <th>below it</th><th>pairs</th>
+            </tr></thead><tbody id="rank"></tbody></table>
+          </div>
+          <p class="note" id="rankNote"></p>
+        </div>
+        <div>
+          <p class="cap">RANKING THE 70 PARAMETERS</p>
+          <div id="rankSVG"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="cap">7 &middot; THE SAME MODEL, WRITTEN DOWN IN DIFFERENT COORDINATES</p>
+      <p class="lede">Replace the parameter vector by an orthogonal rotation of itself. Nothing
+        about the model changes: it computes the same functions, from the same starting weights, and
+        gradient descent transports exactly, so a run with no penalty has to land in the same place.
+        The control makes that claim testable rather than assumed &mdash; nudge the start by 1e-13
+        and see how far apart the same computation ends up. A change of basis is only <em>rounding</em>
+        if it moves the run less than that.</p>
+      <div class="scroll">
+        <table class="num"><thead><tr>
+          <th>change of coordinates</th><th>orthogonal to</th>
+          <th>plain fine-tuning moves <span class="lg">vs the 1e-13 control</span></th>
+          <th>the FULL Fisher run moves</th><th>the DIAGONAL Fisher run moves</th>
+          <th>spread of the diagonal</th><th>closer to</th>
+        </tr></thead><tbody id="rot"></tbody></table>
+      </div>
+      <p class="note" id="rotNote"></p>
+    </div>
+
+    <div class="card">
+      <p class="cap">8 &middot; AT A MATCHED BUDGET, WHAT DOES THE SHAPE BUY?</p>
+      <p class="lede">Quoting one penalty strength is how anything can be made to look good: a
+        stronger penalty always keeps more of the old task and always learns less of the new one. So
+        the comparison is between whole curves. Sweep the strength, then read each curve at four
+        fixed budgets on the new task &mdash; a tenth, a fifth, three tenths and two fifths of what
+        the old model already scored on it &mdash; and ask what the old task cost there.</p>
+      <div class="runbar">
+        <button class="run" id="runSweep">sweep the penalty strength</button>
+        <span class="status" id="sweepStatus">not run yet</span>
+      </div>
+      <div class="grid2">
+        <div>
+          <div class="scroll">
+            <table class="num"><thead><tr>
+              <th>what is penalised</th><th>budget 1</th><th>budget 2</th><th>budget 3</th>
+              <th>budget 4</th><th>vs EWC</th>
+            </tr></thead><tbody id="front"></tbody></table>
+          </div>
+          <p class="note" id="frontNote"></p>
+        </div>
+        <div>
+          <p class="cap">THE WHOLE TRADE-OFF</p>
+          <div id="frontSVG"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="cap">THE PAGE CHECKING ITSELF</p>
+      <pre id="selftest">running&hellip;</pre>
+    </div>
+
+  </div>
+</section>
+
+<!-- ================================================================ UNDERSTAND -->
+<section id="understand" class="panel light hidden">
+  <div class="narrow">
+
+    <h2>The network does not decay. It leaves.</h2>
+    <p>A network that has learned task A and is then trained on task B loses A. The usual word for
+      it is <em>degradation</em>, and the usual picture is a curve sagging. That is not what the
+      measurement shows. After the fine-tuning run on this page the model scores
+      <strong>1.1139</strong> on task A, and task B's own teacher &mdash; a network that has never
+      seen task A and cannot do it at all &mdash; scores <strong>1.1180</strong> on task A. The
+      fine-tuned model has not been damaged. It has arrived somewhere else. Whatever protects the
+      old task has to work by keeping the weights near where they were, because there is nothing
+      about the new task's gradient that would ever bring them back.</p>
+    <p>So the method writes down a penalty. Add to the new task's loss a term that charges for
+      moving away from A's solution:</p>
+    <pre><code>L_B(theta)  +  (lambda / 2) * sum_i  F_i * (theta_i - theta_i*)^2</code></pre>
+    <p>and the whole question is what <code>F_i</code> should be. Elastic weight consolidation
+      (Kirkpatrick et al., 2017) answers: the diagonal of the <em>Fisher information</em>, computed
+      at A's solution.</p>
+
+    <h2>The Fisher really is a curvature &mdash; of a loss nobody trains</h2>
+    <p>The Fisher information of a classifier is an expectation over labels drawn from the model
+      itself:</p>
+    <pre><code>F  =  E_x  E_{y ~ q(.|x)}  [ grad log q(y|x)  grad log q(y|x)^T ]</code></pre>
+    <p>On four classes and sixty-four inputs that expectation is a sum of 256 terms, so nothing here
+      is sampled. Written that way it looks like a statistical object. Differentiate the
+      log-likelihood twice and take the same expectation, though, and the term carrying the second
+      derivative of the network is multiplied by <code>E[e_y] - q</code>, which is exactly zero
+      &mdash; so the Fisher is <em>minus the expected Hessian of the log-likelihood</em>, at any
+      architecture, exactly. The page checks it as an identity and gets 1.7e-16.</p>
+    <p>That is the promise and the catch in the same line. The Fisher is the curvature of the loss
+      whose labels come from the model. The loss being trained has labels that come from the
+      <em>data</em>. Cross-entropy is linear in the target, so the two Hessians differ by exactly the
+      Hessian of a loss with target <code>q - t</code>: the residual. Where the model is right the
+      residual is zero and the Fisher is the curvature; where the model is wrong it is not. On the
+      last layer it does not matter at all, because the logits are linear in those parameters, their
+      second derivative is identically zero, and the two matrices agree there to the bit &mdash;
+      1.7e-16 on that block against 0.0109 over the whole matrix.</p>
+
+    <h2>A diagonal is not a property of a matrix</h2>
+    <p>Here is the part that no amount of care with the Fisher can fix. The full matrix is a
+      <em>metric</em>: change parameter coordinates by an orthogonal <code>Q</code> and it transforms
+      as <code>Q^T F Q</code>, and the quantity <code>d^T F d</code> comes out the same number, to
+      7.2e-16 here. The <em>diagonal</em> of a matrix is not that kind of object. Rotate the
+      coordinates and the diagonal of the rotated matrix is not the rotated diagonal; it is a
+      different penalty with different consequences.</p>
+    <p>And a rotation of the parameters changes nothing about the model. Every function the network
+      could compute, it still computes. Gradient descent transports exactly, so plain fine-tuning
+      lands in the same place &mdash; 4.9e-15 away, which this page insists on checking against a
+      control rather than asserting: nudge the starting point by 1e-13 and the same run ends up
+      about 1e-13 away, so the change of basis moved it <em>less than rounding does</em>. The
+      full-Fisher run is invariant too, 9.2e-14. The diagonal-Fisher run moves
+      <strong>1.9185</strong>, which is half the length of the entire fine-tuning move.</p>
+    <p>In a generic basis the Fisher's diagonal is nearly flat &mdash; a spread of 73&times; between
+      its largest and smallest entry becomes 4.5&times; &mdash; so EWC in a generic basis is close to
+      plain L2, and that is exactly where its run lands: 0.5670 from the L2 run against 1.9185 from
+      its own. Read at matched budgets, <strong>84.8%</strong> of what the Fisher's shape buys over a
+      shapeless penalty of the same mass is destroyed by writing the same model down differently.
+      The basis that makes EWC work is the one the layers happen to be written in.</p>
+
+    <h2>Why the exact metric loses to its own approximation</h2>
+    <p>If the diagonal is a crude version of the full Fisher, the full Fisher should do better. It
+      does worse, at every budget: 0.6754 against 0.5647 at the tightest, and worse than plain L2 at
+      three of the four.</p>
+    <p>The reason is measurable rather than mysterious. The penalty is a second-order model of the
+      old task's loss, and a second-order model is a statement about a neighbourhood. The full
+      Fisher has a large near-null space, so it lets the run travel a long way for very little
+      penalty: 4.47 in weight space at a Fisher cost of 0.0584, against the diagonal's 2.35 at
+      0.3947. The model that permitted that predicted the old task would lose
+      <strong>0.0226</strong>. It lost <strong>0.8796</strong>. The diagonal is not a better model
+      of the curvature &mdash; it is a worse one that happens to over-charge exactly the directions
+      the full matrix is too permissive about, and over-charging keeps the run inside the region
+      where its own model is still true. The other rows sit between 1.04 and 1.63 on the same ratio.
+      This is the trust-region argument, arriving through the back door.</p>
+
+    <h2>The distinction that does not matter, and the ones that do</h2>
+    <p>Almost every implementation computes the <em>empirical</em> Fisher &mdash; the same
+      expression with the observed labels in place of the model's own. Textbooks are right that they
+      are different objects; here the difference is worth 0.1% at matched budgets (0.5653 against
+      0.5647), and at a model that has learned the task they are bit-identical, exactly 0, because
+      the only thing separating them is the residual.</p>
+    <p>What does matter is that the numbers are the right numbers, not just numbers of the right
+      size. Shuffle the Fisher's entries between parameters, keeping every value and the total mass,
+      and the frontier gets clearly worse (0.6732 at the tightest budget). Use weight magnitude with
+      the same total mass and it is worse still (0.8087). Per parameter the Fisher is nearly perfect
+      &mdash; it ranks the true importances at 0.997 against the exact curvature's 1.000, and both
+      are exactly 1.000 inside the last layer &mdash; while weight magnitude scores 0.474 and
+      gradient size 0.398, both <em>below</em> a coin.</p>
+    <p>So EWC works, at these settings: it wins all four budgets, ahead of plain L2, the two nulls
+      and the full matrix. It is worth saying how narrow that statement is. Move the seed slider and
+      the ranking changes &mdash; at two of the six seeds the shuffled null or the rotated basis
+      takes the tightest budget. The advantage is real, it is small, and it rests on a choice of
+      coordinates that the network does not know it has made.</p>
+
+    <h2>What the page checks about itself</h2>
+    <ul>
+      <li>The teacher scores exactly zero on its own task, so the floor is a construction and not an
+        estimate; at full overlap the two tasks are the same function and there is nothing to
+        forget.</li>
+      <li>The backward pass is checked at initialisation against forward-mode dual numbers, which
+        have no step size in them, and beats a central difference by five orders of magnitude.</li>
+      <li>Three code paths for the Fisher agree; the Hessian is symmetric across independently
+        computed columns; the Hessian is affine in the target distribution, which is what makes the
+        decomposition into Fisher plus residual exact.</li>
+      <li>An unbounded penalty is exactly &ldquo;do not move&rdquo;: the weights come back to A's
+        solution to 1.7e-13, because the penalty is applied as a proximal step rather than as one
+        more gradient.</li>
+      <li>Every invariance claim is checked against a 1e-13 nudge to the same computation, so
+        &ldquo;unchanged&rdquo; means smaller than that run's own rounding, not smaller than a
+        number somebody picked.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================================================================ BUILD -->
+<section id="build" class="panel light hidden">
+  <div class="narrow">
+
+    <h2>1 &middot; A task with a floor you can compute</h2>
+    <p>Six binary features give 64 inputs, and all 64 are used. The labels are a distribution over
+      four classes produced by a teacher network with four hidden units, and the student has more,
+      so a zero-excess solution provably exists. The teacher is padded into the student's shape by
+      switching the extra units off, which is bit-exact: a zeroed row of the first layer gives
+      <code>tanh(0)</code>, and a zeroed column of the second multiplies it by zero.</p>
+    <pre><code>function act(z, lin){ return lin ? z : Math.tanh(z); }
+function dact(a, lin){ return lin ? 1 : 1 - a * a; }</code></pre>
+    <p>Both the nonlinearity and its derivative live in exactly one place, so the linear twin of the
+      whole engine is a two-token edit &mdash; which is how the independent verifier builds one,
+      rather than trusting the flag.</p>
+
+    <h2>2 &middot; The Fisher, twice, on purpose</h2>
+    <p>The first version accumulates outer products of the per-class gradients weighted by the
+      model's own probabilities. The second builds the Gauss-Newton form with the class loop on the
+      inside and never forms a per-class gradient at all.</p>
+    <pre><code>function fisherGN(p, dm, X, lin){
+        for (cc = 0; cc &lt; dm.C; cc++) M[c][cc] = ((c === cc) ? q[c] : 0) - q[c] * q[cc];</code></pre>
+    <p>They are the same matrix algebraically and they agree to 1.7e-16, which is what you want from
+      two pieces of code that share nothing but a definition.</p>
+
+    <h2>3 &middot; Second derivatives with no step size</h2>
+    <p>The Hessian is not estimated. The backward pass is run over dual numbers &mdash;
+      forward-over-reverse &mdash; so one seed per parameter produces one exact column:</p>
+    <pre><code>function hessCol(p, dm, X, T, lin, seed){
+        gd[w3] += dzd * av[j] + dzv * ad[j];</code></pre>
+    <p>The two triangles come from different seeds, so their agreement (2.1e-17) is a check on the
+      second-derivative code rather than a property of it. Feed the same routine the model's own
+      predictions as targets and it returns the Fisher, exactly; feed it the true labels and it
+      returns the curvature of the loss being trained.</p>
+
+    <h2>4 &middot; The penalty is solved, not stepped</h2>
+    <p>An explicit penalty gradient blows up as soon as <code>lr * lambda * F_ii</code> passes 2, so
+      half of any strength sweep would be measuring an optimiser instability. The quadratic is
+      solved instead:</p>
+    <pre><code>function proxDiag(lr, lam, D){
+  for (i = 0; i &lt; D.length; i++) s[i] = 1 / (1 + lr * lam * D[i]);</code></pre>
+    <p>which is stable at every strength and whose infinite-strength limit is exactly
+      &ldquo;do not move&rdquo;. That limit is checked: at <code>lambda = 1e14</code> the weights
+      move 1.7e-13 and the old task's score is unchanged.</p>
+
+    <h2>5 &middot; Training in other coordinates</h2>
+    <p>The rotation experiment is not simulated by transforming the penalty. The run is actually
+      done in the rotated basis: the parameters are carried as <code>u</code>, mapped forward for
+      every forward pass, and the gradient is mapped back.</p>
+    <pre><code>function trainRot(p0, dm, X, T, lin, steps, lr, Q, lam, Du, refU){
+    var th = matVec(Q, u), r = gradOf(th, dm, X, T, lin, null), gu = matTVec(Q, r.g);</code></pre>
+    <p>With no penalty this has to reproduce the ordinary run exactly, and it does. With a diagonal
+      penalty it does not, and that is the whole finding.</p>
+
+    <h2>6 &middot; Assertions that are identities</h2>
+    <p>The checks that carry weight are the ones with no tolerance in them at all:</p>
+    <pre><code>ck(o.fisher.teacherEmp === 0,
+     "at a model that has learned the task the two Fishers are not bit-identical");
+  ck(o.gauge.dLoss &lt;= 1e-12,
+     "adding the same number to every class bias changed the loss (" + o.gauge.dLoss + ")");</code></pre>
+    <p>Where a tolerance is unavoidable it is derived rather than chosen &mdash; a multiple of the
+      machine epsilon and the quantity's own scale, or a measured control. The invariance claims are
+      all bounded by how far a 1e-13 nudge moves the same run, and the second-order ladder's step is
+      searched for on a dyadic grid rather than picked, with a floor so that a leftover is never
+      compared with the arithmetic that produced it.</p>
+
+    <h2>7 &middot; Everything is one file</h2>
+    <p>No build step, no dependency, no network access. The engine is pure functions with no DOM, no
+      clock and no unseeded randomness, which is what lets an independent verifier extract it and
+      run it against oracles written the other way round.</p>
+  </div>
+</section>
+
+<script>
+// ===== ENGINE:BEGIN =====
+// Day 77 - catastrophic forgetting and elastic weight consolidation. Pure functions: no DOM, no
+// clock, no Math.random. A network is trained on task A, then on task B, and the question is what
+// happened to A. EWC prices a move away from A's solution by the FISHER INFORMATION, one number
+// per parameter. Everything here is exact: the input space is enumerated, the loss is an
+// expectation over labels rather than a sample, the teacher is representable so the floor is a
+// computation, and the Fisher is a closed-form sum rather than an estimate.
+
+function rng(seed){                                        // mulberry32
+  var a = (seed >>> 0) || 1;
+  return function(){
+    a = (a + 0x6D2B79F5) >>> 0;
+    var t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function gauss(rnd){                                       // Box-Muller, cosine branch
+  var u = 1 - rnd(), v = rnd();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+// The nonlinearity lives in exactly one place and its derivative in exactly one other, so the
+// LINEAR TWIN of this engine is a two-token edit rather than a second implementation.
+function act(z, lin){ return lin ? z : Math.tanh(z); }
+function dact(a, lin){ return lin ? 1 : 1 - a * a; }
+
+// ---------------------------------------------------------------- packing
+// One flat parameter vector: [ W1 (h x d) | b1 (h) | W2 (C x h) | b2 (C) ]
+function dims(h, d, C){ return { h: h, d: d, C: C, P: h * d + h + C * h + C }; }
+function iW1(dm, j, k){ return j * dm.d + k; }
+function ib1(dm, j){ return dm.h * dm.d + j; }
+function iW2(dm, c, j){ return dm.h * dm.d + dm.h + c * dm.h + j; }
+function ib2(dm, c){ return dm.h * dm.d + dm.h + dm.C * dm.h + c; }
+function headStart(dm){ return dm.h * dm.d + dm.h; }       // first index of the last layer
+
+// ---------------------------------------------------------------- the input space, enumerated
+function inputs(d){
+  var N = 1 << d, X = [], i, k;
+  for (i = 0; i < N; i++){
+    var row = [];
+    for (k = 0; k < d; k++) row.push(((i >> k) & 1) ? 1 : -1);
+    X.push(row);
+  }
+  return X;
+}
+function initParams(dm, seed, scale){
+  var rnd = rng(seed), p = [], i, j, k, c;
+  for (i = 0; i < dm.P; i++) p[i] = 0;
+  for (j = 0; j < dm.h; j++){
+    for (k = 0; k < dm.d; k++) p[iW1(dm, j, k)] = gauss(rnd) * scale / Math.sqrt(dm.d);
+    p[ib1(dm, j)] = gauss(rnd) * 0.3;
+  }
+  for (c = 0; c < dm.C; c++){
+    for (j = 0; j < dm.h; j++) p[iW2(dm, c, j)] = gauss(rnd) * scale / Math.sqrt(dm.h);
+    p[ib2(dm, c)] = gauss(rnd) * 0.2;
+  }
+  return p;
+}
+// A teacher with hT units is EXACTLY a student with h units whose extra units are switched off:
+// a zeroed row of W1 gives tanh(0) = 0 and a zeroed column of W2 multiplies it by 0, so the padded
+// network is the same function down to the bit. That is what makes "the teacher scores exactly 0"
+// a construction rather than a claim.
+function padTeacher(pT, dmT, dm){
+  var p = [], i, j, k, c;
+  for (i = 0; i < dm.P; i++) p[i] = 0;
+  for (j = 0; j < dmT.h; j++){
+    for (k = 0; k < dm.d; k++) p[iW1(dm, j, k)] = pT[iW1(dmT, j, k)];
+    p[ib1(dm, j)] = pT[ib1(dmT, j)];
+  }
+  for (c = 0; c < dm.C; c++){
+    for (j = 0; j < dmT.h; j++) p[iW2(dm, c, j)] = pT[iW2(dmT, c, j)];
+    p[ib2(dm, c)] = pT[ib2(dmT, c)];
+  }
+  return p;
+}
+// r = 1 returns A itself, bit for bit, because 1*v + 0*w is v: at full overlap the two tasks are
+// the same function and there is nothing to forget.
+function mixParams(pA, pB, r){
+  var s = Math.sqrt(1 - r * r), out = [], i;
+  for (i = 0; i < pA.length; i++) out[i] = r * pA[i] + s * pB[i];
+  return out;
+}
+
+// ---------------------------------------------------------------- forward
+function forwardOne(p, dm, x, lin){
+  var a = [], z = [], j, k, c, m = -Infinity;
+  for (j = 0; j < dm.h; j++){
+    var t = p[ib1(dm, j)];
+    for (k = 0; k < dm.d; k++) t += p[iW1(dm, j, k)] * x[k];
+    a[j] = act(t, lin);
+  }
+  for (c = 0; c < dm.C; c++){
+    var u = p[ib2(dm, c)];
+    for (j = 0; j < dm.h; j++) u += p[iW2(dm, c, j)] * a[j];
+    z[c] = u;
+    if (u > m) m = u;
+  }
+  var q = [], s = 0;
+  for (c = 0; c < dm.C; c++){ q[c] = Math.exp(z[c] - m); s += q[c]; }
+  for (c = 0; c < dm.C; c++) q[c] /= s;
+  return { a: a, z: z, q: q };
+}
+function condOf(p, dm, X, lin){
+  var out = [], i;
+  for (i = 0; i < X.length; i++) out[i] = forwardOne(p, dm, X[i], lin).q;
+  return out;
+}
+// THE score: a mean KL from the true conditional over the whole enumerated input space. Exactly 0
+// for the model that generated the labels, because log(t/t) is log(1) is 0 for every term.
+function excessOf(Q, T){
+  var s = 0, i, c;
+  for (i = 0; i < T.length; i++)
+    for (c = 0; c < T[i].length; c++)
+      if (T[i][c] > 0) s += T[i][c] * Math.log(T[i][c] / Q[i][c]);
+  return s / T.length;
+}
+function entropyOf(T){
+  var s = 0, i, c;
+  for (i = 0; i < T.length; i++)
+    for (c = 0; c < T[i].length; c++)
+      if (T[i][c] > 0) s -= T[i][c] * Math.log(T[i][c]);
+  return s / T.length;
+}
+function excessAt(p, dm, X, T, lin){ return excessOf(condOf(p, dm, X, lin), T); }
+
+// ---------------------------------------------------------------- reverse mode, by hand
+// The loss is the expected negative log likelihood under the TRUE conditional, so it is an exact
+// expectation over labels and not a sample of one.
+function gradOf(p, dm, X, T, lin, mask){
+  var g = [], i, j, k, c, loss = 0, N = X.length;
+  for (i = 0; i < dm.P; i++) g[i] = 0;
+  for (i = 0; i < N; i++){
+    var x = X[i], f = forwardOne(p, dm, x, lin), t = T[i], da = [];
+    for (c = 0; c < dm.C; c++) if (t[c] > 0) loss -= t[c] * Math.log(f.q[c]);
+    for (j = 0; j < dm.h; j++) da[j] = 0;
+    for (c = 0; c < dm.C; c++){
+      var dz = (f.q[c] - t[c]) / N;
+      g[ib2(dm, c)] += dz;
+      for (j = 0; j < dm.h; j++){
+        g[iW2(dm, c, j)] += dz * f.a[j];
+        da[j] += dz * p[iW2(dm, c, j)];
+      }
+    }
+    for (j = 0; j < dm.h; j++){
+      var dz1 = da[j] * dact(f.a[j], lin);
+      g[ib1(dm, j)] += dz1;
+      for (k = 0; k < dm.d; k++) g[iW1(dm, j, k)] += dz1 * x[k];
+    }
+  }
+  if (mask) for (i = 0; i < dm.P; i++) g[i] *= mask[i];
+  return { loss: loss / N, g: g };
+}
+
+// ---------------------------------------------------------------- forward mode, over duals
+// Value and derivative carried side by side. No step size anywhere, and the opposite traversal to
+// the backward pass above, so agreement is evidence rather than shared code agreeing with itself.
+function dualLoss(p, dm, X, T, lin, seed){
+  var i, j, k, c, loss = 0, dloss = 0, N = X.length;
+  for (i = 0; i < N; i++){
+    var x = X[i], t = T[i], av = [], ad = [], zv = [], zd = [], m = -Infinity;
+    for (j = 0; j < dm.h; j++){
+      var v = p[ib1(dm, j)], dv = (seed === ib1(dm, j)) ? 1 : 0;
+      for (k = 0; k < dm.d; k++){
+        var w = iW1(dm, j, k);
+        v += p[w] * x[k];
+        if (seed === w) dv += x[k];
+      }
+      av[j] = act(v, lin);
+      ad[j] = dact(av[j], lin) * dv;
+    }
+    for (c = 0; c < dm.C; c++){
+      var u = p[ib2(dm, c)], du = (seed === ib2(dm, c)) ? 1 : 0;
+      for (j = 0; j < dm.h; j++){
+        var w2 = iW2(dm, c, j);
+        u += p[w2] * av[j];
+        du += p[w2] * ad[j];
+        if (seed === w2) du += av[j];
+      }
+      zv[c] = u; zd[c] = du;
+      if (u > m) m = u;
+    }
+    var e = [], de = [], S = 0, dS = 0;
+    for (c = 0; c < dm.C; c++){
+      e[c] = Math.exp(zv[c] - m); de[c] = e[c] * zd[c];
+      S += e[c]; dS += de[c];
+    }
+    for (c = 0; c < dm.C; c++){
+      if (t[c] > 0){
+        var qv = e[c] / S, qd = (de[c] - qv * dS) / S;
+        loss -= t[c] * Math.log(qv);
+        dloss -= t[c] * qd / qv;
+      }
+    }
+  }
+  return [loss / N, dloss / N];
+}
+
+// ---------------------------------------------------------------- second derivatives, exactly
+// The backward pass above, run over dual numbers: forward-over-reverse. One seed per parameter
+// gives one COLUMN of the Hessian with no step size in it, and the two triangles are computed by
+// different seeds, so their agreement is a check and not an assumption.
+function hessCol(p, dm, X, T, lin, seed){
+  var gv = [], gd = [], i, j, k, c, N = X.length;
+  for (i = 0; i < dm.P; i++){ gv[i] = 0; gd[i] = 0; }
+  for (i = 0; i < N; i++){
+    var x = X[i], t = T[i], av = [], ad = [], zv = [], zd = [], m = -Infinity;
+    for (j = 0; j < dm.h; j++){
+      var v = p[ib1(dm, j)], dv = (seed === ib1(dm, j)) ? 1 : 0;
+      for (k = 0; k < dm.d; k++){
+        var w = iW1(dm, j, k);
+        v += p[w] * x[k];
+        if (seed === w) dv += x[k];
+      }
+      av[j] = act(v, lin);
+      ad[j] = dact(av[j], lin) * dv;
+    }
+    for (c = 0; c < dm.C; c++){
+      var u = p[ib2(dm, c)], du = (seed === ib2(dm, c)) ? 1 : 0;
+      for (j = 0; j < dm.h; j++){
+        var w2 = iW2(dm, c, j);
+        u += p[w2] * av[j];
+        du += p[w2] * ad[j];
+        if (seed === w2) du += av[j];
+      }
+      zv[c] = u; zd[c] = du;
+      if (u > m) m = u;
+    }
+    var e = [], de = [], S = 0, dS = 0, qv = [], qd = [];
+    for (c = 0; c < dm.C; c++){
+      e[c] = Math.exp(zv[c] - m); de[c] = e[c] * zd[c];
+      S += e[c]; dS += de[c];
+    }
+    for (c = 0; c < dm.C; c++){ qv[c] = e[c] / S; qd[c] = (de[c] - qv[c] * dS) / S; }
+    var dav = [], dad = [];
+    for (j = 0; j < dm.h; j++){ dav[j] = 0; dad[j] = 0; }
+    for (c = 0; c < dm.C; c++){
+      var dzv = (qv[c] - t[c]) / N, dzd = qd[c] / N;
+      gv[ib2(dm, c)] += dzv; gd[ib2(dm, c)] += dzd;
+      for (j = 0; j < dm.h; j++){
+        var w3 = iW2(dm, c, j);
+        gv[w3] += dzv * av[j];
+        gd[w3] += dzd * av[j] + dzv * ad[j];
+        dav[j] += dzv * p[w3];
+        dad[j] += dzd * p[w3] + ((seed === w3) ? dzv : 0);
+      }
+    }
+    for (j = 0; j < dm.h; j++){
+      var sv = dact(av[j], lin), sd = lin ? 0 : (-2 * av[j] * ad[j]);
+      var d1v = dav[j] * sv, d1d = dad[j] * sv + dav[j] * sd;
+      gv[ib1(dm, j)] += d1v; gd[ib1(dm, j)] += d1d;
+      for (k = 0; k < dm.d; k++){
+        gv[iW1(dm, j, k)] += d1v * x[k];
+        gd[iW1(dm, j, k)] += d1d * x[k];
+      }
+    }
+  }
+  return { g: gv, col: gd };
+}
+function hessian(p, dm, X, T, lin){
+  var H = [], s;
+  for (s = 0; s < dm.P; s++) H.push(hessCol(p, dm, X, T, lin, s).col);
+  return H;                                                // H[s][i] = d2L / dtheta_s dtheta_i
+}
+
+// ---------------------------------------------------------------- the Fisher, in closed form
+// The Jacobian of the C logits with respect to every parameter, at one input.
+function jacOne(p, dm, x, lin){
+  var f = forwardOne(p, dm, x, lin), J = [], c, j, k;
+  for (c = 0; c < dm.C; c++){
+    var row = [], i;
+    for (i = 0; i < dm.P; i++) row[i] = 0;
+    row[ib2(dm, c)] = 1;
+    for (j = 0; j < dm.h; j++){
+      row[iW2(dm, c, j)] = f.a[j];
+      var s = p[iW2(dm, c, j)] * dact(f.a[j], lin);
+      row[ib1(dm, j)] = s;
+      for (k = 0; k < dm.d; k++) row[iW1(dm, j, k)] = s * x[k];
+    }
+    J.push(row);
+  }
+  return { J: J, q: f.q };
+}
+// F = E_x E_{y ~ w(.|x)} [ grad log q(y|x) grad log q(y|x)^T ]. With w = the model's own
+// predictions this is THE Fisher; with w = the true conditional it is the EMPIRICAL Fisher, which
+// is the same expression asked a different question. Written as outer products of per-class
+// gradients.
+function fisherOuter(p, dm, X, W, lin){
+  var F = [], i, j, c, u, v, N = X.length;
+  for (i = 0; i < dm.P; i++){ F.push([]); for (j = 0; j < dm.P; j++) F[i][j] = 0; }
+  for (i = 0; i < N; i++){
+    var jo = jacOne(p, dm, X[i], lin), w = W[i], q = jo.q, gc = [];
+    for (c = 0; c < dm.C; c++){
+      var g = [], cc;
+      for (u = 0; u < dm.P; u++){
+        var s = 0;
+        for (cc = 0; cc < dm.C; cc++) s += ((cc === c) ? 1 : 0) * jo.J[cc][u] - q[cc] * jo.J[cc][u];
+        g[u] = s;
+      }
+      gc.push(g);
+    }
+    for (c = 0; c < dm.C; c++){
+      var wt = w[c] / N, g2 = gc[c];
+      if (wt === 0) continue;
+      for (u = 0; u < dm.P; u++){
+        if (g2[u] === 0) continue;
+        for (v = 0; v < dm.P; v++) F[u][v] += wt * g2[u] * g2[v];
+      }
+    }
+  }
+  return F;
+}
+// The same matrix as J^T (diag(q) - q q^T) J, accumulated a completely different way round: the
+// class loop is on the INSIDE and there are no per-class gradient vectors at all.
+function fisherGN(p, dm, X, lin){
+  var F = [], i, u, v, c, cc, N = X.length;
+  for (i = 0; i < dm.P; i++){ F.push([]); for (u = 0; u < dm.P; u++) F[i][u] = 0; }
+  for (i = 0; i < N; i++){
+    var jo = jacOne(p, dm, X[i], lin), q = jo.q, M = [];
+    for (c = 0; c < dm.C; c++){
+      M.push([]);
+      for (cc = 0; cc < dm.C; cc++) M[c][cc] = ((c === cc) ? q[c] : 0) - q[c] * q[cc];
+    }
+    var A = [];                                            // A = Lambda J, C x P
+    for (c = 0; c < dm.C; c++){
+      A.push([]);
+      for (u = 0; u < dm.P; u++){
+        var s = 0;
+        for (cc = 0; cc < dm.C; cc++) s += M[c][cc] * jo.J[cc][u];
+        A[c][u] = s;
+      }
+    }
+    for (u = 0; u < dm.P; u++)
+      for (c = 0; c < dm.C; c++){
+        var jv = jo.J[c][u];
+        if (jv === 0) continue;
+        for (v = 0; v < dm.P; v++) F[u][v] += jv * A[c][v] / N;
+      }
+  }
+  return F;
+}
+function diagOf(M){ var out = [], i; for (i = 0; i < M.length; i++) out[i] = M[i][i]; return out; }
+function quadDiag(D, v){ var s = 0, i; for (i = 0; i < D.length; i++) s += D[i] * v[i] * v[i]; return s; }
+function quadFull(M, v){
+  var s = 0, i, j;
+  for (i = 0; i < v.length; i++){
+    if (v[i] === 0) continue;
+    for (j = 0; j < v.length; j++) s += v[i] * M[i][j] * v[j];
+  }
+  return s;
+}
+function matDiff(A, B){
+  var m = 0, i, j;
+  for (i = 0; i < A.length; i++)
+    for (j = 0; j < A.length; j++){ var e = Math.abs(A[i][j] - B[i][j]); if (e > m) m = e; }
+  return m;
+}
+function matMax(A){
+  var m = 0, i, j;
+  for (i = 0; i < A.length; i++)
+    for (j = 0; j < A.length; j++){ var e = Math.abs(A[i][j]); if (e > m) m = e; }
+  return m;
+}
+function blockDiff(A, B, lo, hi){
+  var m = 0, i, j;
+  for (i = lo; i < hi; i++) for (j = lo; j < hi; j++){
+    var e = Math.abs(A[i][j] - B[i][j]); if (e > m) m = e;
+  }
+  return m;
+}
+function symDiff(H){
+  var m = 0, i, j;
+  for (i = 0; i < H.length; i++)
+    for (j = 0; j < i; j++){ var e = Math.abs(H[i][j] - H[j][i]); if (e > m) m = e; }
+  return m;
+}
+function matSub(A, B){
+  var out = [], i, j;
+  for (i = 0; i < A.length; i++){
+    out.push([]);
+    for (j = 0; j < A.length; j++) out[i][j] = A[i][j] - B[i][j];
+  }
+  return out;
+}
+// The direction in which two symmetric matrices disagree the most, by power iteration from a fixed
+// start - so "where the Fisher is least like the curvature" is found rather than guessed.
+function topEig(M, sd){
+  var n = M.length, x = [], i, j, it, rnd = rng(sd);
+  for (i = 0; i < n; i++) x[i] = gauss(rnd);
+  x = unit(x);
+  for (it = 0; it < 300; it++){
+    var y = [], nn = 0;
+    for (i = 0; i < n; i++){
+      var s = 0;
+      for (j = 0; j < n; j++) s += M[i][j] * x[j];
+      y[i] = s; nn += s * s;
+    }
+    nn = Math.sqrt(nn);
+    if (nn === 0) break;
+    for (i = 0; i < n; i++) x[i] = y[i] / nn;
+  }
+  return { v: x, lam: quadFull(M, x) };
+}
+function mix2(A, B, al){
+  var out = [], i, j;
+  for (i = 0; i < A.length; i++){
+    out.push([]);
+    for (j = 0; j < A.length; j++) out[i][j] = al * A[i][j] + (1 - al) * B[i][j];
+  }
+  return out;
+}
+function mixT(T1, T2, al){
+  var out = [], i, c;
+  for (i = 0; i < T1.length; i++){
+    out.push([]);
+    for (c = 0; c < T1[i].length; c++) out[i][c] = al * T1[i][c] + (1 - al) * T2[i][c];
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- how far the diagonal can be off
+// max over v of (v'Fv) / (v'diag(F)v) is the largest generalised eigenvalue of (F, diag(F)); it is
+// at least 1, because every coordinate direction gives exactly 1. Power iteration on the
+// symmetrically scaled matrix, started from a fixed vector, so nothing here is random.
+function worstDirection(F, tol){
+  var n = F.length, D = diagOf(F), keep = [], i, j, mx = 0;
+  for (i = 0; i < n; i++) if (D[i] > mx) mx = D[i];
+  for (i = 0; i < n; i++) if (D[i] > tol * mx) keep.push(i);
+  var m = keep.length, S = [], x = [];
+  for (i = 0; i < m; i++){
+    S.push([]);
+    for (j = 0; j < m; j++)
+      S[i][j] = F[keep[i]][keep[j]] / Math.sqrt(D[keep[i]] * D[keep[j]]);
+    x[i] = 1 / Math.sqrt(m);
+  }
+  var lam = 0, it;
+  for (it = 0; it < 400; it++){
+    var y = [], nrm = 0;
+    for (i = 0; i < m; i++){
+      var s = 0;
+      for (j = 0; j < m; j++) s += S[i][j] * x[j];
+      y[i] = s; nrm += s * s;
+    }
+    nrm = Math.sqrt(nrm);
+    if (nrm === 0) break;
+    for (i = 0; i < m; i++) x[i] = y[i] / nrm;
+    lam = 0;
+    for (i = 0; i < m; i++){
+      var s2 = 0;
+      for (j = 0; j < m; j++) s2 += S[i][j] * x[j];
+      lam += x[i] * s2;
+    }
+  }
+  var v = [];
+  for (i = 0; i < n; i++) v[i] = 0;
+  for (i = 0; i < m; i++) v[keep[i]] = x[i] / Math.sqrt(D[keep[i]]);
+  var nn = 0;
+  for (i = 0; i < n; i++) nn += v[i] * v[i];
+  nn = Math.sqrt(nn);
+  for (i = 0; i < n; i++) v[i] /= nn;
+  var dropped = n - m, rowMax = 0;
+  for (i = 0; i < n; i++) if (D[i] <= tol * mx)
+    for (j = 0; j < n; j++) if (Math.abs(F[i][j]) > rowMax) rowMax = Math.abs(F[i][j]);
+  return { lam: lam, v: v, kept: m, dropped: dropped, rowMax: rowMax, maxDiag: mx };
+}
+
+// ---------------------------------------------------------------- training
+// Plain full-batch gradient descent, which is EQUIVARIANT under an orthogonal change of parameter
+// coordinates - the one property the experiment below rests on.
+//
+// The penalty is applied as a PROXIMAL step rather than as one more gradient: the quadratic is
+// solved exactly instead of being stepped along. An explicit penalty gradient blows up whenever
+// lr * lambda * F_ii exceeds 2, so half the sweep below would have been measuring an optimiser
+// instability rather than a penalty; the implicit form is stable at every strength and its
+// lambda -> infinity limit is exactly "do not move".
+function proxDiag(lr, lam, D){
+  var s = [], i;
+  for (i = 0; i < D.length; i++) s[i] = 1 / (1 + lr * lam * D[i]);
+  return s;
+}
+function invMat(A){
+  var n = A.length, M = [], I = [], i, j, k;
+  for (i = 0; i < n; i++){
+    M.push(A[i].slice()); I.push([]);
+    for (j = 0; j < n; j++) I[i][j] = (i === j) ? 1 : 0;
+  }
+  for (k = 0; k < n; k++){
+    var piv = k, best = Math.abs(M[k][k]);
+    for (i = k + 1; i < n; i++) if (Math.abs(M[i][k]) > best){ best = Math.abs(M[i][k]); piv = i; }
+    var tm = M[k]; M[k] = M[piv]; M[piv] = tm;
+    var ti = I[k]; I[k] = I[piv]; I[piv] = ti;
+    var d = M[k][k];
+    for (j = 0; j < n; j++){ M[k][j] /= d; I[k][j] /= d; }
+    for (i = 0; i < n; i++){
+      if (i === k) continue;
+      var f = M[i][k];
+      if (f === 0) continue;
+      for (j = 0; j < n; j++){ M[i][j] -= f * M[k][j]; I[i][j] -= f * I[k][j]; }
+    }
+  }
+  return I;
+}
+function trainGD(p0, dm, X, T, lin, steps, lr, pen, mask, track){
+  var p = p0.slice(), s, i, j, curve = [], sc = null, inv = null;
+  if (pen && pen.lam > 0){
+    if (pen.D) sc = proxDiag(lr, pen.lam, pen.D);
+    else {
+      var A = [];
+      for (i = 0; i < dm.P; i++){
+        A.push([]);
+        for (j = 0; j < dm.P; j++) A[i][j] = (i === j ? 1 : 0) + lr * pen.lam * pen.M[i][j];
+      }
+      inv = invMat(A);
+    }
+  }
+  for (s = 0; s < steps; s++){
+    var r = gradOf(p, dm, X, T, lin, mask), g = r.g, q = [];
+    for (i = 0; i < dm.P; i++) q[i] = p[i] - lr * g[i];
+    if (sc){
+      for (i = 0; i < dm.P; i++)
+        p[i] = mask && !mask[i] ? q[i]
+             : (q[i] + lr * pen.lam * pen.D[i] * pen.ref[i]) * sc[i];
+    } else if (inv){
+      var rhs = [];
+      for (i = 0; i < dm.P; i++){
+        var t2 = 0;
+        for (j = 0; j < dm.P; j++) t2 += pen.M[i][j] * pen.ref[j];
+        rhs[i] = q[i] + lr * pen.lam * t2;
+      }
+      for (i = 0; i < dm.P; i++){
+        var t3 = 0;
+        for (j = 0; j < dm.P; j++) t3 += inv[i][j] * rhs[j];
+        p[i] = t3;
+      }
+    } else {
+      for (i = 0; i < dm.P; i++) p[i] = q[i];
+    }
+    if (track && (s % track.every === 0 || s === steps - 1))
+      curve.push({ s: s + 1,
+        a: excessAt(p, dm, X, track.TA, lin),
+        b: excessAt(p, dm, X, track.TB, lin) });
+  }
+  return { p: p, curve: curve };
+}
+// The same descent done in ROTATED parameter coordinates. theta = R u with R orthogonal, so the
+// model is untouched: every function the network can compute, it still computes, with the same
+// parameters written down in a different basis. Gradient descent transports exactly - the update
+// in u maps back to the same update in theta - so with no penalty the two runs must agree to
+// rounding. The penalty is the only thing that can tell them apart.
+function eyeMat(n){
+  var Q = [], i, j;
+  for (i = 0; i < n; i++){ Q.push([]); for (j = 0; j < n; j++) Q[i][j] = (i === j) ? 1 : 0; }
+  return Q;
+}
+// the smallest possible change of coordinates: use the sum and the difference of two parameters
+function givensMat(n, i, j, ang){
+  var Q = eyeMat(n), c = Math.cos(ang), s = Math.sin(ang);
+  Q[i][i] = c; Q[i][j] = -s; Q[j][i] = s; Q[j][j] = c;
+  return Q;
+}
+// and a generic one: Gram-Schmidt on a seeded Gaussian matrix, so every new coordinate is a
+// mixture of all of the old ones
+function orthoMat(n, seed){
+  var rnd = rng(seed), A = [], i, j, k;
+  for (j = 0; j < n; j++){ A.push([]); for (i = 0; i < n; i++) A[j][i] = gauss(rnd); }
+  for (j = 0; j < n; j++){
+    var pass;
+    for (pass = 0; pass < 2; pass++){          // twice: one sweep leaves 5e-13 at P = 92
+      for (k = 0; k < j; k++){
+        var d = 0;
+        for (i = 0; i < n; i++) d += A[j][i] * A[k][i];
+        for (i = 0; i < n; i++) A[j][i] -= d * A[k][i];
+      }
+    }
+    var nn = 0;
+    for (i = 0; i < n; i++) nn += A[j][i] * A[j][i];
+    nn = Math.sqrt(nn);
+    for (i = 0; i < n; i++) A[j][i] /= nn;
+  }
+  var Q = [];                                              // A holds the columns of Q
+  for (i = 0; i < n; i++){ Q.push([]); for (j = 0; j < n; j++) Q[i][j] = A[j][i]; }
+  return Q;
+}
+function orthErr(Q){
+  var n = Q.length, m = 0, i, j, k;
+  for (i = 0; i < n; i++) for (j = 0; j < n; j++){
+    var s = 0;
+    for (k = 0; k < n; k++) s += Q[k][i] * Q[k][j];
+    var e = Math.abs(s - (i === j ? 1 : 0));
+    if (e > m) m = e;
+  }
+  return m;
+}
+function matVec(M, x){                                     // M x
+  var n = M.length, o = [], i, j;
+  for (i = 0; i < n; i++){ var s = 0; for (j = 0; j < n; j++) s += M[i][j] * x[j]; o[i] = s; }
+  return o;
+}
+function matTVec(M, x){                                    // M^T x
+  var n = M.length, o = [], i, j;
+  for (i = 0; i < n; i++){ var s = 0; for (j = 0; j < n; j++) s += M[j][i] * x[j]; o[i] = s; }
+  return o;
+}
+function conjT(Q, M){                                      // Q^T M Q - how a METRIC transforms
+  var n = Q.length, T1 = [], out = [], i, j, k;
+  for (i = 0; i < n; i++){
+    T1.push([]);
+    for (j = 0; j < n; j++){ var s = 0; for (k = 0; k < n; k++) s += M[i][k] * Q[k][j]; T1[i][j] = s; }
+  }
+  for (i = 0; i < n; i++){
+    out.push([]);
+    for (j = 0; j < n; j++){ var s2 = 0; for (k = 0; k < n; k++) s2 += Q[k][i] * T1[k][j]; out[i][j] = s2; }
+  }
+  return out;
+}
+function conjF(Q, M){                                      // Q M Q^T
+  var n = Q.length, T1 = [], out = [], i, j, k;
+  for (i = 0; i < n; i++){
+    T1.push([]);
+    for (j = 0; j < n; j++){ var s = 0; for (k = 0; k < n; k++) s += M[i][k] * Q[j][k]; T1[i][j] = s; }
+  }
+  for (i = 0; i < n; i++){
+    out.push([]);
+    for (j = 0; j < n; j++){ var s2 = 0; for (k = 0; k < n; k++) s2 += Q[i][k] * T1[k][j]; out[i][j] = s2; }
+  }
+  return out;
+}
+// The same descent, done in rotated parameter coordinates: theta = Q u with Q orthogonal, so the
+// model is untouched - every function the network could compute, it still computes, with the same
+// weights merely written down in a different basis. Gradient descent transports exactly, so with
+// no penalty the two runs must agree to rounding. The penalty is the only thing that can tell them
+// apart, and the DIAGONAL of a matrix is not a property of the matrix.
+function trainRot(p0, dm, X, T, lin, steps, lr, Q, lam, Du, refU){
+  var u = matTVec(Q, p0), s, i, sc = lam > 0 ? proxDiag(lr, lam, Du) : null;
+  for (s = 0; s < steps; s++){
+    var th = matVec(Q, u), r = gradOf(th, dm, X, T, lin, null), gu = matTVec(Q, r.g);
+    for (i = 0; i < dm.P; i++){
+      var q = u[i] - lr * gu[i];
+      u[i] = sc ? (q + lr * lam * Du[i] * refU[i]) * sc[i] : q;
+    }
+  }
+  return matVec(Q, u);
+}
+// two passes, so a constant vector reports a spread of exactly zero: the one-pass form leaves a
+// 1e-8 residue and a check written against it would be measuring cancellation
+function spread(v){
+  var mx = -Infinity, mn = Infinity, s = 0, s2 = 0, i;
+  for (i = 0; i < v.length; i++){
+    if (v[i] > mx) mx = v[i];
+    if (v[i] < mn) mn = v[i];
+    s += v[i];
+  }
+  var m = s / v.length;
+  for (i = 0; i < v.length; i++) s2 += (v[i] - m) * (v[i] - m);
+  return { max: mx, min: mn, ratio: mn > 0 ? mx / mn : Infinity, mean: m,
+           cv: Math.sqrt(s2 / v.length) / m };
+}
+
+// ---------------------------------------------------------------- small vector helpers
+function sub(a, b){ var o = [], i; for (i = 0; i < a.length; i++) o[i] = a[i] - b[i]; return o; }
+function norm(v){ var s = 0, i; for (i = 0; i < v.length; i++) s += v[i] * v[i]; return Math.sqrt(s); }
+function dot(a, b){ var s = 0, i; for (i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
+function axpy(p, v, t){ var o = [], i; for (i = 0; i < p.length; i++) o[i] = p[i] + t * v[i]; return o; }
+function unit(v){ var n = norm(v), o = [], i; for (i = 0; i < v.length; i++) o[i] = v[i] / (n || 1); return o; }
+
+// Concordance of a predictor with an outcome over all pairs: 1 = perfect, 0.5 = a coin. Pairs the
+// OUTCOME cannot separate are skipped, and "cannot separate" is a relative tolerance rather than
+// exact equality: two parameters of genuinely equal importance differ in the last bits, and which
+// way they differ is a property of the engine's Math library, not of the model. Without this the
+// same page reports a different AUC in node and in a browser.
+function concordance(pred, out){
+  var n = pred.length, i, j, ok = 0, tot = 0;
+  for (i = 0; i < n; i++) for (j = i + 1; j < n; j++){
+    if (Math.abs(out[i] - out[j]) <=
+        1e-9 * Math.max(Math.abs(out[i]), Math.abs(out[j]))) continue;
+    tot++;
+    var a = (out[i] > out[j]) ? 1 : -1, b = (pred[i] > pred[j]) ? 1 : ((pred[i] < pred[j]) ? -1 : 0);
+    if (b === 0) ok += 0.5; else if (a === b) ok++;
+  }
+  return { auc: tot ? ok / tot : 0.5, pairs: tot };
+}
+
+// ---------------------------------------------------------------- the whole page
+function buildTask(cfg){
+  var d = 6, C = 4, dm = dims(cfg.h, d, C), dmT = dims(4, d, C);
+  var X = inputs(d);
+  var tA = initParams(dmT, 1000 + cfg.seed, cfg.tscale);
+  var tB0 = initParams(dmT, 2000 + cfg.seed, cfg.tscale);
+  var tB = mixParams(tA, tB0, cfg.overlap);
+  var pA = padTeacher(tA, dmT, dm), pB = padTeacher(tB, dmT, dm);
+  var TA = condOf(pA, dm, X, false), TB = condOf(pB, dm, X, false);
+  return { d: d, C: C, dm: dm, dmT: dmT, X: X, N: X.length,
+           teachA: pA, teachB: pB, TA: TA, TB: TB,
+           entA: entropyOf(TA), entB: entropyOf(TB) };
+}
+function uniformCond(N, C){
+  var out = [], i, c;
+  for (i = 0; i < N; i++){ out.push([]); for (c = 0; c < C; c++) out[i][c] = 1 / C; }
+  return out;
+}
+function marginalCond(T){
+  var C = T[0].length, m = [], i, c, out = [];
+  for (c = 0; c < C; c++) m[c] = 0;
+  for (i = 0; i < T.length; i++) for (c = 0; c < C; c++) m[c] += T[i][c] / T.length;
+  for (i = 0; i < T.length; i++) out.push(m.slice());
+  return out;
+}
+
+function runAll(cfg){
+  var tk = buildTask(cfg), dm = tk.dm, X = tk.X, o = { cfg: cfg, task: tk };
+  var lin = false;
+
+  // --- the floor and the nulls
+  o.floor = {
+    entA: tk.entA, entB: tk.entB,
+    teacherA: excessAt(tk.teachA, dm, X, tk.TA, lin),
+    teacherB: excessAt(tk.teachB, dm, X, tk.TB, lin),
+    uniform: excessOf(uniformCond(tk.N, tk.C), tk.TA),
+    marginal: excessOf(marginalCond(tk.TA), tk.TA),
+    teacherBonA: excessAt(tk.teachB, dm, X, tk.TA, lin),
+    lnC: Math.log(tk.C)
+  };
+
+  // --- gradients, at INITIALISATION, against forward mode and against a central difference
+  var p0 = initParams(dm, cfg.seed, 1.0);
+  o.grad = [];
+  [["the network", false], ["the linear twin", true]].forEach(function(m){
+    var r = gradOf(p0, dm, X, tk.TA, m[1], null), maxg = 0, worstF = 0, worstC = 0, s, i;
+    for (i = 0; i < dm.P; i++) if (Math.abs(r.g[i]) > maxg) maxg = Math.abs(r.g[i]);
+    var dl = dualLoss(p0, dm, X, tk.TA, m[1], -1);
+    for (s = 0; s < dm.P; s++){
+      var f = dualLoss(p0, dm, X, tk.TA, m[1], s)[1];
+      var e = Math.abs(f - r.g[s]);
+      if (e > worstF) worstF = e;
+      var hh = 1e-5;
+      var lp = gradOf(axpy(p0, unitVec(dm.P, s), hh), dm, X, tk.TA, m[1], null).loss;
+      var lm = gradOf(axpy(p0, unitVec(dm.P, s), -hh), dm, X, tk.TA, m[1], null).loss;
+      var cd = Math.abs((lp - lm) / (2 * hh) - r.g[s]);
+      if (cd > worstC) worstC = cd;
+    }
+    o.grad.push({ name: m[0], P: dm.P, loss: r.loss, dloss: Math.abs(dl[0] - r.loss),
+                  fwd: worstF, rel: worstF / maxg, cd: worstC, maxg: maxg });
+  });
+
+  // --- train on A
+  var trA = trainGD(p0, dm, X, tk.TA, lin, cfg.stepsA, cfg.lr, null, null, null);
+  var pStar = trA.p;
+  o.star = {
+    exA: excessAt(pStar, dm, X, tk.TA, lin),
+    exB: excessAt(pStar, dm, X, tk.TB, lin),
+    gnorm: norm(gradOf(pStar, dm, X, tk.TA, lin, null).g),
+    steps: cfg.stepsA
+  };
+
+  // --- the Fisher, three ways, and the empirical Fisher
+  var QS = condOf(pStar, dm, X, lin);
+  var F = fisherOuter(pStar, dm, X, QS, lin);
+  var Fgn = fisherGN(pStar, dm, X, lin);
+  var Hq = hessian(pStar, dm, X, QS, lin);                 // targets frozen at the model's own probs
+  var Ht = hessian(pStar, dm, X, tk.TA, lin);              // the curvature of the loss being trained
+  var Femp = fisherOuter(pStar, dm, X, tk.TA, lin);
+  var hs = headStart(dm);
+  var Hmix = hessian(pStar, dm, X, mixT(tk.TA, QS, 0.5), lin);
+  o.fisher = {
+    scale: matMax(F),
+    outerVsGN: matDiff(F, Fgn),
+    hessVsF: matDiff(Hq, F),
+    sym: symDiff(Ht),
+    headBlock: blockDiff(Ht, F, hs, dm.P),
+    fullGap: matDiff(Ht, F),
+    affine: matDiff(Hmix, mix2(Ht, Hq, 0.5)),              // the Hessian is affine in the target
+    empGap: matDiff(Femp, F),
+    empRel: matDiff(Femp, F) / matMax(F),
+    resid: meanResid(QS, tk.TA),
+    teacherEmp: matDiff(fisherOuter(tk.teachA, dm, X, tk.TA, lin),
+                        fisherOuter(tk.teachA, dm, X, condOf(tk.teachA, dm, X, lin), lin)),
+    diagMax: Math.max.apply(null, diagOf(F)),
+    diagMin: Math.min.apply(null, diagOf(F)),
+    zeroRows: 0
+  };
+  o.F = F; o.Femp = Femp; o.Ht = Ht;
+
+  // --- a direction that costs exactly nothing: add the same number to every class bias
+  var gauge = [], i;
+  for (i = 0; i < dm.P; i++) gauge[i] = 0;
+  for (i = 0; i < dm.C; i++) gauge[ib2(dm, i)] = 1;
+  gauge = unit(gauge);
+  var big = axpy(pStar, gauge, cfg.gaugeStep);
+  o.gauge = {
+    step: cfg.gaugeStep,
+    move: norm(sub(big, pStar)),
+    dLoss: Math.abs(excessAt(big, dm, X, tk.TA, lin) - o.star.exA),
+    fisherCost: quadFull(F, gauge),
+    diagCost: quadDiag(diagOf(F), gauge),
+    l2Cost: dot(gauge, gauge)
+  };
+
+  // --- the quadratic model, and what the Fisher leaves behind
+  var wd = worstDirection(F, 1e-10);
+  o.worst = { lam: wd.lam, kept: wd.kept, dropped: wd.dropped, rowMax: wd.rowMax,
+              full: quadFull(F, wd.v), diag: quadDiag(diagOf(F), wd.v) };
+  var dd = topEig(matSub(Ht, F), 91);
+  o.diffDir = { lam: dd.lam, hv: quadFull(Ht, dd.v), fv: quadFull(F, dd.v) };
+  o.ladders = [
+    { name: "where the Fisher is least like the curvature",
+      L: ladderOf(pStar, dm, X, tk.TA, lin, F, Ht, dd.v, o.star.exA, cfg.delta) },
+    { name: "a direction drawn at random",
+      L: ladderOf(pStar, dm, X, tk.TA, lin, F, Ht, unit(gaussVec(dm.P, 7)), o.star.exA, cfg.delta) },
+    { name: "the direction the diagonal underprices most",
+      L: ladderOf(pStar, dm, X, tk.TA, lin, F, Ht, wd.v, o.star.exA, cfg.delta) }
+  ];
+  o.ladder = o.ladders[0].L;
+
+  // the same length of move, in three directions, priced by all three penalties
+  o.dirs = [
+    { name: "the softmax gauge: the same number added to every class bias", v: gauge },
+    { name: "the direction the diagonal underprices most", v: wd.v },
+    { name: "a direction drawn at random", v: unit(gaussVec(dm.P, 7)) }
+  ].map(function(e){
+    return { name: e.name, step: cfg.gaugeStep,
+             dLoss: Math.abs(excessAt(axpy(pStar, e.v, cfg.gaugeStep), dm, X, tk.TA, lin) -
+                             o.star.exA),
+             full: quadFull(F, e.v), diag: quadDiag(diagOf(F), e.v), l2: dot(e.v, e.v) };
+  });
+
+  // --- which parameters actually matter, and what predicts it
+  o.rank = paramRanker(pStar, dm, X, tk.TA, lin, F, Femp, Ht, o.star.exA, cfg.probe);
+
+  // --- the rotation: the same model, written down in different coordinates
+  var pr = biggestPair(F);
+  o.pair = { i: pr.i, j: pr.j, corr: pr.corr };
+  var bases = [
+    { key: "pair", name: "two parameters replaced by their sum and difference",
+      Q: givensMat(dm.P, pr.i, pr.j, Math.PI / 4) },
+    { key: "gen", name: "a generic rotation: every coordinate a mixture of all of them",
+      Q: orthoMat(dm.P, 700 + cfg.seed) }
+  ];
+
+  // --- fine-tuning on B: the headline runs
+  var D = diagOf(F), Demp = diagOf(Femp), mean = 0;
+  for (i = 0; i < dm.P; i++) mean += D[i] / dm.P;
+  var Dflat = [], Dshuf = [], Dmag = [], order = shuffleIdx(dm.P, cfg.seed + 77);
+  for (i = 0; i < dm.P; i++){ Dflat[i] = mean; Dshuf[i] = D[order[i]]; Dmag[i] = Math.abs(pStar[i]); }
+  var magMean = 0;
+  for (i = 0; i < dm.P; i++) magMean += Dmag[i] / dm.P;
+  for (i = 0; i < dm.P; i++) Dmag[i] *= mean / magMean;    // matched total mass, so only shape differs
+  o.pens = { D: D, Demp: Demp, Dflat: Dflat, Dshuf: Dshuf, Dmag: Dmag, mean: mean, F: F };
+  o.spread = { fisher: spread(D), flat: spread(Dflat) };
+
+  var trackOpt = { every: Math.max(1, Math.round(cfg.stepsB / 40)), TA: tk.TA, TB: tk.TB };
+  function runB(pen, mask){
+    return trainGD(pStar, dm, X, tk.TB, lin, cfg.stepsB, cfg.lr, pen, mask || null, trackOpt);
+  }
+  var none = runB(null);
+  var ewc = runB({ lam: cfg.lam, D: D, ref: pStar });
+  var l2 = runB({ lam: cfg.lam, D: Dflat, ref: pStar });
+  var full = runB({ lam: cfg.lam, M: F, ref: pStar });
+  var shuf = runB({ lam: cfg.lam, D: Dshuf, ref: pStar });
+  var joint = trainGD(pStar, dm, X, mixT(tk.TA, tk.TB, 0.5), lin, cfg.stepsB, cfg.lr, null, null,
+                      trackOpt);
+  o.curve = none.curve; o.curveE = ewc.curve;
+  // Every penalty here is minimising a SECOND-ORDER MODEL of the old task's loss. So the honest
+  // column is not the penalty's value but what that model PREDICTED the old task would lose,
+  // against what it actually lost: a model is only worth minimising where it is still true.
+  var gA = gradOf(pStar, dm, X, tk.TA, lin, null).g;
+  var scratch = trainGD(initParams(dm, cfg.seed + 5, 1.0), dm, X, tk.TB, lin, cfg.stepsB, cfg.lr,
+                        null, null, null);
+  // the limit the proximal form makes reachable: at an unbounded penalty the update solves for
+  // "do not move", so the old task's score has to come back EXACTLY unchanged
+  var frozen = runB({ lam: 1e14, D: D, ref: pStar });
+  o.frozen = { a: excessAt(frozen.p, dm, X, tk.TA, lin), move: norm(sub(frozen.p, pStar)),
+               b: excessAt(frozen.p, dm, X, tk.TB, lin) };
+  o.runs = [
+    row("fine-tune on B, no penalty", none.p),
+    row("EWC, the diagonal Fisher", ewc.p),
+    row("plain L2 to A's weights, matched mass", l2.p),
+    row("the shuffled Fisher (the null)", shuf.p),
+    row("the FULL Fisher", full.p),
+    row("replay: train on both at once", joint.p),
+    row("train on B from scratch", scratch.p)
+  ];
+  function row(name, p){
+    var dp = sub(p, pStar), act = excessAt(p, dm, X, tk.TA, lin) - o.star.exA;
+    var pred = dot(gA, dp) + 0.5 * quadFull(Ht, dp);
+    return { name: name, a: excessAt(p, dm, X, tk.TA, lin), b: excessAt(p, dm, X, tk.TB, lin),
+             move: norm(dp), fq: quadFull(F, dp), dq: quadDiag(D, dp),
+             pred: pred, act: act, ratio: act / pred };
+  }
+  o.base = { a: o.star.exA, b: o.star.exB };
+  o.pStar = pStar;
+
+  // --- the control for every invariance claim below: how far apart do two runs of the SAME
+  // computation end up when their starting point is nudged by 1e-13? A change of basis can only be
+  // claimed to leave a run alone if the gap it opens is no bigger than that.
+  var nudge = unit(gaussVec(dm.P, 313));
+  var nudged = trainGD(axpy(pStar, nudge, 1e-13), dm, X, tk.TB, lin, cfg.stepsB, cfg.lr, null,
+                       null, null);
+  // the same control for the penalised run, where a change of basis also perturbs the matrix that
+  // is inverted, so the control perturbs BOTH the start and the matrix by the same 1e-13
+  var Fj = [];
+  for (i = 0; i < dm.P; i++){
+    Fj.push([]);
+    for (var jj = 0; jj < dm.P; jj++) Fj[i][jj] = F[i][jj] * (1 + 1e-13);
+  }
+  var nudgedFull = trainGD(axpy(pStar, nudge, 1e-13), dm, X, tk.TB, lin, cfg.stepsB, cfg.lr,
+                           { lam: cfg.lam, M: Fj, ref: pStar }, null, null);
+  o.sens = { start: 1e-13, end: norm(sub(nudged.p, none.p)),
+             endFull: norm(sub(nudgedFull.p, full.p)),
+             amp: norm(sub(nudged.p, none.p)) / 1e-13 };
+  o.invTol = Math.max(o.sens.end, 1e-13) * 20;
+  o.invTolFull = Math.max(o.sens.end, o.sens.endFull, 1e-13) * 20;
+
+  // --- the same two runs, in rotated coordinates
+  o.rot = bases.map(function(bs){
+    var Q = bs.Q, Fu = conjT(Q, F), Du = diagOf(Fu), uStar = matTVec(Q, pStar);
+    var rotNone = trainRot(pStar, dm, X, tk.TB, lin, cfg.stepsB, cfg.lr, Q, 0, Du, uStar);
+    var rotEwc = trainRot(pStar, dm, X, tk.TB, lin, cfg.stepsB, cfg.lr, Q, cfg.lam, Du, uStar);
+    var rotFull = trainRot(pStar, dm, X, tk.TB, lin, cfg.stepsB, cfg.lr, Q, 0, Du, uStar);
+    var mFull = runB({ lam: cfg.lam, M: conjF(Q, conjT(Q, F)), ref: pStar });
+    var dEwc = sub(ewc.p, pStar);
+    return {
+      key: bs.key, name: bs.name,
+      orth: orthErr(Q),
+      spread: spread(Du),
+      noneGap: norm(sub(rotNone, none.p)),
+      ewcGap: norm(sub(rotEwc, ewc.p)),
+      l2Gap: norm(sub(rotEwc, l2.p)),
+      fullGap: norm(sub(mFull.p, full.p)),
+      aPlain: excessAt(rotNone, dm, X, tk.TA, lin),
+      aEwc: excessAt(rotEwc, dm, X, tk.TA, lin),
+      bEwc: excessAt(rotEwc, dm, X, tk.TB, lin),
+      metricInv: Math.abs(quadFull(F, dEwc) - quadFull(Fu, matTVec(Q, dEwc))),
+      diagInv: Math.abs(quadDiag(D, dEwc) - quadDiag(Du, matTVec(Q, dEwc))),
+      quad: quadFull(F, dEwc)
+    };
+  });
+  o.rotScale = norm(sub(none.p, pStar));
+  o.rotRef = { ewcA: o.runs[1].a, ewcB: o.runs[1].b, l2A: o.runs[2].a, l2B: o.runs[2].b,
+               fullA: o.runs[4].a };
+
+  return o;
+
+  function unitVec(P, s){ var v = [], k; for (k = 0; k < P; k++) v[k] = (k === s) ? 1 : 0; return v; }
+}
+function gaussVec(P, sd){
+  var rnd = rng(sd), v = [], k;
+  for (k = 0; k < P; k++) v[k] = gauss(rnd);
+  return v;
+}
+function meanResid(Q, T){
+  var s = 0, i, c;
+  for (i = 0; i < T.length; i++) for (c = 0; c < T[i].length; c++) s += Math.abs(Q[i][c] - T[i][c]);
+  return s / T.length;
+}
+function unitVecP(P, s){ var v = [], k; for (k = 0; k < P; k++) v[k] = (k === s) ? 1 : 0; return v; }
+function shuffleIdx(n, seed){
+  var rnd = rng(seed), a = [], i, j, t;
+  for (i = 0; i < n; i++) a[i] = i;
+  for (i = n - 1; i > 0; i--){ j = Math.floor(rnd() * (i + 1)); t = a[i]; a[i] = a[j]; a[j] = t; }
+  return a;
+}
+function biggestPair(F){
+  var n = F.length, bi = 0, bj = 1, best = -1, i, j;
+  for (i = 0; i < n; i++) for (j = i + 1; j < n; j++){
+    var den = Math.sqrt(F[i][i] * F[j][j]);
+    if (den <= 0) continue;
+    var c = Math.abs(F[i][j]) / den;
+    if (c > best){ best = c; bi = i; bj = j; }
+  }
+  return { i: bi, j: bj, corr: best, name: "" };
+}
+// The second-order model of the loss around A's solution, and what is left over when the curvature
+// is the Fisher instead of the Hessian. Halving the step must shrink the Hessian's leftover faster,
+// because the Fisher leaves a term that is itself second order.
+function ladderOf(pStar, dm, X, T, lin, F, H, v, L0, delta){
+  var g = gradOf(pStar, dm, X, T, lin, null).g;
+  var gv = dot(g, v), hv = quadFull(H, v), fv = quadFull(F, v), rows = [], k;
+  var gap = 0.5 * Math.abs(hv - fv);
+  function at(dl){
+    var L = excessAt(axpy(pStar, v, dl), dm, X, T, lin) - L0;
+    return { d: dl, actual: L,
+             rh: Math.abs(L - dl * gv - 0.5 * dl * dl * hv),
+             rf: Math.abs(L - dl * gv - 0.5 * dl * dl * fv),
+             predH: dl * gv + 0.5 * dl * dl * hv, predF: dl * gv + 0.5 * dl * dl * fv };
+  }
+  // The step is chosen, not fixed. Shrinking it separates the second-order term the two matrices
+  // differ by from the Hessian's own third-order leftover - but only until that leftover reaches
+  // the floating-point floor and stops shrinking, after which the separation gets worse again. So
+  // the step is picked by MAXIMISING the separation over a fixed dyadic grid, which is a search
+  // with no threshold in it, and the ladder is then built ending on that step.
+  var grid = [], kk;
+  for (kk = 0; kk <= 14; kk++) grid.push(at(delta / Math.pow(2, kk)));
+  // and the rung the claim is made on must stay clear of the rounding floor of the loss itself,
+  // which is where a leftover stops shrinking and starts measuring the arithmetic
+  var floor = 1e4 * 2.220446049250313e-16 * Math.max(2, Math.abs(L0));
+  var best = 0, sep = -1, tries = 0;
+  for (kk = 0; kk + 3 < grid.length; kk++){
+    if (grid[kk + 3].rh < floor) continue;
+    var lo = grid[kk + 3], s2 = gap * lo.d * lo.d / Math.max(1e-300, lo.rh);
+    if (s2 > sep){ sep = s2; best = kk; tries = kk; }
+  }
+  for (k = 0; k < 4; k++) rows.push(grid[best + k]);
+  var d0 = rows[0].d;
+  var out = { rows: rows, gv: gv, hv: hv, fv: fv, d0: d0, tries: tries, sep: sep,
+              gapRel: Math.abs(hv - fv) / Math.max(1e-300, Math.abs(hv)),
+              gapId: Math.abs((0.5 * d0 * d0 * (hv - fv)) - (rows[0].predH - rows[0].predF)) };
+  // the triangle inequality, which is an identity rather than a tolerance: what the Fisher leaves
+  // behind IS the quadratic gap, up to the Hessian's own leftover
+  out.tri = 0;
+  rows.forEach(function(r){
+    var e = Math.abs(r.rf - 0.5 * r.d * r.d * Math.abs(hv - fv)) - r.rh;
+    if (e > out.tri) out.tri = e;
+  });
+  out.ratioH = rows[3].rh > 0 ? rows[0].rh / rows[3].rh : 0;
+  out.ratioF = rows[3].rf > 0 ? rows[0].rf / rows[3].rf : 0;
+  return out;
+}
+// Per-parameter importance measured EXACTLY - the symmetric second difference of the true loss,
+// which cancels the linear term - against everything that claims to predict it.
+function paramRanker(pStar, dm, X, T, lin, F, Femp, H, L0, delta){
+  var truth = [], i, D = diagOf(F), De = diagOf(Femp), Dh = diagOf(H);
+  var g = gradOf(pStar, dm, X, T, lin, null).g, pred = {}, worst = 0, mx = 0;
+  for (i = 0; i < dm.P; i++){
+    var e = unitVecP(dm.P, i);
+    var lp = excessAt(axpy(pStar, e, delta), dm, X, T, lin);
+    var lm = excessAt(axpy(pStar, e, -delta), dm, X, T, lin);
+    truth[i] = lp + lm - 2 * L0;
+    var q = delta * delta * Dh[i], er = Math.abs(truth[i] - q);
+    if (er > worst) worst = er;
+    if (Math.abs(truth[i]) > mx) mx = Math.abs(truth[i]);
+  }
+  var cands = [
+    { key: "hess", name: "the diagonal of the Hessian", v: Dh },
+    { key: "fish", name: "the diagonal of the Fisher <span class='lg'>what EWC uses</span>", v: D },
+    { key: "emp", name: "the diagonal of the empirical Fisher", v: De },
+    { key: "grad", name: "the size of the gradient", v: g.map(Math.abs) },
+    { key: "mag", name: "the size of the weight <span class='lg'>the pruning heuristic</span>",
+      v: pStar.map(Math.abs) }
+  ];
+  var hs = headStart(dm);
+  cands.forEach(function(c){
+    var r = concordance(c.v, truth);
+    c.auc = r.auc; c.pairs = r.pairs;
+    var hi = concordance(c.v.slice(hs), truth.slice(hs));
+    c.head = hi.auc; c.headPairs = hi.pairs;
+    var lo = concordance(c.v.slice(0, hs), truth.slice(0, hs));
+    c.below = lo.auc; c.belowPairs = lo.pairs;
+  });
+  cands.sort(function(a, b){ return b.auc - a.auc; });
+  return { cands: cands, truth: truth, worst: worst, scale: mx, delta: delta,
+           quadRel: worst / (mx || 1) };
+}
+
+// ---------------------------------------------------------------- the frontier
+// One number for "how much did EWC help" is a trap, because it depends entirely on the penalty
+// strength. Sweep it instead, and compare the whole frontier: at a matched cost on the new task,
+// which importance measure loses the least of the old one?
+function frontier(o, lams){
+  var tk = o.task, cfg = o.cfg, dm = tk.dm, X = tk.X, lin = false, out = [], pens = o.pens;
+  var pStar = o.pStar, Q = orthoMat(dm.P, 700 + cfg.seed), Du = diagOf(conjT(Q, pens.F));
+  var variants = [
+    { key: "ewc", name: "EWC &mdash; the diagonal Fisher", D: pens.D },
+    { key: "full", name: "the FULL Fisher <span class='lg'>the metric EWC approximates</span>",
+      M: pens.F },
+    { key: "l2", name: "plain L2 to A's weights <span class='lg'>the same mass, no shape</span>",
+      D: pens.Dflat },
+    { key: "emp", name: "the empirical Fisher <span class='lg'>the one that gets implemented</span>",
+      D: pens.Demp },
+    { key: "rot", name: "EWC in a rotated basis <span class='lg'>same model, other coordinates</span>",
+      rot: Q, D: Du },
+    { key: "shuf", name: "the shuffled Fisher <span class='lg'>the null: right values, wrong parameters</span>",
+      D: pens.Dshuf },
+    { key: "mag", name: "weight magnitude <span class='lg'>the null everyone tries first</span>",
+      D: pens.Dmag }
+  ];
+  variants.forEach(function(vr){
+    var pts = [];
+    lams.forEach(function(lm){
+      var p;
+      if (vr.rot) p = trainRot(pStar, dm, X, tk.TB, lin, cfg.stepsB, cfg.lr, vr.rot, lm, vr.D,
+                               matTVec(vr.rot, pStar));
+      else {
+        var pen = lm === 0 ? null : (vr.M ? { lam: lm, M: vr.M, ref: pStar }
+                                          : { lam: lm, D: vr.D, ref: pStar });
+        p = trainGD(pStar, dm, X, tk.TB, lin, cfg.stepsB, cfg.lr, pen, null, null).p;
+      }
+      var dp = sub(p, pStar);
+      pts.push({ lam: lm, a: excessAt(p, dm, X, tk.TA, lin), b: excessAt(p, dm, X, tk.TB, lin),
+                 move: norm(dp),
+                 pq: vr.M ? quadFull(vr.M, dp)
+                          : (vr.rot ? quadDiag(vr.D, matTVec(vr.rot, dp)) : quadDiag(vr.D, dp)) });
+    });
+    var zero = pts[0];
+    pts.sort(function(x, y){ return x.b - y.b; });
+    out.push({ key: vr.key, name: vr.name, pts: pts, zero: zero, top: pts[pts.length - 1] });
+  });
+  var budgets = [], k;
+  for (k = 0; k < 4; k++) budgets.push(o.base.b * (0.10 + 0.10 * k));
+  out.forEach(function(v){
+    var got = budgets.map(function(bd){ return atBudget(v.pts, bd); });
+    v.at = got.map(function(q){ return q.a; });
+    v.feas = got.map(function(q){ return q.feasible; });
+    v.best = Math.min.apply(null, v.pts.map(function(q){ return q.a + q.b; }));
+  });
+  var win = [0, 0, 0, 0], dom = 0;
+  budgets.forEach(function(bd, bi){
+    var bestKey = null, bestVal = Infinity;
+    out.forEach(function(v){
+      if (v.at[bi] !== null && v.at[bi] < bestVal){ bestVal = v.at[bi]; bestKey = v.key; }
+    });
+    win[bi] = bestKey;
+  });
+  out.forEach(function(v){
+    var i;
+    for (i = 1; i < v.pts.length; i++) if (v.pts[i].a > v.pts[i - 1].a + 1e-12) dom++;
+  });
+  // how much of what the Fisher's SHAPE buys over a shapeless penalty of the same mass survives
+  // being written down in another basis
+  var e = null, l = null, r = null, k;
+  out.forEach(function(v){ if (v.key === "ewc") e = v; if (v.key === "l2") l = v;
+                           if (v.key === "rot") r = v; });
+  var gain = 0, kept = 0;
+  for (k = 0; k < budgets.length; k++){
+    gain += l.at[k] - e.at[k];
+    kept += l.at[k] - r.at[k];
+  }
+  var beats = 0, sh = null, mg = null;
+  out.forEach(function(v){ if (v.key === "shuf") sh = v; if (v.key === "mag") mg = v; });
+  for (k = 0; k < budgets.length; k++){
+    if (e.at[k] <= sh.at[k]) beats++;
+    if (e.at[k] <= mg.at[k]) beats++;
+  }
+  return { rows: out, budgets: budgets, win: win, lams: lams, dominated: dom, beatsNulls: beats,
+           gain: gain / budgets.length, kept: kept / budgets.length,
+           lost: gain !== 0 ? 1 - kept / gain : 0, n: variants.length * lams.length };
+}
+// At a matched budget on the new task, what does the old task cost? Linear interpolation along the
+// frontier, so the comparison is between curves and not between hand-picked penalty strengths.
+function atBudget(pts, budget){
+  var i, best = null, feas = false;
+  for (i = 1; i < pts.length; i++){
+    var p = pts[i - 1], q = pts[i];
+    if ((p.b - budget) * (q.b - budget) <= 0 && p.b !== q.b){
+      var t = (budget - p.b) / (q.b - p.b);
+      var val = p.a + t * (q.a - p.a);
+      if (best === null || val < best){ best = val; feas = true; }
+    }
+  }
+  for (i = 0; i < pts.length; i++) if (pts[i].b <= budget && (best === null || pts[i].a < best)){
+    best = pts[i].a; feas = true;
+  }
+  if (best === null){                          // the budget is tighter than anything on the curve
+    var lo = pts[0];
+    for (i = 1; i < pts.length; i++) if (pts[i].b < lo.b) lo = pts[i];
+    best = lo.a;
+  }
+  return { a: best, feasible: feas };
+}
+
+// ---------------------------------------------------------------- the page checking itself
+function byKey(list, k){
+  var i;
+  for (i = 0; i < list.length; i++) if (list[i].key === k) return list[i];
+  return null;
+}
+function selfCheck(o){
+  var out = [], n = 0, eps = 2.220446049250313e-16, i;
+  function ck(c, m){ n++; if (!c) out.push("FAIL  " + m); }
+  var dm = o.task.dm, sc = o.fisher.scale;
+
+  // --- the floor is a construction, not an estimate
+  ck(o.floor.teacherA === 0, "the teacher does not score exactly zero on its own task");
+  ck(o.floor.teacherB === 0, "task B's teacher does not score exactly zero on task B");
+  ck(o.floor.entA > 0 && o.floor.entA < o.floor.lnC,
+     "the conditional entropy is outside (0, ln C)");
+  ck(o.floor.uniform > 0, "the uniform predictor scores zero excess");
+  ck(o.floor.marginal <= o.floor.uniform + 1e-12,
+     "the best single distribution is beaten by the uniform one");
+  ck(o.cfg.overlap === 1 ? o.floor.teacherBonA === 0 : o.floor.teacherBonA > 0,
+     "at full overlap the two tasks are not the same task");
+
+  // --- gradients, at initialisation
+  o.grad.forEach(function(r){
+    ck(r.dloss <= 8 * eps * Math.max(1, Math.abs(r.loss)),
+       "forward mode and the backward pass disagree on the loss for " + r.name);
+    ck(r.rel < 1e-12, "the backward pass disagrees with forward mode for " + r.name +
+       " (" + r.rel + ")");
+    ck(r.fwd <= r.cd, "a central difference beat exact forward mode for " + r.name);
+    ck(r.maxg > 1e-3, "the gradient at initialisation is already tiny for " + r.name);
+  });
+
+  // --- the Fisher: three code paths, one matrix
+  ck(o.fisher.outerVsGN <= 1e-12 * sc,
+     "the outer-product Fisher and the Gauss-Newton form disagree (" + o.fisher.outerVsGN + ")");
+  ck(o.fisher.hessVsF <= 1e-11 * sc,
+     "the Fisher is not the Hessian of the loss whose targets are the model's own predictions (" +
+     o.fisher.hessVsF + ")");
+  ck(o.fisher.sym <= 1e-12 * sc, "the Hessian is not symmetric, so a second derivative is wrong");
+  ck(o.fisher.headBlock <= 1e-11 * sc,
+     "the Fisher and the Hessian differ on the last layer, where the logits are linear (" +
+     o.fisher.headBlock + ")");
+  ck(o.fisher.fullGap > 1e3 * o.fisher.headBlock,
+     "the Fisher and the Hessian agree everywhere, so there is nothing to say");
+  ck(o.fisher.affine <= 1e-11 * sc, "the Hessian is not affine in the target distribution");
+  ck(o.fisher.teacherEmp === 0,
+     "at a model that has learned the task the two Fishers are not bit-identical");
+  ck(o.fisher.empGap > 0, "the empirical Fisher equals the Fisher at a model that has not converged");
+  ck(o.fisher.diagMin >= 0, "a diagonal entry of the Fisher is negative, which PSD forbids");
+
+  // --- a move that costs nothing
+  ck(o.gauge.move > 1, "the gauge move is too small to make the point");
+  ck(o.gauge.dLoss <= 1e-12,
+     "adding the same number to every class bias changed the loss (" + o.gauge.dLoss + ")");
+  ck(o.gauge.fisherCost <= 1e-12 * o.fisher.diagMax,
+     "the Fisher charges for a direction that changes nothing (" + o.gauge.fisherCost + ")");
+  ck(o.gauge.l2Cost > 0.9, "the direction is not a unit vector, so L2 does not charge for it");
+
+  // --- the worst direction for a diagonal
+  ck(o.worst.lam >= 1 - 1e-9, "a generalised eigenvalue below 1, which coordinate vectors forbid");
+  ck(Math.abs(o.worst.full / o.worst.diag - o.worst.lam) <= 1e-6 * o.worst.lam,
+     "the reported ratio is not the quadratic form it claims to be");
+  ck(o.worst.rowMax <= 1e-9 * o.fisher.diagMax,
+     "a parameter with no Fisher diagonal has off-diagonal Fisher mass, which PSD forbids");
+  ck(o.dirs.length === 3, "a direction is missing from the pricing table");
+  o.dirs.forEach(function(r){
+    ck(Math.abs(r.l2 - 1) <= 64 * eps, "a direction in the pricing table is not a unit vector");
+    ck(r.full >= -1e-15 && r.diag >= 0, "a negative charge for a direction");
+    ck(r.full <= r.diag * o.worst.lam + 1e-9 * Math.max(1, r.diag),
+       "a direction costs more under the full Fisher than the worst case allows");
+  });
+  ck(Math.abs(o.dirs[1].full / o.dirs[1].diag - o.worst.lam) <= 1e-6 * o.worst.lam,
+     "the underpriced direction does not realise the generalised eigenvalue");
+  ck(o.dirs[0].dLoss < o.dirs[2].dLoss && o.dirs[0].dLoss < o.dirs[1].dLoss,
+     "a move along the gauge changed the function more than a move that should");
+
+  // --- the quadratic model. The identity holds in EVERY direction; the claim about which leftover
+  // shrinks faster is asserted only where the two matrices actually differ, because in a direction
+  // where they happen to agree there is nothing for it to say.
+  o.ladders.forEach(function(e, k){
+    var L = e.L;
+    ck(L.gapId <= 1e-12 * Math.max(1e-12, Math.abs(L.rows[0].predH)),
+       "the difference between the two predictions is not the quadratic form of the difference (" +
+       k + ")");
+    ck(L.tri <= 1e-9 * Math.max(1e-12, Math.abs(L.rows[0].actual)),
+       "what the Fisher leaves behind is not the quadratic gap plus the curvature's leftover (" +
+       k + ")");
+    for (i = 1; i < L.rows.length; i++)
+      ck(L.rows[i].rh <= L.rows[i - 1].rh, "the Hessian's leftover grew when the step shrank (" +
+         k + ")");
+    // only where the two matrices actually differ is there anything to separate
+    if (L.sep > 2){
+      ck(L.rows[3].rf > L.rows[3].rh,
+         "at the step that separates them the Fisher predicted the loss at least as well as the " +
+         "curvature (" + k + ")");
+      ck(L.rows[3].rf > 0.5 * 0.5 * L.rows[3].d * L.rows[3].d * Math.abs(L.hv - L.fv),
+         "the Fisher's leftover is smaller than half the quadratic gap it must contain (" + k + ")");
+    }
+  });
+  ck(o.ladder.gapRel > 1e-6, "the direction chosen to disagree most does not disagree at all");
+  ck(o.ladder.sep > 2, "no step separates the second-order gap from the third-order leftover");
+  ck(Math.abs(o.diffDir.hv - o.diffDir.fv - o.diffDir.lam) <= 1e-12 * Math.abs(o.diffDir.lam),
+     "the disagreement direction's eigenvalue is not the difference of the two quadratic forms");
+
+  // --- per-parameter importance
+  ck(o.rank.cands.length === 5, "the ranker lost a candidate");
+  o.rank.cands.forEach(function(c){
+    ck(c.auc >= 0 && c.auc <= 1, "an AUC outside [0,1] for " + c.key);
+    ck(c.pairs > 1000, "too few comparable pairs for " + c.key);
+  });
+  ck(o.rank.cands[0].key === "hess",
+     "something beat the diagonal Hessian, which is what the second difference measures");
+  ck(o.rank.quadRel < 0.05, "the second difference is not the diagonal of the Hessian");
+  o.rank.cands.forEach(function(c){
+    if (c.key === "hess" || c.key === "fish")
+      ck(c.head >= 1 - 1e-12,
+         "the last layer, where the Fisher IS the curvature, was not ranked perfectly by " + c.key);
+  });
+  ck(byKey(o.rank.cands, "fish").below <= byKey(o.rank.cands, "hess").below,
+     "below the last layer the Fisher ranked the parameters better than the curvature it approximates");
+
+  // --- the limit: an unbounded penalty is exactly "do not move"
+  ck(o.frozen.move <= 1e-9, "an unbounded penalty still moved the weights (" + o.frozen.move + ")");
+  ck(Math.abs(o.frozen.a - o.base.a) <= 1e-9 * Math.max(1e-9, o.base.a),
+     "an unbounded penalty changed the old task's score");
+
+  // --- fine-tuning on B
+  ck(o.runs.length === 7, "a fine-tuning run is missing");
+  o.runs.forEach(function(r){
+    ck(r.a >= -1e-15 && r.b >= -1e-15, "a negative KL, which cannot happen");
+    ck(r.fq >= -1e-12, "a negative Fisher quadratic form, which PSD forbids");
+    ck(r.fq <= r.dq * o.worst.lam + 1e-9 * Math.max(1, r.dq),
+       "a displacement cost more under the full Fisher than the worst-case bound allows");
+  });
+  ck(o.cfg.overlap === 1 ? Math.abs(o.runs[0].a - o.runs[0].b) <= 1e-15
+                         : o.runs[0].a > o.base.a,
+     "at full overlap the two tasks did not stay identical");
+  ck(o.runs[0].b <= o.base.b + 1e-12, "fine-tuning on B did not improve B");
+
+  // --- the rotation. Three things have to hold at once for the experiment to mean anything: the
+  // basis really is orthogonal, the model really is untouched (plain fine-tuning lands in the same
+  // place), and the full-matrix penalty really is a metric (invariant). Only then does the
+  // diagonal's disagreement say something about the diagonal.
+  o.rot.forEach(function(r){
+    ck(r.orth <= 1e-13, "the change of basis is not orthogonal (" + r.key + ", " + r.orth + ")");
+    ck(r.noneGap <= o.invTol,
+       "plain fine-tuning moved further under a change of coordinates than a 1e-13 nudge moves it (" +
+       r.key + ", " + r.noneGap + " against " + o.invTol + ")");
+    ck(r.metricInv <= 1e-9 * Math.max(1e-9, r.quad),
+       "the full-Fisher penalty is not invariant to a change of coordinates (" + r.key + ")");
+    ck(r.fullGap <= o.invTolFull,
+       "the full-Fisher run moved further under a change of coordinates than a 1e-13 nudge to its " +
+       "start and its matrix moves it (" + r.key + ", " + r.fullGap + ")");
+    ck(r.ewcGap > 1e3 * Math.max(o.invTol, 1e-15),
+       "the diagonal penalty survived the change of coordinates (" + r.key + ")");
+    ck(r.diagInv > 1e3 * r.metricInv,
+       "the diagonal penalty is as invariant as the full one, which cannot be (" + r.key + ")");
+    ck(r.spread.mean > 0, "the rotated diagonal has no mass");
+  });
+  // the generic basis is the one that erases the shape: its diagonal is flatter, and the run it
+  // produces has to sit closer to plain L2 than the diagonal Fisher's own run does
+  var gen = byKey(o.rot, "gen"), pair = byKey(o.rot, "pair");
+  ck(gen.spread.ratio < o.spread.fisher.ratio,
+     "a generic rotation did not flatten the Fisher diagonal");
+  ck(gen.spread.ratio < pair.spread.ratio,
+     "rotating one pair flattened the diagonal more than rotating everything");
+  ck(gen.l2Gap < gen.ewcGap,
+     "in a generic basis the diagonal-Fisher run stayed closer to EWC than to plain L2");
+  ck(Math.abs(o.spread.flat.cv) <= 1e-12, "the matched-mass L2 penalty is not flat");
+  ck(Math.abs(o.spread.flat.mean - o.pens.mean) <= 64 * eps * o.pens.mean,
+     "the matched-mass penalty does not carry the Fisher's mass");
+  ck(o.sens.end >= 0 && isFinite(o.sens.amp), "the sensitivity control did not run");
+
+  // --- the frontier, once it has been swept
+  if (o.front){
+    var fr = o.front;
+    ck(fr.rows.length === 7, "a frontier variant is missing");
+    fr.rows.forEach(function(v){
+      ck(v.pts.length === fr.lams.length, "a penalty strength is missing from " + v.key);
+      v.pts.forEach(function(q){
+        ck(q.a >= -1e-15 && q.b >= -1e-15, "a negative KL on the frontier for " + v.key);
+      });
+      var lo = v.zero, hi = v.top;
+      ck(Math.abs(lo.a - o.runs[0].a) <= 1e-9 * Math.max(1e-9, o.runs[0].a),
+         "with no penalty " + v.key + " is not the same run as plain fine-tuning");
+      ck(hi.pq <= 0.02 * lo.pq,
+         "at the largest penalty " + v.key + " still paid a fiftieth of the unpenalised penalty");
+      ck(hi.b > lo.b, "the largest penalty did not cost anything on the new task for " + v.key);
+      ck(v.at.length === fr.budgets.length, "a budget is missing for " + v.key);
+    });
+    ck(fr.budgets.length === 4 && fr.budgets[0] < fr.budgets[3], "the budgets are not increasing");
+    fr.win.forEach(function(w){ ck(w !== null, "a budget had no winner at all"); });
+    var e = byKey(fr.rows, "ewc"), l = byKey(fr.rows, "l2"), em = byKey(fr.rows, "emp"),
+        rt = byKey(fr.rows, "rot"), sh = byKey(fr.rows, "shuf"), mg = byKey(fr.rows, "mag");
+    for (i = 0; i < fr.budgets.length; i++){
+      ck(e.at[i] > 0 && l.at[i] > 0, "a budget was met at no cost to the old task at all");
+      ck(isFinite(rt.at[i]), "the rotated basis did not produce a number at budget " + i);
+      ck(isFinite(sh.at[i]) && isFinite(mg.at[i]) && isFinite(em.at[i]),
+         "a null did not produce a number at budget " + i);
+    }
+    ck(fr.beatsNulls >= 0 && fr.beatsNulls <= 2 * fr.budgets.length,
+       "the count of budgets where the real Fisher beats a null is impossible");
+    ck(isFinite(fr.lost), "the share of the advantage a rotation destroys is not a number");
+    ck(fr.dominated >= 0, "a dominated-point count below zero");
+  }
+  return { pass: n - out.length, total: n, lines: out };
+}
+// ===== ENGINE:END =====
+
+// ---------------------------------------------------------------- small view helpers
+function $(id){ return document.getElementById(id); }
+function f2(x){ return (Math.round(x * 100) / 100).toFixed(2); }
+function f3(x){ return (Math.round(x * 1000) / 1000).toFixed(3); }
+function f4(x){ return (Math.round(x * 10000) / 10000).toFixed(4); }
+function num(n){ return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+function ex(x){
+  if (x === 0) return "0.0e+0";
+  var s = x.toExponential(1).replace("e+", "e").replace("e-", "e-");
+  return s.replace(/e(-?)(\d+)/, "e$1$2");
+}
+function sm(x){ return Math.abs(x) < 1e-3 && x !== 0 ? ex(x) : f4(x); }
+function mult(x){ return (Math.round(x * 100) / 100).toFixed(2) + "&times;"; }
+function cls(good){ return good ? "ok" : "bad"; }
+function esc(s){ return String(s); }
+
+var LAMS = [0, 0.3, 1, 3, 10, 30, 100, 1000];
+var OS = [0, 0.25, 0.5, 0.75, 1];
+var TS = [100, 200, 300, 600];
+var MS = [0.3, 1, 3, 10, 30];
+var LS = [0.2, 0.4, 0.6, 1.0];
+var COL = { ewc: "#0f172a", full: "#b91c1c", l2: "#0ea5e9", emp: "#7c3aed",
+            rot: "#f59e0b", shuf: "#94a3b8", mag: "#a1a1aa" };
+var B = null, FRONT = null;
+
+function opts(){
+  return { h: +$("sH").value, overlap: OS[+$("sO").value], stepsB: TS[+$("sT").value],
+           lam: MS[+$("sM").value], lr: LS[+$("sL").value], seed: +$("sS").value,
+           tscale: 1.6, stepsA: 900, gaugeStep: 4, delta: 0.4, probe: 0.05, jit: 0.02 };
+}
+function showOpts(){
+  var c = opts();
+  $("vH").textContent = c.h;
+  $("vO").textContent = f2(c.overlap);
+  $("vT").textContent = c.stepsB;
+  $("vM").textContent = c.lam;
+  $("vL").textContent = f2(c.lr);
+  $("vS").textContent = c.seed;
+}
+
+// ---------------------------------------------------------------- charts
+function axes(w, h, pad){
+  return "<rect x='" + pad.l + "' y='" + pad.t + "' width='" + (w - pad.l - pad.r) +
+         "' height='" + (h - pad.t - pad.b) + "' fill='#f8fafc' stroke='#e2e8f0'/>";
+}
+function txt(x, y, s, anchor, size, col){
+  return "<text x='" + x + "' y='" + y + "' text-anchor='" + (anchor || "start") + "' font-size='" +
+         (size || 10) + "' fill='" + (col || "#64748b") + "' font-family='monospace'>" + s + "</text>";
+}
+function curveChart(o){
+  var w = 470, h = 250, pad = { l: 44, r: 10, t: 12, b: 30 }, c = o.curve, i;
+  if (!c || !c.length) return "";
+  var maxY = Math.max(o.floor.teacherBonA, 0.01), maxX = c[c.length - 1].s;
+  c.forEach(function(p){ if (p.a > maxY) maxY = p.a; if (p.b > maxY) maxY = p.b; });
+  maxY *= 1.08;
+  function X(s){ return pad.l + (w - pad.l - pad.r) * s / maxX; }
+  function Y(v){ return h - pad.b - (h - pad.t - pad.b) * v / maxY; }
+  var s = "<svg viewBox='0 0 " + w + " " + h + "' width='" + w + "' height='" + h + "'>" +
+          axes(w, h, pad);
+  s += "<line x1='" + pad.l + "' y1='" + Y(o.floor.teacherBonA) + "' x2='" + (w - pad.r) +
+       "' y2='" + Y(o.floor.teacherBonA) + "' stroke='#cbd5e1' stroke-dasharray='4 3'/>";
+  s += txt(w - pad.r - 2, Y(o.floor.teacherBonA) - 4, "task B's teacher, on task A", "end", 9);
+  [["a", "#b91c1c"], ["b", "#0ea5e9"]].forEach(function(k){
+    var d = "";
+    for (i = 0; i < c.length; i++) d += (i ? "L" : "M") + X(c[i].s) + " " + Y(c[i][k[0]]);
+    s += "<path d='" + d + "' fill='none' stroke='" + k[1] + "' stroke-width='2'/>";
+  });
+  var e = o.curveE;
+  if (e && e.length){
+    var d2 = "";
+    for (i = 0; i < e.length; i++) d2 += (i ? "L" : "M") + X(e[i].s) + " " + Y(e[i].a);
+    s += "<path d='" + d2 + "' fill='none' stroke='#b91c1c' stroke-width='1.6' " +
+         "stroke-dasharray='5 3' opacity='.75'/>";
+  }
+  s += txt(pad.l + 6, pad.t + 14, "the old task, no penalty", "start", 10, "#b91c1c");
+  s += txt(pad.l + 6, pad.t + 27, "the old task, with EWC", "start", 10, "#b91c1c");
+  s += txt(pad.l + 6, pad.t + 40, "the new task", "start", 10, "#0ea5e9");
+  s += txt(pad.l - 6, Y(0) + 3, "0", "end", 9) + txt(pad.l - 6, Y(maxY) + 8, f2(maxY), "end", 9);
+  s += txt(pad.l, h - 8, "0", "start", 9) + txt(w - pad.r, h - 8, num(maxX) + " steps", "end", 9);
+  return s + "</svg>";
+}
+function rankChart(o){
+  var w = 470, h = 250, pad = { l: 40, r: 10, t: 12, b: 32 }, i, j;
+  var tr = o.rank.truth, n = tr.length, fi = null;
+  o.rank.cands.forEach(function(c){ if (c.key === "fish") fi = c.v; });
+  function ranks(v){
+    var idx = [], r = [];
+    for (i = 0; i < n; i++) idx.push(i);
+    idx.sort(function(a, b){ return v[a] - v[b]; });
+    for (i = 0; i < n; i++) r[idx[i]] = i;
+    return r;
+  }
+  var rt = ranks(tr), rf = ranks(fi), hs = o.task.dm.h * o.task.dm.d + o.task.dm.h;
+  function X(k){ return pad.l + (w - pad.l - pad.r) * k / (n - 1); }
+  function Y(k){ return h - pad.b - (h - pad.t - pad.b) * k / (n - 1); }
+  var s = "<svg viewBox='0 0 " + w + " " + h + "' width='" + w + "' height='" + h + "'>" +
+          axes(w, h, pad);
+  s += "<line x1='" + X(0) + "' y1='" + Y(0) + "' x2='" + X(n - 1) + "' y2='" + Y(n - 1) +
+       "' stroke='#cbd5e1' stroke-dasharray='3 3'/>";
+  for (j = 0; j < n; j++)
+    s += "<circle cx='" + X(rf[j]) + "' cy='" + Y(rt[j]) + "' r='3' fill='" +
+         (j >= hs ? "#0ea5e9" : "#0f172a") + "' opacity='.8'/>";
+  s += txt(pad.l + 6, pad.t + 14, "the last layer", "start", 10, "#0ea5e9");
+  s += txt(pad.l + 6, pad.t + 27, "everything below it", "start", 10, "#0f172a");
+  s += txt((pad.l + w - pad.r) / 2, h - 8, "rank by the Fisher's diagonal", "middle", 10);
+  s += "<text x='12' y='" + ((h - pad.b + pad.t) / 2) + "' font-size='10' fill='#64748b' " +
+       "font-family='monospace' transform='rotate(-90 12 " + ((h - pad.b + pad.t) / 2) +
+       ")' text-anchor='middle'>rank by what it costs</text>";
+  return s + "</svg>";
+}
+function frontChart(fr, base){
+  var w = 470, h = 280, pad = { l: 46, r: 10, t: 12, b: 34 };
+  var maxX = base.b * 1.05, maxY = 0;
+  fr.rows.forEach(function(v){ v.pts.forEach(function(p){ if (p.a > maxY) maxY = p.a; }); });
+  maxY *= 1.06;
+  function X(v){ return pad.l + (w - pad.l - pad.r) * Math.min(v, maxX) / maxX; }
+  function Y(v){ return h - pad.b - (h - pad.t - pad.b) * v / maxY; }
+  var s = "<svg viewBox='0 0 " + w + " " + h + "' width='" + w + "' height='" + h + "'>" +
+          axes(w, h, pad), yy = pad.t + 12;
+  fr.budgets.forEach(function(bd){
+    s += "<line x1='" + X(bd) + "' y1='" + pad.t + "' x2='" + X(bd) + "' y2='" + (h - pad.b) +
+         "' stroke='#e2e8f0'/>";
+  });
+  fr.rows.forEach(function(v){
+    var d = "", i;
+    for (i = 0; i < v.pts.length; i++) d += (i ? "L" : "M") + X(v.pts[i].b) + " " + Y(v.pts[i].a);
+    s += "<path d='" + d + "' fill='none' stroke='" + COL[v.key] + "' stroke-width='" +
+         (v.key === "ewc" ? 2.4 : 1.4) + "' opacity='" + (v.key === "ewc" ? 1 : .85) + "'/>";
+    for (i = 0; i < v.pts.length; i++)
+      s += "<circle cx='" + X(v.pts[i].b) + "' cy='" + Y(v.pts[i].a) + "' r='2.2' fill='" +
+           COL[v.key] + "'/>";
+    s += txt(w - pad.r - 4, yy, v.key, "end", 9.5, COL[v.key]);
+    yy += 12;
+  });
+  s += txt((pad.l + w - pad.r) / 2, h - 8, "what it costs on the NEW task", "middle", 10);
+  s += "<text x='12' y='" + ((h - pad.b + pad.t) / 2) + "' font-size='10' fill='#64748b' " +
+       "font-family='monospace' transform='rotate(-90 12 " + ((h - pad.b + pad.t) / 2) +
+       ")' text-anchor='middle'>what it costs on the OLD task</text>";
+  return s + "</svg>";
+}
+
+// ---------------------------------------------------------------- tables
+function renderAll(){
+  var o = B, dm = o.task.dm;
+  $("setup").innerHTML =
+    "A student with <strong>" + dm.h + "</strong> hidden units and <strong>" + num(dm.P) +
+    "</strong> parameters, over all <strong>" + o.task.N + "</strong> inputs of " + o.task.d +
+    " binary features, predicting <strong>" + o.task.C + "</strong> classes. Both teachers have 4 " +
+    "hidden units, so the student can hold either exactly. Task B shares <strong>" +
+    f2(o.cfg.overlap) + "</strong> of task A's teacher" +
+    (o.cfg.overlap === 1 ? " &mdash; at 1.00 they are the <em>same task</em>, the control where " +
+      "there is nothing to forget" : "") + ". Trained on A for " + num(o.cfg.stepsA) +
+    " steps, then on B for " + num(o.cfg.stepsB) + " at a learning rate of " + f2(o.cfg.lr) +
+    ", penalty strength " + o.cfg.lam + ".";
+
+  var fl = o.floor;
+  $("floor").innerHTML = [
+    ["task A's teacher, on task A", fl.teacherA, "the labels were made by it &mdash; exactly zero, by construction"],
+    ["task B's teacher, on task B", fl.teacherB, "the same, for the second task"],
+    ["the model after training on A", o.star.exA, "how well the old task was learned"],
+    ["the same model, on task B", o.star.exB, "the starting point of every fine-tuning run below"],
+    ["task B's teacher, on task A", fl.teacherBonA, "what a model that cannot do task A at all scores"],
+    ["the best single distribution", fl.marginal, "the null that ignores the input"],
+    ["the uniform prediction", fl.uniform, "the null that ignores everything"],
+    ["conditional entropy of task A", fl.entA, "the loss the teacher itself pays, out of ln 4 = " + f4(fl.lnC)]
+  ].map(function(r){
+    return "<tr><td>" + r[0] + "</td><td class='" + (r[1] === 0 ? "ok" : "") + "'>" +
+      (r[1] === 0 ? "0.0e+0" : f4(r[1])) + "</td><td style='text-align:left;white-space:normal'>" +
+      r[2] + "</td></tr>";
+  }).join("");
+  $("floorNote").innerHTML =
+    "Every number on this page is an exact expectation, not an estimate: the input space is " +
+    "enumerated and the loss is averaged over the label distribution rather than over sampled " +
+    "labels. So <strong>0.0e+0</strong> in the first two rows is an identity and not a very small " +
+    "number &mdash; <code>log(t/t)</code> is <code>log(1)</code> for every term. A model that has " +
+    "learned nothing scores <strong>" + f4(fl.marginal) + "</strong>, and a model that has learned " +
+    "the <em>other</em> task scores <strong>" + f4(fl.teacherBonA) + "</strong>, which is the " +
+    "number to compare the fine-tuned model against.";
+
+  $("grad").innerHTML = o.grad.map(function(r){
+    return "<tr><td>" + r.name + "</td><td>" + num(r.P) + "</td><td class='" +
+      cls(r.dloss === 0) + "'>" + ex(r.dloss) + "</td><td>" + ex(r.fwd) + "</td><td class='" +
+      cls(r.rel < 1e-12) + "'>" + ex(r.rel) + "</td><td>" + ex(r.cd) + "</td><td>" +
+      f4(r.maxg) + "</td></tr>";
+  }).join("");
+  $("gradNote").innerHTML =
+    "Forward mode reproduces the loss <strong>bit for bit</strong> and the gradient to " +
+    "<strong>" + ex(o.grad[0].rel) + "</strong> of the largest entry, where a central difference " +
+    "on the same code manages <strong>" + ex(o.grad[0].cd) + "</strong> &mdash; five orders of " +
+    "magnitude worse, because it has a step size in it and exact forward mode does not. The linear " +
+    "twin is the same engine with <code>tanh</code> replaced by the identity, checked the same way.";
+
+  var fi = o.fisher, sc = fi.scale;
+  $("fisher").innerHTML = [
+    ["outer products vs the Gauss-Newton form", fi.outerVsGN, 1, "two accumulations of the same algebra, sharing no loop"],
+    ["the Fisher vs the Hessian at the model's own labels", fi.hessVsF, 1, "the term with the network's second derivative is multiplied by zero"],
+    ["the Hessian's two triangles", fi.sym, 1, "each entry computed by a different dual seed"],
+    ["the Hessian is affine in the target distribution", fi.affine, 1, "cross-entropy is linear in the target, so its curvature is too"],
+    ["the two Fishers at the teacher itself", fi.teacherEmp, 1, "the only thing separating them is the residual, and there is none"],
+    ["the Fisher vs the curvature &mdash; LAST LAYER only", fi.headBlock, 1, "the logits are linear in those parameters"],
+    ["the Fisher vs the curvature &mdash; everywhere", fi.fullGap, 0, "and below the last layer they are simply different matrices"],
+    ["the empirical Fisher vs the Fisher, at A's solution", fi.empGap, 0, "the model is not the teacher, so the residual is not zero"]
+  ].map(function(r){
+    return "<tr" + (r[2] ? "" : " class='hl'") + "><td style='white-space:normal'>" + r[0] +
+      "</td><td class='" + (r[2] ? cls(r[1] <= 1e-11 * sc) : "bad") + "'>" +
+      (r[1] === 0 ? "0.0e+0" : ex(r[1])) + "</td><td>" + ex(r[1] / sc) +
+      "</td><td style='text-align:left;white-space:normal'>" + r[3] + "</td></tr>";
+  }).join("");
+  $("fisherNote").innerHTML =
+    "The first five rows are identities and they close at the last bit. The last three are the " +
+    "finding: the Fisher and the curvature of the loss being trained agree on the last layer to " +
+    "<strong>" + ex(fi.headBlock) + "</strong> and disagree by <strong>" + f4(fi.fullGap) +
+    "</strong> once the hidden layer is included &mdash; a factor of <strong>" +
+    ex(fi.fullGap / Math.max(fi.headBlock, 1e-300)) + "</strong>. The empirical " +
+    "Fisher, the one almost every implementation computes, sits <strong>" + f2(fi.empRel * 100) +
+    "%</strong> away from the real one here, and at a model that has learned the task the two are " +
+    "bit-identical. The mean absolute residual between the model and the truth is <strong>" +
+    f4(fi.resid) + "</strong>: that residual is the whole difference, in both cases.";
+
+  var rows = o.runs;
+  $("runs").innerHTML = rows.map(function(r, i){
+    return "<tr" + (i === 4 ? " class='hl'" : "") + "><td style='white-space:normal'>" + r.name +
+      "</td><td class='" + (r.a < 0.4 ? "ok" : "bad") + "'>" + f4(r.a) + "</td><td>" + f4(r.b) +
+      "</td><td>" + f2(r.move) + "</td><td>" + f4(r.pred) + "</td><td>" + f4(r.act) +
+      "</td><td class='" + (r.ratio < 2 ? "" : "bad") + "'>" + mult(r.ratio) + "</td></tr>";
+  }).join("");
+  $("runsNote").innerHTML =
+    "With no penalty the old task ends at <strong>" + f4(rows[0].a) + "</strong> against the " +
+    "<strong>" + f4(o.floor.teacherBonA) + "</strong> scored by a network that has never seen it: " +
+    "the model has not been damaged, it has become task B. " +
+    "<span class='red'>The row that matters is the full Fisher:</span> the second-order model it " +
+    "minimises predicted the old task would lose <strong>" + f4(rows[4].pred) + "</strong> and it " +
+    "lost <strong>" + f4(rows[4].act) + "</strong>, a factor of <strong>" + f2(rows[4].ratio) +
+    "</strong>, because that penalty is cheap along its own near-null space and lets the run " +
+    "travel <strong>" + f2(rows[4].move) + "</strong> &mdash; a Fisher cost of " + f4(rows[4].fq) +
+    " against the diagonal's " + f4(rows[1].fq) + " at a shorter move. Every other row sits " +
+    "between " + f2(Math.min(rows[0].ratio, rows[6].ratio)) + " and " +
+    f2(Math.max(rows[1].ratio, rows[5].ratio)) + " on that ratio. Replay &mdash; training on both " +
+    "tasks at once, which needs the old data &mdash; reaches " + f4(rows[5].a) + " and " +
+    f4(rows[5].b) + ".";
+  $("curveSVG").innerHTML = curveChart(o);
+  $("curveNote").innerHTML =
+    "The old task is gone within the first tenth of the run. The dashed line is the same run with " +
+    "the diagonal-Fisher penalty at strength " + o.cfg.lam + ".";
+
+  $("gauge").innerHTML = o.dirs.map(function(r, i){
+    return "<tr" + (i === 0 ? " class='hl'" : "") + "><td style='white-space:normal'>" + r.name +
+      "</td><td>" + f2(r.step) + "</td><td class='" + (r.dLoss < 1e-12 ? "ok" : "") + "'>" +
+      (r.dLoss < 1e-3 ? ex(r.dLoss) : f4(r.dLoss)) + "</td><td>" +
+      (r.full < 1e-3 ? ex(r.full) : f4(r.full)) + "</td><td>" + f4(r.diag) + "</td><td>" +
+      f4(r.l2) + "</td></tr>";
+  }).join("");
+  $("gaugeNote").innerHTML =
+    "The first row is the case for the method: a move of length <strong>" + f2(o.gauge.move) +
+    "</strong> that changes what the network computes by <strong>" + ex(o.gauge.dLoss) +
+    "</strong>, charged <strong>" + ex(o.gauge.fisherCost) + "</strong> by the Fisher and " +
+    "<strong>" + f4(o.gauge.l2Cost) + "</strong> by plain L2 &mdash; which is precisely the kind " +
+    "of mistake a shapeless penalty makes. Note that the <em>diagonal</em> charges " +
+    "<strong>" + f4(o.gauge.diagCost) + "</strong> for it: it cannot see that the four terms " +
+    "cancel. That is the same blindness measured exactly in the second row, where the largest " +
+    "ratio between the two quadratic forms is <strong>" + f3(o.worst.lam) + "&times;</strong> " +
+    "&mdash; a generalised eigenvalue of the pair, so it is the worst case and not a sample.";
+
+  var lr = [];
+  o.ladders.forEach(function(e){
+    e.L.rows.forEach(function(r, i){
+      lr.push("<tr" + (i === 3 ? " class='hl'" : "") + "><td style='white-space:normal'>" +
+        (i === 0 ? e.name : "") + "</td><td>" + ex(r.d) + "</td><td>" + ex(r.actual) +
+        "</td><td>" + ex(r.rh) + "</td><td>" + ex(r.rf) + "</td><td>" +
+        ex(0.5 * r.d * r.d * Math.abs(e.L.hv - e.L.fv)) + "</td></tr>");
+    });
+  });
+  $("ladder").innerHTML = lr.join("");
+  $("ladderNote").innerHTML =
+    "Over three halvings the curvature's leftover falls by <strong>" + f2(o.ladders[0].L.ratioH) +
+    "</strong>, <strong>" + f2(o.ladders[1].L.ratioH) + "</strong> and <strong>" +
+    f2(o.ladders[2].L.ratioH) + "</strong> &mdash; against 8<sup>3</sup> = 512, which is what a " +
+    "third-order leftover does &mdash; while the Fisher's falls by " + f2(o.ladders[0].L.ratioF) +
+    ", " + f2(o.ladders[1].L.ratioF) + " and " + f2(o.ladders[2].L.ratioF) + ", against " +
+    "8<sup>2</sup> = 64. The last column says why, as an identity rather than a trend: what the " +
+    "Fisher leaves behind <em>is</em> the quadratic gap, to within the curvature's own leftover " +
+    "&mdash; the two agree to <strong>" + ex(o.ladders[0].L.tri) + "</strong>. Shrinking the step " +
+    "cannot remove a term that is second order in it.";
+
+  $("rank").innerHTML = o.rank.cands.map(function(c, i){
+    return "<tr" + (i === 0 ? " class='hl'" : "") + "><td style='white-space:normal'>" + c.name +
+      "</td><td class='" + cls(c.auc > 0.5) + "'>" + f3(c.auc) + "</td><td class='" +
+      cls(c.auc > 0.5) + "'>" + (c.auc >= 0.5 ? "+" : "&minus;") + f3(Math.abs(c.auc - 0.5)) +
+      "</td><td class='" + cls(c.head > 0.5) + "'>" + f3(c.head) + "</td><td>" + f3(c.below) +
+      "</td><td>" + num(c.pairs) + "</td></tr>";
+  }).join("");
+  var fk = null, hk = null, mk = null, gk = null;
+  o.rank.cands.forEach(function(c){
+    if (c.key === "fish") fk = c;
+    if (c.key === "hess") hk = c;
+    if (c.key === "mag") mk = c;
+    if (c.key === "grad") gk = c;
+  });
+  $("rankNote").innerHTML =
+    "The outcome is exact: the symmetric second difference of the true loss, which is the diagonal " +
+    "of the Hessian to <strong>" + ex(o.rank.quadRel) + "</strong> of its own scale. So the top row " +
+    "is not a finding, it is a consistency check &mdash; and it is the ceiling everything else is " +
+    "measured against. The Fisher's diagonal reaches <strong>" + f3(fk.auc) + "</strong> of that " +
+    "ceiling's " + f3(hk.auc) + ", and inside the last layer both are exactly <strong>" +
+    f3(fk.head) + "</strong>, which they have to be, because the Fisher IS the curvature there. " +
+    "<span class='red'>The two heuristics people reach for first score below a coin:</span> " +
+    "weight magnitude <strong>" + f3(mk.auc) + "</strong> and gradient size <strong>" +
+    f3(gk.auc) + "</strong>. Per parameter, then, the Fisher is very nearly right &mdash; which " +
+    "makes the frontier below the surprising half of the page.";
+  $("rankSVG").innerHTML = rankChart(o);
+
+  $("rot").innerHTML = o.rot.map(function(r){
+    return "<tr><td style='white-space:normal'>" + r.name + "</td><td>" + ex(r.orth) +
+      "</td><td class='ok'>" + ex(r.noneGap) + " <span class='lg'>vs " + ex(o.invTol) +
+      "</span></td><td class='ok'>" + ex(r.fullGap) + "</td><td class='bad'>" + f4(r.ewcGap) +
+      "</td><td>" + f2(r.spread.ratio) + "&times;</td><td>" +
+      (r.l2Gap < r.ewcGap ? "plain L2" : "EWC") + "</td></tr>";
+  }).join("");
+  var gen = o.rot[1], pair = o.rot[0];
+  $("rotNote").innerHTML =
+    "Rotating <em>two</em> parameters into their sum and difference already moves the " +
+    "diagonal-Fisher run by <strong>" + f4(pair.ewcGap) + "</strong>. A generic rotation moves it " +
+    "by <strong>" + f4(gen.ewcGap) + "</strong>, half the length of the entire fine-tuning move, " +
+    "and lands it <strong>" + f4(gen.l2Gap) + "</strong> from the plain-L2 run &mdash; because in " +
+    "a generic basis the Fisher's diagonal is nearly flat, its largest-to-smallest ratio falling " +
+    "from <strong>" + f2(o.spread.fisher.ratio) + "&times;</strong> to <strong>" +
+    f2(gen.spread.ratio) + "&times;</strong>. Meanwhile the full-Fisher quadratic form of the " +
+    "same displacement changes by <strong>" + ex(gen.metricInv) + "</strong> and the diagonal one " +
+    "by <strong>" + ex(gen.diagInv) + "</strong>: the matrix is a metric and its diagonal is not. " +
+    "The control is what makes this readable &mdash; a 1e-13 nudge to the starting point moves the " +
+    "unpenalised run <strong>" + ex(o.sens.end) + "</strong>, so a change of basis moving it " +
+    ex(gen.noneGap) + " is rounding, and moving the penalised run " + f4(gen.ewcGap) + " is not.";
+}
+
+function renderFront(){
+  var fr = FRONT, o = B, i;
+  var e = null;
+  fr.rows.forEach(function(v){ if (v.key === "ewc") e = v; });
+  var order = fr.rows.slice().sort(function(a, b){ return a.at[0] - b.at[0]; });
+  $("front").innerHTML = order.map(function(v){
+    return "<tr" + (v.key === "ewc" ? " class='hl'" : "") + "><td style='white-space:normal'>" +
+      "<span style='color:" + COL[v.key] + ";font-weight:800'>&#9632;</span> " + v.name +
+      "</td>" + v.at.map(function(a, i){
+        return "<td class='" + (fr.win[i] === v.key ? "ok" : "") + "'>" + f4(a) + "</td>";
+      }).join("") + "<td class='" + (v.key === "ewc" ? "" : cls(false)) + "'>" +
+      (v.key === "ewc" ? "&mdash;" : "+" + f4(v.at.reduce(function(s, a, i){
+        return s + (a - e.at[i]) / 4; }, 0))) + "</td></tr>";
+  }).join("");
+  $("frontSVG").innerHTML = frontChart(fr, o.base);
+  var l2 = null, rt = null, fu = null, em = null, sh = null, mg = null;
+  fr.rows.forEach(function(v){
+    if (v.key === "l2") l2 = v;
+    if (v.key === "rot") rt = v;
+    if (v.key === "full") fu = v;
+    if (v.key === "emp") em = v;
+    if (v.key === "shuf") sh = v;
+    if (v.key === "mag") mg = v;
+  });
+  $("frontNote").innerHTML =
+    "<strong>" + num(fr.n) + "</strong> fine-tuning runs, seven penalties across eight strengths, " +
+    "read at four budgets on the new task. EWC wins <strong>" +
+    fr.win.filter(function(w){ return w === "ewc"; }).length + " of 4</strong> here. " +
+    "<span class='red'>The full Fisher &mdash; the exact object the diagonal approximates &mdash; " +
+    "is worse at every budget</span> (" + f4(fu.at[0]) + " against " + f4(e.at[0]) + " at the " +
+    "tightest), for the reason measured two cards up: its own second-order model is wrong by " +
+    f2(o.runs[4].ratio) + "&times; at the distance it permits. " +
+    "<span class='red'>And most of what the shape buys is a property of the coordinates:</span> " +
+    "plain L2 with the same total mass costs " + f4(l2.at[0]) + ", the same diagonal computed in a " +
+    "rotated basis costs " + f4(rt.at[0]) + ", and averaged over the four budgets <strong>" +
+    f2(fr.lost * 100) + "%</strong> of EWC's advantage over a shapeless penalty is destroyed by " +
+    "writing the same model down differently. The empirical Fisher is worth <strong>" +
+    f2(100 * (em.at[0] - e.at[0]) / e.at[0]) + "%</strong>. The nulls are clearly worse &mdash; " +
+    "shuffling the Fisher's values between parameters costs " + f4(sh.at[0]) + " and weight " +
+    "magnitude " + f4(mg.at[0]) + " &mdash; so the numbers matter, not just the mass. " +
+    "<strong>Move the seed slider:</strong> the ranking is not stable, and at two of the six seeds " +
+    "a null takes the tightest budget.";
+}
+
+// ---------------------------------------------------------------- the self-check
+function runChecks(){
+  var r = selfCheck(B);
+  var bad = r.lines.length;
+  $("selftest").innerHTML =
+    (bad ? "<span class='bad'>" + bad + " FAILING</span> of " + r.total + " checks\n\n" +
+           r.lines.join("\n") + "\n\n"
+         : "<span class='ok'>" + r.pass + " / " + r.total + " checks passed</span>\n\n") +
+    ("the input space is enumerated and both teachers are representable, so each scores exactly\n" +
+     "zero on its own task and the floor is a construction; at full overlap the two tasks are the\n" +
+     "same function to the bit. Forward-mode duals reproduce the loss bit for bit and beat a\n" +
+     "central difference against the same backward pass, for the network and for its linear twin.\n" +
+     "The Fisher agrees with the Gauss-Newton form and with minus the Hessian of the loss whose\n" +
+     "labels are the model's own; the Hessian is symmetric across independently seeded columns and\n" +
+     "affine in the target; the Fisher and the curvature agree exactly on the last layer and not\n" +
+     "below it; the two Fishers are bit-identical at a model that has learned the task. Adding the\n" +
+     "same number to every class bias changes nothing and is charged nothing. The generalised\n" +
+     "eigenvalue is at least 1 and equals the ratio of the two quadratic forms it claims to. What\n" +
+     "the Fisher leaves behind is the quadratic gap plus the curvature's own leftover, by the\n" +
+     "triangle inequality, at a step found by search rather than picked. An unbounded penalty does\n" +
+     "not move the weights at all. Every invariance is bounded by what a 1e-13 nudge does to the\n" +
+     "same run, and the diagonal penalty is not invariant while the full matrix is." +
+     (FRONT ? "" : "\n\n(the frontier assertions run once the penalty strength has been swept)"));
+}
+
+// ---------------------------------------------------------------- wiring
+$("runSweep").addEventListener("click", function(){
+  var btn = this;
+  btn.disabled = true;
+  $("sweepStatus").textContent = "sweeping the penalty strength2026";
+  setTimeout(function(){
+    var t0 = new Date().getTime();
+    FRONT = frontier(B, LAMS);
+    B.front = FRONT;
+    renderFront();
+    $("sweepStatus").textContent = "done in " + ((new Date().getTime() - t0) / 1000).toFixed(1) + "s";
+    btn.disabled = false;
+    runChecks();
+  }, 30);
+});
+
+function recompute(){
+  $("mainStatus").textContent = "enumerating the input space2026";
+  setTimeout(function(){
+    var t0 = new Date().getTime();
+    B = runAll(opts());
+    FRONT = null;
+    $("front").innerHTML = "";
+    $("frontSVG").innerHTML = "";
+    $("frontNote").innerHTML = "";
+    $("sweepStatus").textContent = "not run yet for these settings";
+    $("mainStatus").textContent = "rendering2026";
+    setTimeout(function(){
+      renderAll();
+      $("mainStatus").textContent = "rebuilt in " +
+        ((new Date().getTime() - t0) / 1000).toFixed(1) + "s";
+      runChecks();
+    }, 20);
+  }, 20);
+}
+
+["sH", "sO", "sT", "sM", "sL", "sS"].forEach(function(id){
+  $(id).addEventListener("input", function(){
+    showOpts();
+    $("mainStatus").textContent = "release to recompute";
+  });
+  $(id).addEventListener("change", recompute);
+});
+
+var tabs = $("tabs").querySelectorAll("button");
+for (var ti = 0; ti < tabs.length; ti++){
+  tabs[ti].addEventListener("click", function(){
+    var name = this.getAttribute("data-tab");
+    for (var k = 0; k < tabs.length; k++) tabs[k].className = tabs[k] === this ? "tab-active" : "";
+    ["look", "understand", "build"].forEach(function(s){
+      $(s).className = (s === "look" ? "panel" : "panel light") + (s === name ? "" : " hidden");
+    });
+    window.scrollTo(0, 0);
+  });
+}
+
+showOpts();
+recompute();
+</script>
+</body>
+</html>

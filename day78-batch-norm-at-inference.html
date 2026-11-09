@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero &middot; Day 78 &mdash; Batch norm at inference</title>
+<style>
+  :root { --ink:#0f172a; --sub:#475569; --line:#e2e8f0; --bg:#f8fafc; --accent:#4338ca; }
+  * { box-sizing:border-box; }
+  body { font-family:-apple-system,"Inter",system-ui,sans-serif; margin:0; background:var(--bg); color:var(--ink); }
+  .wrap { max-width:1152px; margin:0 auto; padding:16px; }
+  @media (min-width:768px){ .wrap { padding:24px; } }
+  header { background:#fff; border-bottom:1px solid var(--line); position:sticky; top:0; z-index:20; }
+  .kicker { font-size:12px; font-weight:800; letter-spacing:.16em; color:var(--accent); margin:0 0 8px; }
+  h1 { font-size:19px; line-height:1.5; font-weight:900; margin:0 0 12px; }
+  @media (min-width:768px){ h1 { font-size:22px; } }
+  h2 { font-size:24px; font-weight:900; margin:0 0 8px; }
+  h3 { font-size:19px; font-weight:800; margin:20px 0 6px; }
+  p { line-height:1.6; margin:0 0 12px; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; }
+  .tabs button { font:inherit; font-size:14px; font-weight:600; padding:8px 20px; border:0; border-radius:8px; background:#f1f5f9; cursor:pointer; }
+  .tabs button.tab-active { background:#0f172a; color:#fff; }
+  .hidden { display:none; }
+  .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(15,23,42,.12); padding:20px; min-width:0; }
+  .stack > * + * { margin-top:20px; }
+  .grid2 { display:grid; gap:20px; grid-template-columns:minmax(0,1fr); }
+  .grid3 { display:grid; gap:16px; grid-template-columns:minmax(0,1fr); }
+  .grid4 { display:grid; gap:16px; grid-template-columns:minmax(0,1fr); }
+  @media (min-width:900px){ .grid2 { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } }
+  @media (min-width:768px){ .grid3 { grid-template-columns:repeat(3,minmax(0,1fr)); }
+                            .grid4 { grid-template-columns:repeat(4,minmax(0,1fr)); } }
+  .lbl { font-size:12px; font-weight:800; letter-spacing:.1em; color:#64748b; margin:0 0 8px; }
+  .big { font-size:24px; font-weight:900; font-variant-numeric:tabular-nums; margin:0; }
+  .note { font-size:12.5px; color:#475569; margin:8px 0 0; line-height:1.55; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:11.5px; overflow-x:auto; line-height:1.35; margin:0; white-space:pre; }
+  code { background:#f1f5f9; padding:1px 4px; border-radius:4px; font-size:.92em; }
+  .tblwrap { overflow-x:auto; }
+  table.num { border-collapse:collapse; width:100%; min-width:520px; }
+  table.num td, table.num th { padding:4px 9px; font-variant-numeric:tabular-nums; }
+  table.num th { font-size:11px; letter-spacing:.05em; color:#64748b; text-align:right; font-weight:700; }
+  table.num th:first-child, table.num td:first-child { text-align:left; }
+  table.num td { text-align:right; font-size:12.5px; border-top:1px solid var(--line); }
+  table.num tr.here td { background:#eef2ff; font-weight:700; }
+  table.num tr.dim td { color:#94a3b8; }
+  table.num td.txt { text-align:left; font-size:11.5px; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:99px; font-size:11px; font-weight:800; }
+  .good { background:#dcfce7; color:#166534; }
+  .stop { background:#fef3c7; color:#92400e; }
+  .bad { background:#fee2e2; color:#991b1b; }
+  .ok { color:#166534; font-weight:800; }
+  .warn { color:#991b1b; font-weight:800; }
+  select, input[type=range], input[type=text] { border:1px solid #cbd5e1; border-radius:8px; padding:7px 10px; font:inherit; font-size:13px; width:100%; margin-top:4px; background:#fff; }
+  input[type=range] { padding:0; }
+  label.f { font-size:13px; display:block; }
+  .callout { background:#eef2ff; border-left:4px solid var(--accent); padding:14px; border-radius:0 8px 8px 0; }
+  .callout p { font-size:13.5px; margin:0; }
+  a { color:var(--accent); }
+  .prose { max-width:760px; margin:0 auto; }
+  .bar { display:block; height:9px; background:#e0e7ff; border-radius:3px; position:relative; min-width:110px; }
+  .bar i { position:absolute; top:0; left:0; height:9px; background:var(--accent); border-radius:3px; }
+  .sc { font-size:12.5px; line-height:1.6; }
+  .sc div { display:flex; gap:8px; align-items:baseline; }
+  .sc .m { color:#94a3b8; font-variant-numeric:tabular-nums; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="kicker">DEEPLEARNINGFROMZERO &middot; DAY 78</p>
+    <h1>
+      &#129518; Batch norm at inference &mdash; in training the layer normalises each row with the
+      statistics of the batch it happens to be in; at inference there is no batch, so it uses a running
+      average collected during training. <strong>Those are two different functions, and the layer swaps
+      one for the other silently.</strong> Every score here is a real forward pass over an
+      <strong>enumerated 512-row population</strong>, so the errors are exact means rather than
+      estimates. &#128308; <strong>Same input, same weights, two answers</strong>: train mode and eval
+      mode differ by an RMSE of <strong>0.3219</strong>, and the running estimate of the variance is off
+      by as much as <strong>5.36</strong> on one feature. &#128308; <strong>Raising the batch size makes
+      inference WORSE.</strong> The gap between the running statistics and the true population
+      statistics is <strong>0.1036</strong> at a batch of 8 and <strong>1.3771</strong> at 256 &mdash;
+      13&times; worse &mdash; because momentum needs many updates and a big batch gives it two. The knob
+      that makes training more stable makes the thing training hands to production less accurate.
+      &#128308; And all four properties a batch-norm test can assert without a second implementation
+      hold in <em>both</em> cases, including on sorted data where the train/eval divergence
+      <strong>doubles</strong> to 0.6648.
+    </h1>
+
+    <div class="tabs">
+      <button id="tabLook" class="tab-active" onclick="showTab('look')">&#128065; LOOK</button>
+      <button id="tabUnd" onclick="showTab('und')">&#129504; UNDERSTAND</button>
+      <button id="tabBuild" onclick="showTab('build')">&#128296; BUILD</button>
+    </div>
+  </div>
+</header>
+
+<main id="look" class="wrap stack">
+  <div class="callout">
+    <p>
+      <strong>No sampling anywhere.</strong> The input set is a fixed, enumerated population of 512 rows,
+      so &ldquo;the error at inference&rdquo; is the exact mean over every row rather than an estimate
+      from a test split. The oracle &mdash; what the layer would do if it knew the population statistics
+      &mdash; is computable for the same reason.
+    </p>
+  </div>
+
+  <div class="grid4">
+    <div class="card"><p class="lbl">TRAIN vs EVAL, SAME INPUT</p><p class="big warn" id="kTE">&mdash;</p>
+      <p class="note">RMSE, identical weights</p></div>
+    <div class="card"><p class="lbl">RUNNING STATS vs TRUTH</p><p class="big" id="kEO">&mdash;</p>
+      <p class="note">eval against the oracle</p></div>
+    <div class="card"><p class="lbl">WORST RUNNING-VARIANCE ERROR</p><p class="big warn" id="kVar">&mdash;</p>
+      <p class="note">on a single feature</p></div>
+    <div class="card"><p class="lbl">PROPERTIES THAT PASS</p><p class="big ok" id="kProps">&mdash;</p>
+      <p class="note">of four, in every configuration</p></div>
+  </div>
+
+  <div class="card">
+    <h2>Turn the two knobs</h2>
+    <div class="grid2" style="margin:12px 0">
+      <label class="f">Batch size: <b id="bv">32</b>
+        <input type="range" id="bs" min="0" max="7" value="4" />
+      </label>
+      <label class="f">Momentum: <b id="mv">0.90</b>
+        <input type="range" id="mo" min="0" max="5" value="4" />
+      </label>
+    </div>
+    <div class="tblwrap"><table class="num" id="tNow"></table></div>
+    <p class="note" id="nowNote"></p>
+  </div>
+</main>
+
+<main id="und" class="wrap stack hidden">
+  <div class="card">
+    <h3 style="margin-top:0">1. Bigger batches, worse inference</h3>
+    <p>
+      The intuition is that a larger batch gives a better estimate of the mean and variance, so the
+      running average should be better too. The first half is true. The second does not follow, because
+      the running average is an exponential moving average over <em>updates</em>, and a bigger batch
+      means fewer of them.
+    </p>
+    <div class="tblwrap"><table class="num" id="tBatch"></table></div>
+    <p class="note">
+      &#128308; The best setting for the inference statistics is a <strong>batch of 8</strong>, not the
+      largest available. At 256 there are only two updates in the whole pass and the running estimate
+      never leaves its initialisation, giving <strong>13&times;</strong> the error. Two things move in
+      opposite directions as the batch grows &mdash; each batch's statistics get more accurate, and the
+      number of times that accuracy is folded in gets smaller &mdash; and the second wins.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">2. Momentum is not a smoothing preference</h3>
+    <p>
+      It is the other half of the same arithmetic. With <em>m</em> momentum and <em>k</em> updates, the
+      initial value still carries weight <em>m<sup>k</sup></em> &mdash; and at a batch of 256, <em>k</em>
+      is 2.
+    </p>
+    <div class="tblwrap"><table class="num" id="tMom"></table></div>
+    <p class="note">
+      The pairing matters more than either number: a high momentum with few updates leaves the running
+      variance sitting near its initial value of 1, which is why the worst per-feature variance error
+      reaches <strong>5.36</strong> on features whose real variance is nowhere near 1.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">3. The properties hold either way</h3>
+    <p>
+      Here is everything a batch-norm implementation can assert about itself without a second
+      implementation to compare against, checked on shuffled data and on data sorted by its first
+      feature &mdash; which is what you get whenever rows arrive grouped by class, by user or by time.
+    </p>
+    <div class="tblwrap"><table class="num" id="tProps"></table></div>
+    <p class="note">
+      <strong>All four pass in both.</strong> Meanwhile the train/eval divergence goes from
+      <strong>0.3219</strong> to <strong>0.6648</strong> &mdash; it doubles &mdash; because sorted
+      batches are not exchangeable, so each batch's statistics describe its own slice of the data and
+      not the data. Nothing in the four properties mentions the order of the rows, and the layer has no
+      way to notice.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">What this is and is not</h3>
+    <p class="note" style="margin-top:0">
+      This is one batch-norm layer with fixed gamma and beta over a single pass. It is <strong>not</strong>
+      a trained network: there is no optimiser and no backward pass, because the finding does not need
+      one &mdash; the divergence between train mode and eval mode is a property of the normalisation
+      arithmetic, not of learning. What that leaves out is real: in a trained network the following
+      layers adapt to whatever the normaliser hands them, which can absorb some of this and can also
+      compound it. The claim here is about the layer.
+    </p>
+  </div>
+</main>
+
+<main id="build" class="wrap stack hidden">
+  <div class="card prose">
+    <h2>How it works</h2>
+    <pre>// training: the batch it happens to be in
+const { mean, varr } = batchStats(batch);
+out = gamma * (x - mean) / sqrt(varr + eps) + beta;
+
+// inference: one fixed affine map, from an average over UPDATES
+runMean = m * runMean + (1 - m) * mean;   // k updates, not k rows
+out = gamma * (x - runMean) / sqrt(runVar + eps) + beta;</pre>
+    <p class="note">
+      The running variance uses the unbiased correction while the batch normalisation itself uses the
+      biased one, which is what the reference implementations do &mdash; another small way the two paths
+      are not the same function.
+    </p>
+    <h3>Self-check</h3>
+    <p class="note">Runs on load. Several are <strong>controls</strong>.</p>
+    <div class="sc" id="selfcheck"></div>
+    <p style="margin-top:20px"><a href="../deeplearningfromzero.php">&larr; DeepLearningFromZero</a></p>
+  </div>
+</main>
+
+<script>
+// ===== ENGINE:BEGIN =====
+// ---------------------------------------------------------------------------
+// Batch normalisation at inference. In training it normalises with the
+// statistics of the batch it is in. At inference there is no batch, so it uses
+// a running average collected during training. Those are two different
+// functions, and the layer swaps one for the other silently.
+//
+// Everything is a real forward pass over an enumerated input set - no sampling
+// of test points, so the reported error is the exact mean over the whole input
+// space rather than an estimate of it.
+//
+// DOM-free, clock-free, Math.random-free (seeded Park-Miller stands in).
+// ---------------------------------------------------------------------------
+
+class Rng {
+  constructor(seed = 78) { this.s = seed % 2147483647 || 1; }
+  next() { this.s = (this.s * 48271) % 2147483647; return this.s; }
+  unit() { return (this.next() - 1) / 2147483645; }
+  normal() {
+    const u = Math.max(this.unit(), 1e-12), v = this.unit();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+  below(n) { return Math.floor((this.next() * n) / 2147483648); }
+}
+
+const EPS = 1e-5;
+
+// ------------------------------------------------------------- the input set
+// A finite, enumerated population. Every score below is a mean over ALL of it.
+function makePopulation(rng, n, d) {
+  const X = [];
+  for (let i = 0; i < n; i++) {
+    const row = [];
+    // deliberately non-identical feature scales, which is why a normaliser is
+    // there in the first place
+    for (let j = 0; j < d; j++) row.push(rng.normal() * (0.5 + j) + (j % 3));
+    X.push(row);
+  }
+  return X;
+}
+
+// ------------------------------------------------------------ the layer
+function batchStats(batch) {
+  const d = batch[0].length, n = batch.length;
+  const mean = new Array(d).fill(0), varr = new Array(d).fill(0);
+  for (const r of batch) for (let j = 0; j < d; j++) mean[j] += r[j] / n;
+  for (const r of batch) for (let j = 0; j < d; j++) varr[j] += (r[j] - mean[j]) ** 2 / n;
+  return { mean, varr };
+}
+
+function bnApply(row, mean, varr, gamma, beta) {
+  return row.map((v, j) => gamma[j] * ((v - mean[j]) / Math.sqrt(varr[j] + EPS)) + beta[j]);
+}
+
+// Training: normalise each row with the statistics of ITS OWN batch, and
+// accumulate a running estimate with momentum.
+function trainPass(X, batchSize, momentum, gamma, beta) {
+  const d = X[0].length;
+  let runMean = new Array(d).fill(0);
+  let runVar = new Array(d).fill(1);
+  const outputs = [];
+  for (let s = 0; s < X.length; s += batchSize) {
+    const batch = X.slice(s, s + batchSize);
+    if (!batch.length) continue;
+    const { mean, varr } = batchStats(batch);
+    for (const row of batch) outputs.push(bnApply(row, mean, varr, gamma, beta));
+    for (let j = 0; j < d; j++) {
+      runMean[j] = momentum * runMean[j] + (1 - momentum) * mean[j];
+      // the unbiased correction torch applies to the RUNNING variance only
+      const nb = batch.length;
+      const unbiased = nb > 1 ? (varr[j] * nb) / (nb - 1) : varr[j];
+      runVar[j] = momentum * runVar[j] + (1 - momentum) * unbiased;
+    }
+  }
+  return { outputs, runMean, runVar };
+}
+
+// Inference: one fixed affine map, the same for every row.
+function evalPass(X, runMean, runVar, gamma, beta) {
+  return X.map((row) => bnApply(row, runMean, runVar, gamma, beta));
+}
+
+// The oracle: what the layer WOULD do if it used the population statistics -
+// the thing the running average is trying to estimate.
+function oraclePass(X, gamma, beta) {
+  const { mean, varr } = batchStats(X);
+  return { out: X.map((row) => bnApply(row, mean, varr, gamma, beta)), mean, varr };
+}
+
+function rmse(A, B) {
+  let s = 0, n = 0;
+  for (let i = 0; i < A.length; i++) for (let j = 0; j < A[i].length; j++) { s += (A[i][j] - B[i][j]) ** 2; n++; }
+  return Math.sqrt(s / n);
+}
+
+// ---------------------------------------------------------------------------
+// The measurements
+// ---------------------------------------------------------------------------
+function run(opts) {
+  const { n = 512, d = 6, batchSize = 32, momentum = 0.9, seed = 78, shuffled = true } = opts;
+  const rng = new Rng(seed);
+  let X = makePopulation(rng, n, d);
+  if (!shuffled) {
+    // sorted by the first feature: batches are no longer exchangeable, which is
+    // what happens whenever data arrives grouped by class, by user, or by time
+    X = X.slice().sort((a, b) => a[0] - b[0]);
+  }
+  const gamma = Array.from({ length: d }, (_, j) => 1 + 0.1 * j);
+  const beta = Array.from({ length: d }, (_, j) => 0.05 * j);
+
+  const tr = trainPass(X, batchSize, momentum, gamma, beta);
+  const ev = evalPass(X, tr.runMean, tr.runVar, gamma, beta);
+  const or = oraclePass(X, gamma, beta);
+
+  return {
+    X, gamma, beta, ...tr,
+    evalOut: ev,
+    oracleOut: or.out,
+    popMean: or.mean,
+    popVar: or.varr,
+    // the same input, the same weights, two different answers
+    trainVsEval: rmse(tr.outputs, ev),
+    evalVsOracle: rmse(ev, or.out),
+    trainVsOracle: rmse(tr.outputs, or.out),
+    meanErr: tr.runMean.map((m, j) => Math.abs(m - or.mean[j])),
+    varErr: tr.runVar.map((v, j) => Math.abs(v - or.varr[j])),
+    batches: Math.ceil(X.length / batchSize),
+  };
+}
+
+// How the gap depends on the two knobs people actually turn.
+function sweepBatch(sizes, opts) {
+  return sizes.map((b) => ({ batchSize: b, ...run({ ...opts, batchSize: b }) }));
+}
+function sweepMomentum(ms, opts) {
+  return ms.map((m) => ({ momentum: m, ...run({ ...opts, momentum: m }) }));
+}
+
+// The property that a batch-norm test can actually assert without a second
+// implementation to compare against.
+function properties(r) {
+  const d = r.X[0].length;
+  const st = batchStats(r.trainOutputs || r.outputs);
+  return [
+    {
+      key: "zero-mean",
+      label: "training output has mean ~beta per feature",
+      holds: st.mean.every((m, j) => Math.abs(m - r.beta[j]) < 1e-6),
+    },
+    {
+      key: "unit-var",
+      label: "training output has variance ~gamma^2 per feature",
+      holds: st.varr.every((v, j) => Math.abs(Math.sqrt(v) - Math.abs(r.gamma[j])) < 0.05),
+    },
+    {
+      key: "deterministic",
+      label: "eval mode gives the same answer twice",
+      holds: rmse(evalPass(r.X, r.runMean, r.runVar, r.gamma, r.beta),
+                  evalPass(r.X, r.runMean, r.runVar, r.gamma, r.beta)) === 0,
+    },
+    {
+      key: "shape",
+      label: "the output has the same shape as the input",
+      holds: r.evalOut.length === r.X.length && r.evalOut.every((row) => row.length === d),
+    },
+  ];
+}
+
+const ENGINE = {
+  Rng, EPS, makePopulation, batchStats, bnApply, trainPass, evalPass, oraclePass,
+  rmse, run, sweepBatch, sweepMomentum, properties,
+};
+if (typeof module !== "undefined" && module.exports) module.exports = ENGINE;
+
+// ===== ENGINE:END =====
+</script>
+
+<script>
+function showTab(name) {
+  for (const t of ["look", "und", "build"]) document.getElementById(t).classList.toggle("hidden", t !== name);
+  document.getElementById("tabLook").classList.toggle("tab-active", name === "look");
+  document.getElementById("tabUnd").classList.toggle("tab-active", name === "und");
+  document.getElementById("tabBuild").classList.toggle("tab-active", name === "build");
+}
+const el = (id) => document.getElementById(id);
+function table(id, head, rows) {
+  el(id).innerHTML =
+    "<tr>" + head.map((h) => "<th>" + h + "</th>").join("") + "</tr>" +
+    rows.map((r) => "<tr" + (r.cls ? ' class="' + r.cls + '"' : "") + ">" +
+      r.cells.map((c, i) => "<td" + (i === 0 ? ' class="txt"' : "") + ">" + c + "</td>").join("") + "</tr>").join("");
+}
+function selfCheckPanel(fn) {
+  const out = []; let n = 0, bad = 0;
+  const t = (label, cond, detail = "") => {
+    n += 1; if (!cond) bad += 1;
+    out.push('<div><span class="' + (cond ? "ok" : "warn") + '">' + (cond ? "PASS" : "FAIL") +
+      '</span><span>' + label + '</span><span class="m">' + detail + "</span></div>");
+  };
+  fn(t);
+  el("selfcheck").innerHTML =
+    '<p class="note" style="margin:0 0 8px"><b class="' + (bad ? "warn" : "ok") + '">' +
+    (n - bad) + " of " + n + " checks pass</b>" + (bad ? " &mdash; " + bad + " FAILED" : "") + ".</p>" + out.join("");
+}
+
+const SIZES = [2, 4, 8, 16, 32, 64, 128, 256];
+const MOMS = [0.5, 0.7, 0.8, 0.9, 0.95, 0.99];
+const f4 = (x) => x.toFixed(4);
+
+const BATCH = ENGINE.sweepBatch(SIZES, { shuffled: true });
+const MOM = ENGINE.sweepMomentum(MOMS, { shuffled: true, batchSize: 32 });
+const SHUF = ENGINE.run({ shuffled: true });
+const SORT = ENGINE.run({ shuffled: false });
+
+el("kTE").textContent = f4(SHUF.trainVsEval);
+el("kEO").textContent = f4(SHUF.evalVsOracle);
+el("kVar").textContent = f4(Math.max(...SHUF.varErr));
+el("kProps").textContent = ENGINE.properties(SHUF).filter((p) => p.holds).length + " / 4";
+
+function renderNow() {
+  const bs = SIZES[parseInt(el("bs").value, 10)];
+  const mo = MOMS[parseInt(el("mo").value, 10)];
+  el("bv").textContent = bs;
+  el("mv").textContent = mo.toFixed(2);
+  const r = ENGINE.run({ batchSize: bs, momentum: mo, shuffled: true });
+  table("tNow", ["", "value", "what it means"], [
+    { cls: "here", cells: ["train mode vs eval mode", "<b>" + f4(r.trainVsEval) + "</b>", "the same input and weights, two different outputs"] },
+    { cells: ["eval vs the population oracle", f4(r.evalVsOracle), "how wrong the running statistics are"] },
+    { cells: ["worst running-mean error", f4(Math.max(...r.meanErr)), "on a single feature"] },
+    { cells: ["worst running-variance error", "<b>" + f4(Math.max(...r.varErr)) + "</b>", "on a single feature"] },
+    { cells: ["updates the running average got", r.batches, "not rows - UPDATES"] },
+  ]);
+  const best = BATCH.reduce((a, b) => (b.evalVsOracle < a.evalVsOracle ? b : a));
+  el("nowNote").innerHTML = "The running average was folded in <b>" + r.batches + "</b> times. " +
+    (r.batches < 6
+      ? "That is not enough for momentum " + mo.toFixed(2) + " to move it off its initial value &mdash; the initialisation still carries weight " + Math.pow(mo, r.batches).toFixed(3) + "."
+      : "Best inference statistics on this sweep come from a batch of <b>" + best.batchSize + "</b>, not the largest.");
+}
+renderNow();
+el("bs").addEventListener("input", renderNow);
+el("mo").addEventListener("input", renderNow);
+
+const bestB = BATCH.reduce((a, b) => (b.evalVsOracle < a.evalVsOracle ? b : a));
+table("tBatch", ["batch size", "updates", "train vs eval", "eval vs the oracle", ""],
+  BATCH.map((r) => ({
+    cls: r.batchSize === bestB.batchSize ? "here" : r.batchSize === 256 ? "dim" : "",
+    cells: [r.batchSize, r.batches, f4(r.trainVsEval), "<b>" + f4(r.evalVsOracle) + "</b>",
+      r.batchSize === bestB.batchSize ? '<span class="pill good">BEST</span>'
+        : r.evalVsOracle > bestB.evalVsOracle * 5 ? '<span class="pill bad">' + (r.evalVsOracle / bestB.evalVsOracle).toFixed(1) + "x worse</span>" : ""],
+  })));
+
+table("tMom", ["momentum", "weight still on the initial value", "eval vs the oracle", "worst variance error"],
+  MOM.map((r) => ({
+    cells: [r.momentum.toFixed(2), Math.pow(r.momentum, r.batches).toExponential(2),
+      f4(r.evalVsOracle), f4(Math.max(...r.varErr))],
+  })));
+
+const pShuf = ENGINE.properties(SHUF), pSort = ENGINE.properties(SORT);
+table("tProps", ["property a test can assert", "on shuffled data", "on sorted data"],
+  pShuf.map((p, i) => ({
+    cells: [p.label,
+      p.holds ? '<span class="ok">holds</span>' : '<span class="warn">fails</span>',
+      pSort[i].holds ? '<span class="ok">holds</span>' : '<span class="warn">fails</span>'],
+  })).concat([{
+    cls: "here",
+    cells: ["<b>train/eval divergence (not a property any suite asserts)</b>",
+      "<b>" + f4(SHUF.trainVsEval) + "</b>", '<b class="warn">' + f4(SORT.trainVsEval) + "</b>"],
+  }]));
+
+selfCheckPanel((t) => {
+  t("the generator reproduces from a seed", (() => {
+    const a = new ENGINE.Rng(3), b = new ENGINE.Rng(3);
+    for (let i = 0; i < 100; i++) if (a.next() !== b.next()) return false;
+    return true;
+  })());
+  t("normalising a batch gives it mean beta", (() => {
+    const st = ENGINE.batchStats(SHUF.outputs);
+    return st.mean.every((m, j) => Math.abs(m - SHUF.beta[j]) < 1e-6);
+  })());
+  t("eval mode is deterministic",
+    ENGINE.rmse(ENGINE.evalPass(SHUF.X, SHUF.runMean, SHUF.runVar, SHUF.gamma, SHUF.beta),
+                ENGINE.evalPass(SHUF.X, SHUF.runMean, SHUF.runVar, SHUF.gamma, SHUF.beta)) === 0);
+  t("train mode and eval mode DISAGREE on the same input",
+    SHUF.trainVsEval > 0.1, f4(SHUF.trainVsEval));
+  t("CONTROL: the oracle and eval agree when the statistics are right", (() => {
+    const r = ENGINE.run({ batchSize: 8, momentum: 0.5 });
+    return r.evalVsOracle < r.trainVsEval;
+  })());
+
+  t("a batch of 8 beats a batch of 256 at inference",
+    BATCH.find((r) => r.batchSize === 8).evalVsOracle < BATCH.find((r) => r.batchSize === 256).evalVsOracle);
+  t("...by more than ten times", (() => {
+    const a = BATCH.find((r) => r.batchSize === 8).evalVsOracle;
+    const b = BATCH.find((r) => r.batchSize === 256).evalVsOracle;
+    return b / a > 10;
+  })(), (BATCH.find((r) => r.batchSize === 256).evalVsOracle / BATCH.find((r) => r.batchSize === 8).evalVsOracle).toFixed(1) + "x");
+  t("the best batch size is not the largest", bestB.batchSize !== 256);
+  t("CONTROL: bigger batches DO give better per-batch statistics", (() => {
+    const small = ENGINE.batchStats(SHUF.X.slice(0, 4));
+    const big = ENGINE.batchStats(SHUF.X.slice(0, 256));
+    const pop = ENGINE.batchStats(SHUF.X);
+    const errS = Math.abs(small.mean[0] - pop.mean[0]);
+    const errB = Math.abs(big.mean[0] - pop.mean[0]);
+    return errB < errS;
+  })(), "so the loss is in the number of updates, not the estimates");
+
+  t("all four properties hold on shuffled data", pShuf.every((p) => p.holds));
+  t("all four properties hold on SORTED data too", pSort.every((p) => p.holds));
+  t("...while the train/eval divergence doubles",
+    SORT.trainVsEval > SHUF.trainVsEval * 1.5,
+    f4(SHUF.trainVsEval) + " -> " + f4(SORT.trainVsEval));
+  t("the running variance can be off by more than 5 on a feature",
+    Math.max(...SHUF.varErr) > 5, f4(Math.max(...SHUF.varErr)));
+  t("the population is 512 rows, enumerated", SHUF.X.length === 512);
+});
+
+</script>
+</body>
+</html>

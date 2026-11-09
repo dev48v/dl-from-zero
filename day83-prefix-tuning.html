@@ -1,0 +1,1536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DLFromZero &middot; Day 83 &mdash; Prefix Tuning (Soft Prompts)</title>
+<style>
+  :root { --ink:#0f172a; --sub:#475569; --line:#e2e8f0; --bg:#f8fafc; --accent:#be123c; }
+  * { box-sizing:border-box; }
+  body { font-family:-apple-system,"Inter",system-ui,sans-serif; margin:0; background:var(--bg); color:var(--ink); }
+  .wrap { max-width:1152px; margin:0 auto; padding:16px; }
+  @media (min-width:768px){ .wrap { padding:24px; } }
+  header { background:#fff; border-bottom:1px solid var(--line); position:sticky; top:0; z-index:20; }
+  .kicker { font-size:12px; font-weight:800; letter-spacing:.16em; color:var(--accent); margin:0 0 8px; }
+  h1 { font-size:19px; line-height:1.5; font-weight:900; margin:0 0 12px; }
+  @media (min-width:768px){ h1 { font-size:22px; } }
+  h2 { font-size:24px; font-weight:900; margin:0 0 8px; }
+  h3 { font-size:19px; font-weight:800; margin:20px 0 6px; }
+  p { line-height:1.6; margin:0 0 12px; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; }
+  .tabs button { font:inherit; font-size:14px; font-weight:600; padding:8px 20px; border:0; border-radius:8px; background:#f1f5f9; cursor:pointer; }
+  .tabs button.tab-active { background:#0f172a; color:#fff; }
+  .hidden { display:none; }
+  .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(15,23,42,.12); padding:20px; min-width:0; }
+  .stack > * + * { margin-top:20px; }
+  .grid2 { display:grid; gap:20px; grid-template-columns:minmax(0,1fr); }
+  @media (min-width:900px){ .grid2 { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } }
+  .lbl { font-size:12px; font-weight:800; letter-spacing:.1em; color:#64748b; margin:0 0 8px; }
+  .big { font-size:24px; font-weight:900; font-variant-numeric:tabular-nums; margin:0; }
+  .note { font-size:12.5px; color:#475569; margin:8px 0 0; line-height:1.55; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:11.5px; overflow-x:auto; line-height:1.35; margin:0; white-space:pre; }
+  code { background:#f1f5f9; padding:1px 4px; border-radius:4px; font-size:.92em; }
+  .tblwrap { overflow-x:auto; }
+  table.num { border-collapse:collapse; width:100%; min-width:560px; }
+  table.num td, table.num th { padding:4px 9px; font-variant-numeric:tabular-nums; }
+  table.num th { font-size:11px; letter-spacing:.05em; color:#64748b; text-align:right; font-weight:700; }
+  table.num th:first-child, table.num td:first-child { text-align:left; }
+  table.num td { text-align:right; font-size:12.5px; border-top:1px solid var(--line); }
+  table.num td.txt { text-align:left; }
+  tr.here td { background:#f0fdfa; font-weight:700; }
+  tr.dim td { color:#94a3b8; }
+  .pill { display:inline-block; padding:1px 7px; border-radius:999px; font-size:11px; font-weight:800; }
+  .pill.good { background:#dcfce7; color:#166534; }
+  .pill.bad { background:#fee2e2; color:#991b1b; }
+  .ok { color:#166534; font-weight:800; }
+  .warn { color:#991b1b; font-weight:800; }
+  #selftest div { display:grid; grid-template-columns:52px 1fr; gap:8px; font-size:12.5px; padding:3px 0; border-top:1px solid var(--line); align-items:start; }
+  #selftest div span.m { grid-column:2; font-size:11.5px; color:#64748b; }
+  .ctl { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 12px; }
+  .ctl input[type=range] { flex:1; min-width:150px; }
+  .ctl input[type=number] { width:74px; font:inherit; padding:5px 7px; border:1px solid var(--line); border-radius:7px; }
+  .step { border-left:3px solid var(--accent); padding-left:14px; margin:0 0 4px; }
+  .stepn { font-size:11px; font-weight:800; letter-spacing:.14em; color:var(--accent); margin:0 0 4px; }
+  footer { border-top:1px solid var(--line); margin-top:28px; padding:18px 0 40px; font-size:13px; color:#475569; }
+  footer a { color:var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="kicker">DLFROMZERO &middot; DAY 83</p>
+    <h1>
+      Prefix Tuning (Soft Prompts) &mdash; LoRA edits a weight matrix; prefix tuning
+      edits <i>nothing</i>, and steers a frozen model entirely from P extra key/value
+      rows the attention softmax is forced to look at.
+    </h1>
+    <div class="tabs">
+      <button id="tabUnd" class="tab-active" onclick="showTab('und')">Understand</button>
+      <button id="tabBuild" onclick="showTab('build')">Build</button>
+      <button id="tabDemo" onclick="showTab('demo')">Demo</button>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<section id="und" class="stack">
+  <div class="card">
+    <h2>Two methods, one sentence apart</h2>
+    <p>
+      This series already built <b>LoRA</b>, so the useful thing is not another
+      tour of parameter-efficient tuning &mdash; it is the exact line where the
+      two methods stop agreeing. LoRA computes
+      <code>W<sub>eff</sub> = W + BA</code>: it <b>changes a weight matrix</b> by
+      a low-rank delta, and at inference you can add the delta in and forget it
+      ever existed. Prefix tuning never forms a delta. It leaves every weight
+      bit-for-bit where it was and prepends <code>P</code> learned key rows and
+      <code>P</code> learned value rows to the attention of <b>every</b> layer.
+    </p>
+    <div class="tblwrap"><table class="num" id="tLora"></table></div>
+    <p class="note" id="loraNote"></p>
+  </div>
+
+  <div class="card">
+    <h2>Where the gradient actually stops</h2>
+    <p>
+      Both methods are trained by ordinary backpropagation through the frozen
+      network, so the gradient travels the same road. What differs is where it
+      gets to stop. In LoRA it stops in <code>A</code> and <code>B</code>, which
+      sit <i>inside</i> a weight matrix's product. In prefix tuning it stops in
+      the first <code>P</code> rows of the concatenated <code>K</code> and
+      <code>V</code> &mdash; rows that were never produced by a weight matrix at
+      all, so there is no matrix for the gradient to accumulate into.
+    </p>
+    <pre id="codeConcat"></pre>
+    <p class="note">
+      Those two <code>concat</code> lines are the entire mechanism. Everything
+      else on this page is consequences.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>What that buys you, in numbers</h2>
+    <p>
+      A prefix costs <code>2 &times; L &times; P &times; d</code> numbers:
+      one key row and one value row, of width <code>d</code>, per slot, per
+      layer. Notice what is <b>not</b> in that formula &mdash; the vocabulary,
+      and the feed-forward width, which is where most of a transformer's
+      parameters actually live. So the ratio improves as the model gets fatter.
+    </p>
+    <div class="tblwrap"><table class="num" id="tScale"></table></div>
+    <p class="note" id="scaleNote"></p>
+  </div>
+
+  <div class="card">
+    <h2>Why a <i>soft</i> prompt is not a prompt</h2>
+    <p>
+      People reach for the phrase "learned prompt", and it misleads twice. A
+      real prompt is a sequence of token ids, so it is confined to the
+      embedding points the vocabulary happens to contain, and it enters only at
+      layer 0 &mdash; every later layer sees it second-hand, through whatever
+      the layers below made of it. A prefix is a free vector, anywhere in
+      <code>R<sup>d</sup></code>, and it is injected <b>separately into every
+      layer</b>, with a different learned value each time.
+    </p>
+    <div class="tblwrap"><table class="num" id="tSoft"></table></div>
+    <p class="note" id="softNote"></p>
+  </div>
+</section>
+
+<section id="build" class="stack hidden">
+  <div class="card">
+    <h2>Building it, one idea at a time</h2>
+    <p>
+      Twelve steps, each one concept. Everything below runs in this page &mdash;
+      no framework, no autodiff, no imports. The model is deliberately tiny
+      (<span id="cfgLine"></span>) so every number is checkable by hand.
+    </p>
+  </div>
+  <div class="card">
+    <div class="step">
+      <p class="stepn">STEP 1 OF 12</p>
+      <h3>The frozen base, built once and never written to again</h3>
+    </div>
+    <p>
+      Start with the thing you are not allowed to change. This is an embedding
+      table, two single-head attention blocks with a residual, mean pooling and
+      a classifier head &mdash; a transformer with all the fat trimmed off but
+      none of the shape changed. Every number in it comes from a seeded
+      Gaussian, so the page is the same page on every reload. In real prefix
+      tuning this object is a pretrained model that cost someone a datacentre;
+      here it is a few hundred random numbers, which is enough to make the
+      point. The only property that matters is that from this line onward,
+      nothing writes to it.
+    </p>
+    <pre id="code1"></pre>
+    <p class="note">
+      We go further than politeness: the base is handed to
+      <code>Object.freeze</code>, recursively, before training starts. If any
+      line of the optimiser reached for a weight, it would be reaching for a
+      frozen array.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <p class="stepn">STEP 2 OF 12</p>
+      <h3>Attention has exactly two places you can inject without touching a weight</h3>
+    </div>
+    <p>
+      Inside a block, a token's vector <code>x</code> becomes three things:
+      a query <code>q = x W<sub>q</sub></code>, a key
+      <code>k = x W<sub>k</sub></code> and a value
+      <code>v = x W<sub>v</sub></code>. The query asks a question, the keys
+      answer it with a score, the softmax turns those scores into a mixture,
+      and the values are what actually gets mixed. If you want to change the
+      answer without changing any <code>W</code>, you have two options: add new
+      keys, so there is something new to score against, and add new values, so
+      there is something new to mix in. You cannot add a new query &mdash;
+      queries are per-token, and you are not adding tokens. That asymmetry is
+      why the method is called key/value prefixing and not "prompt tuning".
+    </p>
+    <pre id="code2"></pre>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <p class="stepn">STEP 3 OF 12</p>
+      <h3>The prefix: the only trainable object on this page</h3>
+    </div>
+    <p>
+      It is two three-dimensional tables, <code>K[L][P][d]</code> and
+      <code>V[L][P][d]</code>. Read that as: for each of the <code>L</code>
+      layers, <code>P</code> slots, each slot a vector of width <code>d</code>.
+      They are not embeddings of anything, they are not tied to a vocabulary
+      entry, and nothing produced them &mdash; they are free coordinates,
+      initialised small so that at step zero the prefix barely perturbs the
+      model. <code>P = 0</code> is a legal value and must give the original
+      model back exactly, which is a claim the self-check tests rather than
+      asserts. Everything the training loop learns, it learns into these two
+      tables.
+    </p>
+    <pre id="code3"></pre>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <p class="stepn">STEP 4 OF 12</p>
+      <h3>The forward pass, with two <code>concat</code> lines doing all the work</h3>
+    </div>
+    <p>
+      Compute <code>q</code>, <code>k</code> and <code>v</code> exactly as
+      before, then stick the prefix rows on the front of <code>K</code> and
+      <code>V</code>. Every query now scores against <code>P + T</code>
+      candidates instead of <code>T</code>, and the softmax &mdash; which must
+      sum to one &mdash; has no choice but to spend some of its mass on them.
+      That is the leverage: the prefix does not add a term to the output, it
+      <b>takes mass away</b> from the real tokens and redirects it to vectors
+      you control. Notice what the function does not contain: no addition to
+      any <code>W</code>, no low-rank product, no second copy of a weight
+      matrix. The output is still <code>T</code> rows of width <code>d</code>,
+      whatever <code>P</code> is, which is why you can bolt this onto a
+      pretrained stack without touching a single downstream shape.
+    </p>
+    <pre id="code4"></pre>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <p class="stepn">STEP 5 OF 12</p>
+      <h3>Every layer gets its own prefix, and that is the point</h3>
+    </div>
+    <p>
+      A text prompt enters once, at the bottom, and every layer above sees only
+      what the layers below did to it. A prefix is injected independently into
+      layer 0, layer 1, and so on up &mdash; with different learned vectors
+      each time. So the method can say one thing to the layer that handles
+      surface syntax and a different thing to the layer that handles the task,
+      which no sequence of tokens at the input can do. This is also why the
+      parameter count carries a factor of <code>L</code>: you are not learning
+      a prompt, you are learning <code>L</code> of them.
+    </p>
+    <pre id="code5"></pre>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <p class="stepn">STEP 6 OF 12</p>
+      <h3>A task the frozen model cannot already do</h3>
+    </div>
+    <p>
+      The demonstration is worthless if the base model solves the task by
+      accident, so the task is built to be invisible to it: each sequence is
+      filler tokens with exactly one signal token hidden at a seeded position,
+      and the label is which signal it was. The frozen base has never seen this
+      convention and sits at chance. Mean-pooled logits go through a softmax
+      cross-entropy, which is the standard "how surprised were you by the right
+      answer" loss. If the loss moves, the prefix moved it &mdash; there is
+      nothing else in the system that can.
+    </p>
+    <pre id="code6"></pre>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <p class="stepn">STEP 7 OF 12</p>
+      <h3>Backprop, written out: down to the attention weights</h3>
+    </div>
+    <p>
+      No autodiff here, so the chain rule is spelled out in the order it is
+      walked. The gradient of a softmax cross-entropy at the logits is the
+      famous <code>p &minus; onehot(y)</code>. Mean pooling divides it evenly
+      across the <code>T</code> output rows. The residual
+      <code>y = x + cW<sub>o</sub></code> splits the incoming gradient in two:
+      one copy continues straight down the skip connection, the other goes
+      through <code>W<sub>o</sub></code> into the attention output
+      <code>c</code>. From <code>c = &Sigma;<sub>j</sub> a<sub>j</sub>
+      V<sub>j</sub></code> you get both pieces at once: the value rows each
+      receive <code>a<sub>j</sub></code> of the gradient, and the attention
+      weights each receive the dot product of the gradient with their value.
+    </p>
+    <pre id="code7"></pre>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <p class="stepn">STEP 8 OF 12</p>
+      <h3>The split &mdash; where the gradient stops, and where it carries on</h3>
+    </div>
+    <p>
+      This is the step that distinguishes prefix tuning from every method that
+      edits weights. After the softmax derivative, you hold a gradient for all
+      <code>P + T</code> key rows and all <code>P + T</code> value rows. The
+      first <code>P</code> of each were <b>not computed from anything</b> &mdash;
+      they are the parameters, so their gradient is the answer and the chain
+      ends there. The remaining <code>T</code> were produced by
+      <code>W<sub>k</sub></code> and <code>W<sub>v</sub></code> from the token
+      vectors, so their gradient must keep travelling, back through those
+      matrices and into <code>x</code>, and on down to the layer below &mdash;
+      because layer 0's prefix is only reachable through layer 1's attention.
+      The gradients <code>dW<sub>q</sub>, dW<sub>k</sub>, dW<sub>v</sub>,
+      dW<sub>o</sub></code> are never formed. Not computed and discarded, not
+      zeroed after the fact: the lines that would build them are absent.
+    </p>
+    <pre id="code8"></pre>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <p class="stepn">STEP 9 OF 12</p>
+      <h3>The update: SGD with momentum, over a parameter list of two tables</h3>
+    </div>
+    <p>
+      A training step is now almost boring, which is the compliment it deserves.
+      Average the gradient over the batch, keep a velocity buffer so the
+      updates do not zig-zag, and step. Read the inner loop and note what it is
+      indexing: <code>prefix.K</code> and <code>prefix.V</code>, and nothing
+      else. The optimiser has no entry for an embedding table, no entry for a
+      projection, no entry for the classifier head. We fingerprint all of the
+      base model's numbers before the loop and again afterwards, and the two
+      fingerprints are compared in the self-check &mdash; a run that moved a
+      single weight would change the hash.
+    </p>
+    <pre id="code9"></pre>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <p class="stepn">STEP 10 OF 12</p>
+      <h3>Proving the hand-derived gradient is the real one</h3>
+    </div>
+    <p>
+      A derivation written by hand is a hypothesis until something independent
+      agrees with it. So: pick one number in the prefix, nudge it up by
+      <code>h</code>, measure the loss, nudge it down by <code>h</code>, measure
+      again, and divide the difference by <code>2h</code>. That central finite
+      difference knows nothing about softmax derivatives or residual splits
+      &mdash; it only knows how to call the forward pass twice. The self-check
+      runs it over every coordinate of a small prefix and compares against the
+      analytic value; the worst relative disagreement is reported on this page,
+      and it is at the level of floating-point noise.
+    </p>
+    <pre id="code10"></pre>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <p class="stepn">STEP 11 OF 12</p>
+      <h3>The control: <code>P = 0</code> has to be the untouched model</h3>
+    </div>
+    <p>
+      Here is the sharpest way to state what prefix tuning does to a model,
+      which is nothing. We write the forward pass a second time with the prefix
+      machinery textually absent &mdash; no concatenation, no <code>P</code>,
+      no prefix argument &mdash; and require that the prefix-aware version with
+      <code>P = 0</code> returns bit-identical logits. Not close, identical,
+      compared with <code>Object.is</code>. If that ever fails, the prefix path
+      is perturbing the base model even when it is switched off, and every
+      other claim on the page is worth less.
+    </p>
+    <pre id="code11"></pre>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <p class="stepn">STEP 12 OF 12</p>
+      <h3>The reparameterisation trick: generate the prefix, do not store it</h3>
+    </div>
+    <p>
+      The original paper found direct optimisation of the table unstable and
+      generated it instead: a small embedding <code>E</code> per slot, through
+      an MLP, out to all <code>2 &times; L &times; d</code> numbers that slot
+      needs. Two things change. The output layer is bounded, so no step
+      however large can send a prefix coordinate to infinity. And the MLP is
+      <b>shared</b> across all slots and all layers, so a gradient step moves
+      the whole prefix coherently rather than letting hundreds of coordinates
+      wander off independently. After training you run the MLP once, keep the
+      <code>2LPd</code> numbers it produced, and throw the generator away
+      &mdash; so the thing you ship is identical either way. The Demo tab
+      measures what the bound is worth, and what it costs.
+    </p>
+    <pre id="code12"></pre>
+  </div>
+
+</section>
+
+<section id="demo" class="stack hidden">
+  <div class="card">
+    <h2>Train it, here, now</h2>
+    <p>
+      Full-batch SGD with momentum over the prefix table only. Move the slider
+      and the run happens again from the same seed &mdash; nothing here is
+      pre-baked.
+    </p>
+    <div class="ctl">
+      <label for="pSlider"><b>prefix length P</b></label>
+      <input type="range" id="pSlider" min="0" max="16" step="1" value="4" />
+      <input type="number" id="pNum" min="0" max="16" step="1" value="4" />
+      <button id="btnMode" class="pill good" style="font:inherit;font-size:13px;font-weight:700;padding:6px 14px;border:0;border-radius:8px;cursor:pointer;background:#0f172a;color:#fff">parameterisation: DIRECT</button>
+    </div>
+    <div class="grid2">
+      <div>
+        <p class="lbl">LOSS, EVERY STEP</p>
+        <div id="curve"></div>
+      </div>
+      <div>
+        <p class="lbl">THE RUN</p>
+        <div class="tblwrap"><table class="num" id="tRun"></table></div>
+      </div>
+    </div>
+    <p class="note" id="runNote"></p>
+  </div>
+
+  <div class="card">
+    <h2>Trainable, versus everything you did not touch</h2>
+    <div class="tblwrap"><table class="num" id="tBudget"></table></div>
+    <p class="note" id="budgetNote"></p>
+  </div>
+
+  <div class="card">
+    <h2>Prefix length is not a dial that only goes up</h2>
+    <p>
+      Every extra slot is more capacity <i>and</i> more attention mass stolen
+      from the actual input. The sweep below runs the whole training loop again
+      at each P, from the same seed.
+    </p>
+    <div class="tblwrap"><table class="num" id="tP"></table></div>
+    <p class="note" id="pNote"></p>
+  </div>
+
+  <div class="card">
+    <h2>The reparameterisation trick, and what it is actually for</h2>
+    <p>
+      Li &amp; Liang reported that optimising the prefix table directly was
+      unstable, and generated it from a small embedding through an MLP instead,
+      throwing the MLP away afterwards. The table below runs both
+      parameterisations at the same seed across a learning-rate sweep, and the
+      column that matters is not the loss &mdash; it is the <b>norm</b>.
+    </p>
+    <div class="tblwrap"><table class="num" id="tStab"></table></div>
+    <p class="note" id="stabNote"></p>
+  </div>
+
+  <div class="card">
+    <h2>Self-check</h2>
+    <p class="note" style="margin:0 0 10px">
+      Running in your browser now, against the same engine as the panels above.
+    </p>
+    <div id="selftest"></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p style="margin:0">
+      DLFromZero &middot; Day 83 &middot; Prefix Tuning (Soft Prompts).
+      Day 73 did LoRA, which moves the weights. This one moves none of them.
+    </p>
+  </div>
+</footer>
+</div>
+
+<script>
+// ===== ENGINE:BEGIN =====
+// ======================================================================
+// PREFIX TUNING - soft prompts, built from scratch.
+//
+// The mechanism, stated once so it is not confused with the other
+// parameter-efficient method in this series:
+//
+//   LoRA              W_eff = W + B A           -> it CHANGES a weight
+//                                                  matrix, by a low-rank
+//                                                  delta, and you can fold
+//                                                  the delta back in.
+//   PREFIX TUNING     K = [Pk ; x Wk]           -> it changes NOTHING.
+//                     V = [Pv ; x Wv]              Every weight is frozen.
+//                                                  P extra key/value rows
+//                                                  are PREPENDED to every
+//                                                  attention layer, and the
+//                                                  softmax does the rest.
+//
+// So the gradient never touches W. It flows into the attention weights,
+// out through the concatenated K/V rows, and stops in a [P x d] table.
+// At inference you ship the frozen base plus 2*L*P*d numbers.
+// ======================================================================
+const ENGINE = (() => {
+
+  // ------------------------------------------------------------ plumbing
+  // Deterministic PRNG. Math.random would make every table on this page a
+  // different page on every reload, and the self-check unfalsifiable.
+  function lcg(seed) {
+    let s = seed >>> 0;
+    return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+  }
+  // Box-Muller on top of the LCG, so weights are Gaussian rather than boxy.
+  function gauss(rnd) {
+    const u = Math.max(rnd(), 1e-12), v = rnd();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+  const zeros = (n) => new Array(n).fill(0);
+  const mat = (r, c, f) => { const m = []; for (let i = 0; i < r; i++) { const row = []; for (let j = 0; j < c; j++) row.push(f ? f(i, j) : 0); m.push(row); } return m; };
+  const clone = (m) => m.map((r) => r.slice());
+
+  function vecMat(v, M) {                     // [d] x [d][c] -> [c]
+    const c = M[0].length, out = zeros(c);
+    for (let i = 0; i < v.length; i++) { const vi = v[i], Mi = M[i]; for (let j = 0; j < c; j++) out[j] += vi * Mi[j]; }
+    return out;
+  }
+  function vecMatT(v, M) {                    // [c] x [d][c]^T -> [d]
+    const out = zeros(M.length);
+    for (let i = 0; i < M.length; i++) { let s = 0; const Mi = M[i]; for (let j = 0; j < v.length; j++) s += v[j] * Mi[j]; out[i] = s; }
+    return out;
+  }
+  const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+  function softmax(xs) {
+    let m = -Infinity;
+    for (const x of xs) if (x > m) m = x;
+    let s = 0; const e = xs.map((x) => { const t = Math.exp(x - m); s += t; return t; });
+    return e.map((t) => t / s);
+  }
+
+  // ------------------------------------------------------- the frozen base
+  // A miniature decoder: an embedding table, L single-head attention blocks
+  // with a residual, mean pooling, a classifier head. Everything here is
+  // FROZEN - no training step in this file ever writes to it.
+  const CFG = { d: 8, L: 2, T: 6, V: 12, C: 2 };
+
+  function buildBase(cfg, seed) {
+    cfg = Object.assign({}, CFG, cfg || {});
+    const rnd = lcg(seed >>> 0);
+    const sc = 1 / Math.sqrt(cfg.d);
+    const emb = mat(cfg.V, cfg.d, () => gauss(rnd) * 0.8);
+    const layers = [];
+    for (let l = 0; l < cfg.L; l++) {
+      layers.push({
+        Wq: mat(cfg.d, cfg.d, () => gauss(rnd) * sc),
+        Wk: mat(cfg.d, cfg.d, () => gauss(rnd) * sc),
+        Wv: mat(cfg.d, cfg.d, () => gauss(rnd) * sc),
+        Wo: mat(cfg.d, cfg.d, () => gauss(rnd) * sc)
+      });
+    }
+    const Wout = mat(cfg.d, cfg.C, () => gauss(rnd) * sc);
+    return { cfg, emb, layers, Wout };
+  }
+
+  // How many numbers full fine-tuning would move, versus a prefix.
+  function paramCount(cfg, P) {
+    cfg = Object.assign({}, CFG, cfg || {});
+    const attn = 4 * cfg.d * cfg.d * cfg.L;
+    const full = cfg.V * cfg.d + attn + cfg.d * cfg.C;
+    const prefix = 2 * P * cfg.d * cfg.L;      // a K row and a V row, per layer
+    return { full, attn, prefix, pct: full === 0 ? 0 : 100 * prefix / full };
+  }
+
+  // A fingerprint of every frozen number, so "the weights did not move" is a
+  // checkable claim and not a promise.
+  function fingerprint(base) {
+    let h = 2166136261 >>> 0, n = 0;
+    const eat = (x) => {
+      n++;
+      const buf = new Float64Array([x]); const u = new Uint8Array(buf.buffer);
+      for (let i = 0; i < 8; i++) { h ^= u[i]; h = Math.imul(h, 16777619) >>> 0; }
+    };
+    for (const r of base.emb) for (const x of r) eat(x);
+    for (const L of base.layers) for (const k of ["Wq", "Wk", "Wv", "Wo"]) for (const r of L[k]) for (const x of r) eat(x);
+    for (const r of base.Wout) for (const x of r) eat(x);
+    return { hash: ("00000000" + h.toString(16)).slice(-8), count: n };
+  }
+
+  // Freeze the base so hard that an accidental write is impossible, not just
+  // unlikely. Training is then run against a frozen object: if any line of
+  // the optimiser reached for a weight, it would be reaching for a frozen
+  // array, and the fingerprint above would catch it either way.
+  function deepFreeze(o) {
+    if (o && typeof o === "object" && !Object.isFrozen(o)) {
+      Object.freeze(o);
+      for (const k of Object.keys(o)) deepFreeze(o[k]);
+    }
+    return o;
+  }
+
+  // The same forward pass with the prefix machinery TEXTUALLY ABSENT - no
+  // concat, no P, no prefix argument. P = 0 must reproduce this bit for bit,
+  // otherwise "prefix tuning leaves the base model alone" is only a figure of
+  // speech.
+  function forwardBase(base, tokens) {
+    const cfg = base.cfg, d = cfg.d, inv = 1 / Math.sqrt(d);
+    let X = tokens.map((t) => base.emb[t].slice());
+    for (let l = 0; l < cfg.L; l++) {
+      const W = base.layers[l];
+      const q = X.map((x) => vecMat(x, W.Wq));
+      const k = X.map((x) => vecMat(x, W.Wk));
+      const v = X.map((x) => vecMat(x, W.Wv));
+      const Y = [];
+      for (let t = 0; t < X.length; t++) {
+        const a = softmax(k.map((kj) => dot(q[t], kj) * inv));
+        const c = zeros(d);
+        for (let j = 0; j < k.length; j++) for (let i = 0; i < d; i++) c[i] += a[j] * v[j][i];
+        const o = vecMat(c, W.Wo);
+        Y.push(X[t].map((x, i) => x + o[i]));
+      }
+      X = Y;
+    }
+    const pooled = zeros(d);
+    for (const y of X) for (let i = 0; i < d; i++) pooled[i] += y[i] / cfg.T;
+    const logits = vecMat(pooled, base.Wout);
+    return { logits, probs: softmax(logits), pooled, out: X };
+  }
+
+  // What the two headline numbers are, for a model of any shape. Attention is
+  // 4 d^2 per layer, the feed-forward is 2*mult*d^2, and a prefix is 2 d
+  // numbers per slot per layer - independent of BOTH the vocabulary and the
+  // feed-forward width, which is where the ratio comes from.
+  function modelParams(spec) {
+    const d = spec.d, L = spec.L, V = spec.V, P = spec.P, mult = spec.ff === undefined ? 4 : spec.ff;
+    const perLayer = 4 * d * d + 2 * mult * d * d;
+    const full = V * d + L * perLayer;
+    const prefix = 2 * L * P * d;
+    return { full, perLayer, prefix, pct: 100 * prefix / full, ratio: full / prefix };
+  }
+
+  // --------------------------------------------------------- the prefix
+  // THE trainable object. [L][P][d] keys and [L][P][d] values. P = 0 is legal
+  // and must give back the untouched base model, exactly.
+  function buildPrefix(cfg, P, seed, scale) {
+    cfg = Object.assign({}, CFG, cfg || {});
+    if (!(P >= 0) || P !== Math.floor(P)) throw new Error("P must be a non-negative integer");
+    const rnd = lcg(seed >>> 0);
+    const s = scale === undefined ? 0.1 : scale;
+    return {
+      P,
+      K: Array.from({ length: cfg.L }, () => mat(P, cfg.d, () => gauss(rnd) * s)),
+      V: Array.from({ length: cfg.L }, () => mat(P, cfg.d, () => gauss(rnd) * s))
+    };
+  }
+  const clonePrefix = (p) => ({ P: p.P, K: p.K.map(clone), V: p.V.map(clone) });
+  function prefixNorm(p) {
+    let s = 0;
+    for (const m of p.K) for (const r of m) for (const x of r) s += x * x;
+    for (const m of p.V) for (const r of m) for (const x of r) s += x * x;
+    return Math.sqrt(s);
+  }
+
+  // ------------------------------------------------------- forward pass
+  // One attention block. The ONLY difference from an ordinary block is the
+  // two concat lines - the prefix rows are prepended to K and to V, and are
+  // attended to exactly like real tokens. Note what is NOT here: no change to
+  // Wq/Wk/Wv/Wo, no extra term added to any weight matrix.
+  function block(W, X, Pk, Pv) {
+    const T = X.length, d = X[0].length, P = Pk.length;
+    const q = X.map((x) => vecMat(x, W.Wq));
+    const k = X.map((x) => vecMat(x, W.Wk));
+    const v = X.map((x) => vecMat(x, W.Wv));
+    const K = Pk.concat(k);                   // <-- the whole method
+    const V = Pv.concat(v);                   // <--
+    const inv = 1 / Math.sqrt(d);
+    const A = [], Y = [], S = [];
+    for (let t = 0; t < T; t++) {
+      const s = K.map((Kj) => dot(q[t], Kj) * inv);
+      const a = softmax(s);
+      const c = zeros(d);
+      for (let j = 0; j < K.length; j++) { const aj = a[j], Vj = V[j]; for (let i = 0; i < d; i++) c[i] += aj * Vj[i]; }
+      const o = vecMat(c, W.Wo);
+      S.push(s); A.push(a);
+      Y.push(X[t].map((x, i) => x + o[i]));   // residual
+    }
+    return { Y, A, S, q, k, v, K, V, P, T, d };
+  }
+
+  function forward(base, prefix, tokens) {
+    const cfg = base.cfg;
+    if (tokens.length !== cfg.T) throw new Error("expected " + cfg.T + " tokens, got " + tokens.length);
+    for (const t of tokens) if (!(t >= 0 && t < cfg.V)) throw new Error("token id " + t + " is outside the vocabulary");
+    let X = tokens.map((t) => base.emb[t].slice());
+    const caches = [];
+    for (let l = 0; l < cfg.L; l++) {
+      const c = block(base.layers[l], X, prefix.K[l], prefix.V[l]);
+      caches.push(Object.assign({ X }, c));
+      X = c.Y;
+    }
+    const pooled = zeros(cfg.d);
+    for (const y of X) for (let i = 0; i < cfg.d; i++) pooled[i] += y[i] / cfg.T;
+    const logits = vecMat(pooled, base.Wout);
+    return { logits, probs: softmax(logits), pooled, out: X, caches };
+  }
+
+  // Attention mass each token spends on the prefix rather than on the
+  // sequence. This is the knob prefix tuning actually turns.
+  function prefixMass(base, prefix, tokens, layer) {
+    const f = forward(base, prefix, tokens);
+    const c = f.caches[layer === undefined ? 0 : layer];
+    if (c.P === 0) return 0;
+    let s = 0;
+    for (const a of c.A) for (let j = 0; j < c.P; j++) s += a[j];
+    return s / c.A.length;
+  }
+
+  // ------------------------------------------------------------- the loss
+  function crossEntropy(probs, y) { return -Math.log(Math.max(probs[y], 1e-300)); }
+
+  function datasetLoss(base, prefix, data) {
+    let s = 0, hit = 0;
+    for (const ex of data) {
+      const f = forward(base, prefix, ex.x);
+      s += crossEntropy(f.probs, ex.y);
+      let arg = 0; for (let c = 1; c < f.probs.length; c++) if (f.probs[c] > f.probs[arg]) arg = c;
+      if (arg === ex.y) hit++;
+    }
+    return { loss: s / data.length, acc: hit / data.length };
+  }
+
+  // ------------------------------------------------- backward, by hand
+  // The derivation, in the order the chain rule visits it:
+  //
+  //   dlogits = p - onehot(y)
+  //   dpooled = dlogits Wout^T          ; dY_t = dpooled / T   (mean pool)
+  //   y_t = x_t + c_t Wo  ->  dX += dY  (residual) and dc_t = dY_t Wo^T
+  //   c_t = sum_j a_tj V_j ->  dV_j += sum_t a_tj dc_t ;  da_tj = <dc_t, V_j>
+  //   softmax              ->  ds_t = a_t * (da_t - <a_t, da_t>)
+  //   s_tj = <q_t, K_j>/sqrt(d) -> dq_t += sum_j ds_tj K_j /sqrt(d)
+  //                                dK_j += sum_t ds_tj q_t /sqrt(d)
+  //   dK/dV rows 0..P-1 ARE the prefix gradient; rows P.. flow on into x.
+  //
+  // dWq/dWk/dWv/dWo are never formed. Not computed and then zeroed, never
+  // computed - that is what "frozen" means here.
+  function backward(base, prefix, ex) {
+    const cfg = base.cfg, d = cfg.d, T = cfg.T;
+    const f = forward(base, prefix, ex.x);
+    const dlogits = f.probs.slice();
+    dlogits[ex.y] -= 1;
+    const dpooled = vecMatT(dlogits, base.Wout);
+    let dY = Array.from({ length: T }, () => dpooled.map((g) => g / T));
+
+    const gK = prefix.K.map((m) => mat(m.length, d));
+    const gV = prefix.V.map((m) => mat(m.length, d));
+    const inv = 1 / Math.sqrt(d);
+
+    for (let l = cfg.L - 1; l >= 0; l--) {
+      const c = f.caches[l], W = base.layers[l], P = c.P, M = P + T;
+      const dX = mat(T, d);
+      const dKrows = mat(M, d), dVrows = mat(M, d);
+      const dq = mat(T, d);
+      for (let t = 0; t < T; t++) {
+        for (let i = 0; i < d; i++) dX[t][i] += dY[t][i];          // residual
+        const dc = vecMatT(dY[t], W.Wo);
+        const a = c.A[t];
+        const da = new Array(M);
+        for (let j = 0; j < M; j++) {
+          da[j] = dot(dc, c.V[j]);
+          for (let i = 0; i < d; i++) dVrows[j][i] += a[j] * dc[i];
+        }
+        let adot = 0; for (let j = 0; j < M; j++) adot += a[j] * da[j];
+        for (let j = 0; j < M; j++) {
+          const ds = a[j] * (da[j] - adot);
+          if (ds === 0) continue;
+          for (let i = 0; i < d; i++) { dq[t][i] += ds * c.K[j][i] * inv; dKrows[j][i] += ds * c.q[t][i] * inv; }
+        }
+      }
+      // rows 0..P-1 ARE the parameters: the chain rule ends here
+      for (let p = 0; p < P; p++) for (let i = 0; i < d; i++) { gK[l][p][i] += dKrows[p][i]; gV[l][p][i] += dVrows[p][i]; }
+      // rows P.. came out of Wk and Wv, so their gradient keeps travelling
+      for (let t = 0; t < T; t++) {
+        const dk = dKrows[P + t], dv = dVrows[P + t];
+        const a = vecMatT(dq[t], W.Wq), b = vecMatT(dk, W.Wk), g = vecMatT(dv, W.Wv);
+        for (let i = 0; i < d; i++) dX[t][i] += a[i] + b[i] + g[i];
+      }
+      dY = dX;
+    }
+    return { gK, gV, loss: crossEntropy(f.probs, ex.y) };
+  }
+
+  function batchGrad(base, prefix, data) {
+    const cfg = base.cfg, d = cfg.d;
+    const gK = prefix.K.map((m) => mat(m.length, d));
+    const gV = prefix.V.map((m) => mat(m.length, d));
+    let loss = 0;
+    for (const ex of data) {
+      const g = backward(base, prefix, ex);
+      loss += g.loss / data.length;
+      for (let l = 0; l < cfg.L; l++) for (let p = 0; p < prefix.P; p++) for (let i = 0; i < d; i++) {
+        gK[l][p][i] += g.gK[l][p][i] / data.length;
+        gV[l][p][i] += g.gV[l][p][i] / data.length;
+      }
+    }
+    return { gK, gV, loss };
+  }
+
+  // A central finite difference of the dataset loss wrt ONE prefix number.
+  // Slow and dumb on purpose: it knows nothing about the derivation above,
+  // only how to call the forward pass twice.
+  function numericPrefixGrad(base, prefix, data, which, l, p, i, h) {
+    h = h === undefined ? 1e-5 : h;
+    const bump = (sign) => {
+      const q = clonePrefix(prefix);
+      q[which][l][p][i] += sign * h;
+      return datasetLoss(base, q, data).loss;
+    };
+    return (bump(+1) - bump(-1)) / (2 * h);
+  }
+
+  // ------------------------------------------------------ the toy task
+  // Every sequence carries exactly one SIGNAL token - id 0 or id 1 - at a
+  // seeded position, surrounded by filler drawn from 2..V-1. The label is
+  // which signal it was. The frozen base has never seen this convention, so
+  // the only thing that can move the loss is the prefix.
+  function dataset(n, seed, cfg) {
+    cfg = Object.assign({}, CFG, cfg || {});
+    const rnd = lcg(seed >>> 0), out = [];
+    for (let i = 0; i < n; i++) {
+      const x = [];
+      for (let t = 0; t < cfg.T; t++) x.push(2 + Math.floor(rnd() * (cfg.V - 2)));
+      const y = i % 2;
+      x[Math.floor(rnd() * cfg.T)] = y;
+      out.push({ x, y });
+    }
+    return out;
+  }
+
+  // ------------------------------------------------------ the direct run
+  // Plain SGD with momentum over the prefix table. The update lines are the
+  // interesting ones: they index prefix.K and prefix.V, and nothing else.
+  function train(base, data, opts) {
+    const o = Object.assign({ P: 4, steps: 220, lr: 0.6, mom: 0.9, seed: 20260083, scale: 0.1 }, opts || {});
+    const prefix = buildPrefix(base.cfg, o.P, o.seed, o.scale);
+    const before = fingerprint(base);
+    const vK = prefix.K.map((m) => mat(m.length, base.cfg.d));
+    const vV = prefix.V.map((m) => mat(m.length, base.cfg.d));
+    const curve = [];
+    let diverged = false;
+    for (let s = 0; s < o.steps; s++) {
+      const g = batchGrad(base, prefix, data);
+      curve.push(g.loss);
+      if (!isFinite(g.loss)) { diverged = true; break; }
+      for (let l = 0; l < base.cfg.L; l++) for (let p = 0; p < prefix.P; p++) for (let i = 0; i < base.cfg.d; i++) {
+        vK[l][p][i] = o.mom * vK[l][p][i] - o.lr * g.gK[l][p][i];
+        vV[l][p][i] = o.mom * vV[l][p][i] - o.lr * g.gV[l][p][i];
+        prefix.K[l][p][i] += vK[l][p][i];
+        prefix.V[l][p][i] += vV[l][p][i];
+      }
+    }
+    const fin = datasetLoss(base, prefix, data);
+    curve.push(fin.loss);
+    const after = fingerprint(base);
+    return { prefix, curve, final: fin.loss, acc: fin.acc, diverged,
+             before: before.hash, after: after.hash, frozenCount: before.count,
+             norm: prefixNorm(prefix) };
+  }
+
+  // ------------------------------------- the reparameterisation trick
+  // Li & Liang found that optimising the prefix table DIRECTLY was unstable,
+  // and generated it instead from a small per-slot embedding through an MLP:
+  //
+  //     E [P x dh] --W1,b1--> tanh --W2,b2--> cap*tanh -> [P x 2*L*d]
+  //
+  // Two things change. The output layer is BOUNDED, so no step however large
+  // can send a prefix coordinate to infinity. And W1/W2 are SHARED across all
+  // P slots and all L layers, so one gradient step moves the whole prefix
+  // coherently instead of letting 2*L*P*d coordinates drift independently.
+  // The MLP is thrown away after training; you keep only the table it made.
+  function buildReparam(cfg, P, seed, dh, dm, cap) {
+    cfg = Object.assign({}, CFG, cfg || {});
+    dh = dh || 4; dm = dm || 16; cap = cap === undefined ? 4 : cap;
+    const rnd = lcg(seed >>> 0), outDim = 2 * cfg.L * cfg.d;
+    return {
+      P, dh, dm, outDim, cfg, cap,
+      E: mat(P, dh, () => gauss(rnd) * 0.5),
+      W1: mat(dh, dm, () => gauss(rnd) / Math.sqrt(dh)),
+      b1: zeros(dm),
+      W2: mat(dm, outDim, () => gauss(rnd) * 0.1 / Math.sqrt(dm)),
+      b2: zeros(outDim)
+    };
+  }
+
+  function reparamForward(R) {
+    const H = R.E.map((e) => vecMat(e, R.W1).map((z, j) => Math.tanh(z + R.b1[j])));
+    // Whatever the MLP weights do, every prefix coordinate stays inside
+    // [-cap, cap], so the attention logits it produces cannot run away.
+    const Z = H.map((h) => vecMat(h, R.W2).map((z, j) => z + R.b2[j]));
+    const O = Z.map((z) => z.map((v) => R.cap * Math.tanh(v)));
+    const cfg = R.cfg, d = cfg.d;
+    const prefix = { P: R.P, K: Array.from({ length: cfg.L }, () => mat(R.P, d)), V: Array.from({ length: cfg.L }, () => mat(R.P, d)) };
+    for (let p = 0; p < R.P; p++) for (let l = 0; l < cfg.L; l++) for (let i = 0; i < d; i++) {
+      prefix.K[l][p][i] = O[p][l * d + i];
+      prefix.V[l][p][i] = O[p][cfg.L * d + l * d + i];
+    }
+    return { prefix, H, O, Z };
+  }
+
+  function reparamBackward(R, H, gK, gV, Z) {
+    const cfg = R.cfg, d = cfg.d;
+    const dO = mat(R.P, R.outDim);
+    for (let p = 0; p < R.P; p++) for (let l = 0; l < cfg.L; l++) for (let i = 0; i < d; i++) {
+      dO[p][l * d + i] = gK[l][p][i];
+      dO[p][cfg.L * d + l * d + i] = gV[l][p][i];
+    }
+    if (Z) for (let p = 0; p < R.P; p++) for (let j = 0; j < R.outDim; j++) {
+      const th = Math.tanh(Z[p][j]);
+      dO[p][j] *= R.cap * (1 - th * th);
+    }
+    const gW2 = mat(R.dm, R.outDim), gb2 = zeros(R.outDim);
+    const dH = mat(R.P, R.dm);
+    for (let p = 0; p < R.P; p++) {
+      for (let j = 0; j < R.outDim; j++) { gb2[j] += dO[p][j]; for (let m = 0; m < R.dm; m++) gW2[m][j] += H[p][m] * dO[p][j]; }
+      for (let m = 0; m < R.dm; m++) { let s = 0; for (let j = 0; j < R.outDim; j++) s += R.W2[m][j] * dO[p][j]; dH[p][m] = s; }
+    }
+    const gW1 = mat(R.dh, R.dm), gb1 = zeros(R.dm), gE = mat(R.P, R.dh);
+    for (let p = 0; p < R.P; p++) {
+      const dz = new Array(R.dm);
+      for (let m = 0; m < R.dm; m++) dz[m] = dH[p][m] * (1 - H[p][m] * H[p][m]);
+      for (let m = 0; m < R.dm; m++) { gb1[m] += dz[m]; for (let a = 0; a < R.dh; a++) gW1[a][m] += R.E[p][a] * dz[m]; }
+      for (let a = 0; a < R.dh; a++) { let s = 0; for (let m = 0; m < R.dm; m++) s += R.W1[a][m] * dz[m]; gE[p][a] = s; }
+    }
+    return { gE, gW1, gb1, gW2, gb2 };
+  }
+
+  function reparamParamCount(R) {
+    return R.P * R.dh + R.dh * R.dm + R.dm + R.dm * R.outDim + R.outDim;
+  }
+
+  function trainReparam(base, data, opts) {
+    const o = Object.assign({ P: 4, steps: 220, lr: 0.6, mom: 0.9, seed: 20260083 }, opts || {});
+    const R = buildReparam(base.cfg, o.P, o.seed, o.dh, o.dm, o.cap);
+    const before = fingerprint(base);
+    const vel = {};
+    for (const k of ["E", "W1", "W2"]) vel[k] = R[k].map((r) => r.map(() => 0));
+    vel.b1 = R.b1.map(() => 0); vel.b2 = R.b2.map(() => 0);
+    const curve = [];
+    let diverged = false, prefix = reparamForward(R).prefix;
+    for (let s = 0; s < o.steps; s++) {
+      const fw = reparamForward(R);
+      prefix = fw.prefix;
+      const g = batchGrad(base, prefix, data);
+      curve.push(g.loss);
+      if (!isFinite(g.loss)) { diverged = true; break; }
+      const gr = reparamBackward(R, fw.H, g.gK, g.gV, fw.Z);
+      for (const [pn, gn] of [["E", "gE"], ["W1", "gW1"], ["W2", "gW2"]]) {
+        for (let a = 0; a < R[pn].length; a++) for (let b = 0; b < R[pn][a].length; b++) {
+          vel[pn][a][b] = o.mom * vel[pn][a][b] - o.lr * gr[gn][a][b];
+          R[pn][a][b] += vel[pn][a][b];
+        }
+      }
+      for (const [pn, gn] of [["b1", "gb1"], ["b2", "gb2"]]) {
+        for (let a = 0; a < R[pn].length; a++) { vel[pn][a] = o.mom * vel[pn][a] - o.lr * gr[gn][a]; R[pn][a] += vel[pn][a]; }
+      }
+    }
+    prefix = reparamForward(R).prefix;
+    const fin = datasetLoss(base, prefix, data);
+    curve.push(fin.loss);
+    return { R, prefix, curve, final: fin.loss, acc: fin.acc, diverged,
+             before: before.hash, after: fingerprint(base).hash,
+             trainable: reparamParamCount(R), shipped: 2 * base.cfg.L * o.P * base.cfg.d,
+             norm: prefixNorm(prefix), frozenCount: before.count };
+  }
+
+  function strictlyDecreasing(curve, from, to) {
+    for (let i = (from || 0) + 1; i < (to === undefined ? curve.length : to); i++) if (!(curve[i] < curve[i - 1])) return false;
+    return true;
+  }
+
+  return { lcg, gauss, zeros, mat, clone, vecMat, vecMatT, dot, softmax,
+           CFG, buildBase, paramCount, fingerprint, deepFreeze, forwardBase, modelParams,
+           buildPrefix, clonePrefix, prefixNorm,
+           block, forward, prefixMass, crossEntropy, datasetLoss,
+           backward, batchGrad, numericPrefixGrad, dataset, train,
+           buildReparam, reparamForward, reparamBackward, reparamParamCount,
+           trainReparam, strictlyDecreasing };
+})();
+// ===== ENGINE:END =====
+</script>
+
+<script>
+function showTab(name) {
+  for (const t of ["und", "build", "demo"]) document.getElementById(t).classList.toggle("hidden", t !== name);
+  document.getElementById("tabUnd").classList.toggle("tab-active", name === "und");
+  document.getElementById("tabBuild").classList.toggle("tab-active", name === "build");
+  document.getElementById("tabDemo").classList.toggle("tab-active", name === "demo");
+}
+const el = (id) => document.getElementById(id);
+function table(id, head, rows) {
+  el(id).innerHTML =
+    "<tr>" + head.map((h) => "<th>" + h + "</th>").join("") + "</tr>" +
+    rows.map((r) => "<tr" + (r.cls ? ' class="' + r.cls + '"' : "") + ">" +
+      r.cells.map((c, i) => "<td" + (i === 0 ? ' class="txt"' : "") + ">" + c + "</td>").join("") + "</tr>").join("");
+}
+function selfCheckPanel(fn) {
+  const out = []; let n = 0, bad = 0;
+  const t = (label, cond, detail = "") => {
+    n += 1; if (!cond) bad += 1;
+    out.push('<div><span class="' + (cond ? "ok" : "warn") + '">' + (cond ? "PASS" : "FAIL") +
+      '</span><span>' + label + '</span><span class="m">' + detail + "</span></div>");
+  };
+  fn(t);
+  el("selftest").innerHTML =
+    '<p class="note" style="margin:0 0 8px"><b class="' + (bad ? "warn" : "ok") + '">' +
+    (n - bad) + " of " + n + " checks pass</b>" + (bad ? " &mdash; " + bad + " FAILED" : "") + ".</p>" + out.join("");
+}
+const fmt = (x, k) => Number(x).toFixed(k === undefined ? 4 : k);
+const grp = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+// A log-scaled loss curve, drawn as SVG so there is no chart library and no
+// pixel to argue with.
+function sparkline(id, curve, label) {
+  const W = 460, H = 180, pad = 26;
+  const ys = curve.map((v) => Math.log10(Math.max(v, 1e-6)));
+  let lo = Math.min.apply(null, ys), hi = Math.max.apply(null, ys);
+  if (hi - lo < 1e-9) { hi += 0.5; lo -= 0.5; }
+  const X = (i) => pad + (W - 2 * pad) * (curve.length < 2 ? 0 : i / (curve.length - 1));
+  const Y = (v) => H - pad - (H - 2 * pad) * (Math.log10(Math.max(v, 1e-6)) - lo) / (hi - lo);
+  const pts = curve.map((v, i) => X(i).toFixed(1) + "," + Y(v).toFixed(1)).join(" ");
+  const ticks = [];
+  for (let k = Math.ceil(lo); k <= Math.floor(hi); k++) {
+    const y = Y(Math.pow(10, k));
+    ticks.push('<line x1="' + pad + '" y1="' + y.toFixed(1) + '" x2="' + (W - pad) + '" y2="' + y.toFixed(1) +
+      '" stroke="#e2e8f0" /><text x="2" y="' + (y + 3.5).toFixed(1) + '" font-size="9" fill="#94a3b8">1e' + k + "</text>");
+  }
+  el(id).innerHTML =
+    '<svg viewBox="0 0 ' + W + " " + H + '" width="100%" style="max-width:' + W + 'px;height:auto">' +
+    ticks.join("") +
+    '<polyline fill="none" stroke="#be123c" stroke-width="2" points="' + pts + '" />' +
+    '<text x="' + pad + '" y="12" font-size="10" fill="#64748b">' + label + "</text>" +
+    '<text x="' + pad + '" y="' + (H - 6) + '" font-size="9" fill="#94a3b8">step 0</text>' +
+    '<text x="' + (W - pad - 42) + '" y="' + (H - 6) + '" font-size="9" fill="#94a3b8">step ' + (curve.length - 1) + "</text>" +
+    "</svg>";
+}
+
+// ====================================================================== data
+const CFG = ENGINE.CFG;
+const BASE = ENGINE.deepFreeze(ENGINE.buildBase({}, 20260083));
+const TRAIN = ENGINE.dataset(24, 4242);
+const TEST = ENGINE.dataset(24, 98765);
+const STEPS = 200, LR = 0.6;
+const BASELOSS = ENGINE.datasetLoss(BASE, ENGINE.buildPrefix({}, 0, 1), TRAIN);
+const PSWEEP = [0, 1, 2, 4, 8, 16].map((P) => {
+  const r = ENGINE.train(BASE, TRAIN, { P, steps: STEPS, lr: LR });
+  const te = ENGINE.datasetLoss(BASE, r.prefix, TEST);
+  const mass = P === 0 ? 0 : TRAIN.reduce((s, ex) => s + ENGINE.prefixMass(BASE, r.prefix, ex.x, 0), 0) / TRAIN.length;
+  let hit = r.curve.findIndex((v) => v < 0.05);
+  return { P, r, te, mass, hit };
+});
+const LRS = [0.6, 3, 12, 50, 100, 200];
+const STAB = LRS.map((lr) => {
+  const d = ENGINE.train(BASE, TRAIN, { P: 4, steps: STEPS, lr });
+  const p = ENGINE.trainReparam(BASE, TRAIN, { P: 4, steps: STEPS, lr });
+  const mass = (pf) => TRAIN.reduce((s, ex) => s + ENGINE.prefixMass(BASE, pf, ex.x, 0), 0) / TRAIN.length;
+  return { lr, d, p, dm: mass(d.prefix), pm: mass(p.prefix) };
+});
+const CAP = ENGINE.buildReparam(CFG, 4, 1).cap;
+const BOUND = CAP * Math.sqrt(2 * CFG.L * 4 * CFG.d);
+
+// ================================================================ UNDERSTAND
+{
+  const pc = ENGINE.paramCount({}, 4);
+  const lora = 2 * 4 * CFG.d * 2 * CFG.L;        // rank 4, on Wq and Wv, per layer
+  table("tLora", ["", "full fine-tuning", "LoRA &mdash; day 73", "prefix tuning &mdash; today"], [
+    { cells: ["what the method changes", "every weight", "W becomes W + BA", "<b>nothing</b> &mdash; no weight is written"] },
+    { cells: ["the edit, as an equation", "W &larr; W &minus; &eta;&nabla;W", "W<sub>eff</sub> = W + BA", "K = [P<sub>k</sub> ; xW<sub>k</sub>]"] },
+    { cls: "here", cells: ["trainable numbers here", grp(pc.full), grp(lora) + " (r=4, W<sub>q</sub>+W<sub>v</sub>)", "<b>" + grp(pc.prefix) + "</b> (P=4)"] },
+    { cells: ["where the gradient stops", "in every weight matrix", "in A and B, inside the product", "in the first P rows of K and V"] },
+    { cells: ["can it be folded back into W?", "it is W", "yes &mdash; add BA once", "<b>no</b> &mdash; it is extra KV rows"] },
+    { cells: ["cost at inference", "none", "none, once folded", "P extra keys/values, every layer, forever"] },
+    { cells: ["two tasks in one batch", "impossible", "one adapter at a time", "a different prefix per row"] }
+  ]);
+  el("loraNote").innerHTML =
+    "Read the last three rows together, because they are the trade. LoRA's delta disappears into the " +
+    "weights at serve time and costs nothing afterwards &mdash; but you can only have one folded in. " +
+    "A prefix never disappears: it occupies <b>P</b> slots of every attention, in every layer, for " +
+    "every token, forever. What you buy with that is the row underneath &mdash; two requests in the " +
+    "same batch can carry two different prefixes, because the prefix is data, not weights.";
+}
+
+{
+  const shapes = [
+    ["d=768, L=12, V=50k", { d: 768, L: 12, V: 50257, P: 10 }],
+    ["d=1024, L=24, V=50k", { d: 1024, L: 24, V: 50257, P: 10 }],
+    ["d=4096, L=32, V=32k", { d: 4096, L: 32, V: 32000, P: 16 }],
+    ["d=8192, L=80, V=32k", { d: 8192, L: 80, V: 32000, P: 16 }]
+  ];
+  const toy = ENGINE.paramCount({}, 4);
+  const rows = [{ cls: "dim", cells: [
+    "this page's toy (no FFN)", "P = 4", grp(toy.full), grp(toy.prefix),
+    fmt(toy.pct, 4) + "%", "1 : " + Math.round(toy.full / toy.prefix)
+  ]}].concat(shapes.map(([name, s], i) => {
+    const m = ENGINE.modelParams(s);
+    return { cls: i === 0 ? "here" : "", cells: [
+      name, "P = " + s.P, grp(m.full), grp(m.prefix), fmt(m.pct, 4) + "%", "1 : " + Math.round(m.ratio)
+    ]};
+  }));
+  table("tScale", ["model shape", "prefix", "full fine-tune (params)", "prefix (params)",
+    "share", "ratio"], rows);
+  const a = ENGINE.modelParams({ d: 768, L: 12, V: 50257, P: 10 });
+  const b = ENGINE.modelParams({ d: 8192, L: 80, V: 32000, P: 16 });
+  el("scaleNote").innerHTML =
+    "The toy row is greyed out on purpose: at d=" + CFG.d + " a prefix is a silly fraction of a silly " +
+    "model, and that would be a dishonest headline. The row that matters is the next one &mdash; a " +
+    "stack of this shape has " + grp(a.full) + " parameters and the prefix is " + grp(a.prefix) + " of " +
+    "them, <b>" + fmt(a.pct, 3) + "%</b>. By the largest row the share has fallen to " + fmt(b.pct, 4) +
+    "%, because the prefix grows with L&times;d while the model grows with L&times;d&sup2;.";
+}
+
+{
+  const P = 4, points = Math.pow(CFG.V, P);
+  table("tSoft", ["", "a discrete prompt of 4 tokens", "a soft prefix, P = 4"], [
+    { cells: ["lives in", "the " + CFG.V + " embedding points the vocab has", "all of R<sup>" + CFG.d + "</sup>"] },
+    { cells: ["distinct settings reachable", grp(points), "continuous"] },
+    { cells: ["enters the network at", "layer 0 only", "<b>every one of the " + CFG.L + " layers</b>"] },
+    { cells: ["deeper layers see it", "second-hand, via the layers below", "directly, with its own learned vectors"] },
+    { cells: ["searched by", "trying things", "gradient descent"] },
+    { cls: "here", cells: ["numbers you train", "0 &mdash; you pick token ids", grp(ENGINE.paramCount({}, P).prefix)] }
+  ]);
+  el("softNote").innerHTML =
+    "A four-token prompt over this toy vocabulary has " + grp(points) + " possible settings and you " +
+    "would have to try them. The soft version is continuous and differentiable, so it is reached by " +
+    "the same backward pass as everything else &mdash; and, decisively, it is injected into all " +
+    CFG.L + " layers rather than only the first.";
+}
+
+// ===================================================================== BUILD
+el("cfgLine").textContent = "d = " + CFG.d + ", L = " + CFG.L + ", T = " + CFG.T +
+  ", vocab " + CFG.V + ", " + CFG.C + " classes";
+el("codeConcat").textContent =
+  "    const K = Pk.concat(k);   // P learned key rows, then the real tokens\n" +
+  "    const V = Pv.concat(v);   // P learned value rows, then the real tokens\n" +
+  "\n" +
+  "    // and that is the method. no W is read differently, no W is written.";
+el("code1").textContent = String(ENGINE.buildBase);
+el("code2").textContent = [
+  "// inside a block, before anything is prefixed:",
+  "const q = X.map((x) => vecMat(x, W.Wq));   // a question, per token",
+  "const k = X.map((x) => vecMat(x, W.Wk));   // an answer-key, per token",
+  "const v = X.map((x) => vecMat(x, W.Wv));   // the payload, per token",
+  "",
+  "// you may PREPEND to k and to v. you may not prepend to q:",
+  "// a query belongs to a token, and we are not adding tokens."
+].join("\n");
+el("code3").textContent = String(ENGINE.buildPrefix);
+el("code4").textContent = String(ENGINE.block);
+el("code5").textContent = String(ENGINE.forward);
+el("code6").textContent = [String(ENGINE.dataset), "", String(ENGINE.datasetLoss)].join("\n");
+el("code7").textContent = String(ENGINE.backward);
+el("code8").textContent = [
+  "// the first P rows ARE the parameters - the chain rule ends here",
+  "for (let p = 0; p < P; p++) for (let i = 0; i < d; i++) {",
+  "  gK[l][p][i] += dKrows[p][i];",
+  "  gV[l][p][i] += dVrows[p][i];",
+  "}",
+  "",
+  "// the remaining T rows came out of Wk and Wv, so their gradient",
+  "// keeps travelling - into x, and down to the layer below",
+  "for (let t = 0; t < T; t++) {",
+  "  const dk = dKrows[P + t], dv = dVrows[P + t];",
+  "  const a = vecMatT(dq[t], W.Wq), b = vecMatT(dk, W.Wk), g = vecMatT(dv, W.Wv);",
+  "  for (let i = 0; i < d; i++) dX[t][i] += a[i] + b[i] + g[i];",
+  "}",
+  "",
+  "// note the absence: no gWq, no gWk, no gWv, no gWo. ever."
+].join("\n");
+el("code9").textContent = String(ENGINE.train);
+el("code10").textContent = String(ENGINE.numericPrefixGrad);
+el("code11").textContent = String(ENGINE.forwardBase);
+el("code12").textContent = [String(ENGINE.reparamForward), "", String(ENGINE.reparamBackward)].join("\n");
+
+// ====================================================================== DEMO
+let MODE = "direct";
+function runDemo(P) {
+  const r = MODE === "direct"
+    ? ENGINE.train(BASE, TRAIN, { P, steps: STEPS, lr: LR })
+    : ENGINE.trainReparam(BASE, TRAIN, { P, steps: STEPS, lr: LR });
+  const te = ENGINE.datasetLoss(BASE, r.prefix, TEST);
+  const mass = P === 0 ? 0 : TRAIN.reduce((s, ex) => s + ENGINE.prefixMass(BASE, r.prefix, ex.x, 0), 0) / TRAIN.length;
+  sparkline("curve", r.curve, "cross-entropy, log scale &mdash; " + MODE + ", P = " + P);
+  const pick = [0, 5, 10, 25, 50, 100, STEPS].filter((i) => i < r.curve.length);
+  table("tRun", ["step", "loss", "vs step 0"],
+    pick.map((i) => ({ cls: i === STEPS ? "here" : "", cells: [
+      "step " + i, fmt(r.curve[i], 5),
+      i === 0 ? "&mdash;" : (r.curve[0] / r.curve[i]).toFixed(1) + "&times; lower"
+    ]})).concat([
+      { cells: ["<b>train accuracy</b>", (100 * r.acc).toFixed(1) + "%", ""] },
+      { cells: ["<b>held-out accuracy</b>", (100 * te.acc).toFixed(1) + "%", ""] },
+      { cells: ["attention mass on the prefix", fmt(mass, 4), "layer 0, averaged"] },
+      { cells: ["frozen weights, before &rarr; after", r.before + " &rarr; " + r.after,
+        r.before === r.after ? '<span class="pill good">IDENTICAL</span>' : '<span class="pill bad">MOVED</span>'] }
+    ]));
+  el("runNote").innerHTML =
+    "The frozen base starts at <b>" + fmt(BASELOSS.loss) + "</b> on this task &mdash; chance is " +
+    "ln(" + CFG.C + ") = " + fmt(Math.log(CFG.C)) + ", so it knows nothing. After " + STEPS +
+    " steps of moving <b>" + grp(ENGINE.paramCount({}, P).prefix) + "</b> numbers the loss is <b>" +
+    fmt(r.final, 5) + "</b> and held-out accuracy is " + (100 * te.acc).toFixed(1) + "%. The " +
+    "fingerprint over all " + grp(r.frozenCount || ENGINE.fingerprint(BASE).count) + " frozen numbers " +
+    "is unchanged, which is the whole claim of the method stated as a hash.";
+}
+el("pSlider").addEventListener("input", (e) => { el("pNum").value = e.target.value; runDemo(+e.target.value); });
+el("pNum").addEventListener("change", (e) => {
+  let v = Math.max(0, Math.min(16, Math.round(+e.target.value || 0)));
+  e.target.value = v; el("pSlider").value = v; runDemo(v);
+});
+el("btnMode").addEventListener("click", () => {
+  MODE = MODE === "direct" ? "reparam" : "direct";
+  el("btnMode").textContent = "parameterisation: " + MODE.toUpperCase();
+  runDemo(+el("pSlider").value);
+});
+runDemo(4);
+
+{
+  const pc = ENGINE.paramCount({}, 4);
+  const rr = ENGINE.trainReparam(BASE, TRAIN, { P: 4, steps: 5, lr: LR });
+  table("tBudget", ["what", "numbers", "trained?", "shipped?"], [
+    { cells: ["embedding table (" + CFG.V + " &times; " + CFG.d + ")", grp(CFG.V * CFG.d), "frozen", "already on disk"] },
+    { cells: ["attention W<sub>q</sub>W<sub>k</sub>W<sub>v</sub>W<sub>o</sub>, &times;" + CFG.L + " layers", grp(pc.attn), "frozen", "already on disk"] },
+    { cells: ["classifier head", grp(CFG.d * CFG.C), "frozen", "already on disk"] },
+    { cells: ["<b>frozen total</b>", "<b>" + grp(pc.full) + "</b>", "<span class='pill bad'>NEVER</span>", "unchanged"] },
+    { cls: "here", cells: ["prefix K and V, P=4, &times;" + CFG.L + " layers", "<b>" + grp(pc.prefix) + "</b>",
+      "<span class='pill good'>YES</span>", "yes &mdash; the only new file"] },
+    { cells: ["reparameterisation MLP", grp(rr.trainable), "<span class='pill good'>YES</span>",
+      "<span class='pill bad'>NO</span> &mdash; discarded"] }
+  ]);
+  el("budgetNote").innerHTML =
+    "Two different numbers get called \"the parameter count\" and they are not the same. With the " +
+    "reparameterisation you <b>train " + grp(rr.trainable) + "</b> numbers but you <b>ship " +
+    grp(rr.shipped) + "</b>, because the MLP is run once at the end and thrown away. Without it you " +
+    "train and ship the same " + grp(pc.prefix) + ". Either way the frozen " + grp(pc.full) +
+    " are untouched, so a second task is a second " + grp(pc.prefix) + "-number file, not a second model.";
+}
+
+{
+  let best = PSWEEP[1];
+  for (const s of PSWEEP) if (s.P > 0 && s.r.final < best.r.final) best = s;
+  const rows = PSWEEP.map((s) => ({ cls: s.P === 0 ? "dim" : (s.P === best.P ? "here" : ""), cells: [
+    "P = " + s.P, grp(ENGINE.paramCount({}, s.P).prefix), fmt(s.r.final, 5),
+    (100 * s.r.acc).toFixed(0) + "%", (100 * s.te.acc).toFixed(0) + "%",
+    s.hit < 0 ? "never" : "step " + s.hit, fmt(s.mass, 3)
+  ]}));
+  table("tP", ["prefix length", "trainable", "final loss", "train acc", "held-out acc",
+    "first step under 0.05", "attention mass on prefix"], rows);
+  const p0 = PSWEEP[0], p1 = PSWEEP.find((s) => s.P === 1), p16 = PSWEEP.find((s) => s.P === 16);
+  el("pNote").innerHTML =
+    "<b>P = 0</b> is the control: the loss does not move from " + fmt(p0.r.final) + " because there " +
+    "is nothing to move. A <b>single slot</b> &mdash; " + grp(ENGINE.paramCount({}, 1).prefix) +
+    " numbers &mdash; already gets there, it just takes until step " + p1.hit + " instead of step " +
+    PSWEEP.find((s) => s.P === 2).hit + ". The curve bottoms out at <b>P = " + best.P + "</b> (" +
+    fmt(best.r.final, 5) + ") and then turns around: by P = 16 the final loss is <b>worse</b> (" +
+    fmt(p16.r.final, 5) + ", against " + fmt(best.r.final, 5) + ") while the prefix is eating " +
+    fmt(p16.mass, 3) + " of the attention mass &mdash; the model is spending most of its softmax on " +
+    "vectors instead of on its own input. Longer prefixes are more capacity and more distraction at " +
+    "the same time.";
+}
+
+{
+  const rows = STAB.map((s) => ({ cls: s.d.final > Math.log(CFG.C) ? "here" : "", cells: [
+    "lr = " + s.lr,
+    fmt(s.d.final, 4), grp(Math.round(s.d.norm)), fmt(s.dm, 3),
+    fmt(s.p.final, 4), fmt(s.p.norm, 1)
+  ]}));
+  table("tStab", ["learning rate", "DIRECT loss", "DIRECT |prefix|", "DIRECT mass on prefix",
+    "REPARAM loss", "REPARAM |prefix|"], rows);
+  const blow = STAB.filter((s) => s.d.final > Math.log(CFG.C))[0];
+  const base0 = STAB[0];
+  el("stabNote").innerHTML =
+    "The direct prefix is free coordinates, and nothing bounds them: its norm climbs from " +
+    Math.round(base0.d.norm) + " to " + grp(Math.round(STAB[STAB.length - 1].d.norm)) + " across this " +
+    "sweep" + (blow ? ", and at lr = " + blow.lr + " the run leaves the rails entirely &mdash; loss " +
+    fmt(blow.d.final, 3) + ", above the chance value of " + fmt(Math.log(CFG.C)) + ", with " +
+    fmt(blow.dm, 3) + " of the attention mass on the prefix. That last number is the mechanism of the " +
+    "failure: one prefix key grows until it wins the softmax outright, the real tokens get nothing, " +
+    "and the model is no longer reading its input" : "") + ". The reparameterised prefix is the " +
+    "output of a bounded function, so <b>|prefix| &le; " + fmt(BOUND, 2) + "</b> is arithmetic, not a " +
+    "hope &mdash; and it is never exceeded. Be honest about the other half: bounding does not make it " +
+    "better everywhere. At lr = " + base0.lr + " the reparameterised run reaches " +
+    fmt(base0.p.final, 5) + " against the direct run's " + fmt(base0.d.final, 5) + ", but high up the " +
+    "sweep it stops learning rather than exploding. It trades a blow-up for a ceiling.";
+}
+
+// ================================================================ SELF-CHECK
+selfCheckPanel((t) => {
+  const P4 = ENGINE.buildPrefix({}, 4, 77, 0.3);
+  const run = ENGINE.train(BASE, TRAIN, { P: 4, steps: 120, lr: LR });
+
+  // ---------------------------------------------------- the base is frozen
+  t("the base model object is deeply frozen before training", (() => {
+    return Object.isFrozen(BASE) && Object.isFrozen(BASE.layers[0].Wq) && Object.isFrozen(BASE.layers[0].Wq[0]);
+  })(), "Object.freeze, recursively - an accidental write cannot land");
+
+  t("every frozen number is BYTE-IDENTICAL before and after a training run", (() => {
+    const snap = JSON.stringify([BASE.emb, BASE.layers, BASE.Wout]);
+    const r = ENGINE.train(BASE, TRAIN, { P: 6, steps: 60, lr: 1.2 });
+    return r.final < BASELOSS.loss && JSON.stringify([BASE.emb, BASE.layers, BASE.Wout]) === snap;
+  })(), "element by element, not just a hash - and the run did learn");
+
+  t("CONTROL: the fingerprint agrees, over all frozen numbers", (() => {
+    return run.before === run.after && ENGINE.fingerprint(BASE).count === ENGINE.paramCount({}, 0).full;
+  })(), ENGINE.fingerprint(BASE).count + " numbers, hash " + run.before);
+
+  t("the gradient object contains the prefix and nothing else", (() => {
+    const g = ENGINE.backward(BASE, P4, TRAIN[0]);
+    const keys = Object.keys(g).sort().join(",");
+    return keys === "gK,gV,loss";
+  })(), "no gWq / gWk / gWv / gWo is ever constructed");
+
+  t("INVERSION: a weight gradient is not computed and discarded - it is absent", (() => {
+    const src = String(ENGINE.backward);
+    return !/\bgW[qkvo]\b/.test(src) && !/base\.layers\[[^\]]*\]\.\w+\s*\[[^\]]*\]\s*=/.test(src);
+  })(), "checked against the source of backward() itself");
+
+  // ------------------------------------------------------- shapes and P = 0
+  t("the attention output shape is invariant to P", (() => {
+    for (const P of [0, 1, 3, 7, 12]) {
+      const f = ENGINE.forward(BASE, ENGINE.buildPrefix({}, P, 5), TRAIN[0].x);
+      if (f.out.length !== CFG.T) return false;
+      for (const row of f.out) if (row.length !== CFG.d) return false;
+      if (f.logits.length !== CFG.C) return false;
+    }
+    return true;
+  })(), "T x d rows out, whatever goes in - nothing downstream has to change");
+
+  t("every attention row is a probability distribution over P + T candidates", (() => {
+    for (const P of [0, 2, 5]) {
+      const f = ENGINE.forward(BASE, ENGINE.buildPrefix({}, P, 9), TRAIN[1].x);
+      for (const c of f.caches) for (const a of c.A) {
+        if (a.length !== P + CFG.T) return false;
+        let s = 0; for (const v of a) { if (!(v >= 0)) return false; s += v; }
+        if (Math.abs(s - 1) > 1e-12) return false;
+      }
+    }
+    return true;
+  })(), "the prefix wins mass by competing in the same softmax");
+
+  t("P = 0 reproduces the frozen base BIT FOR BIT", (() => {
+    for (const ex of TRAIN) {
+      const a = ENGINE.forward(BASE, ENGINE.buildPrefix({}, 0, 1), ex.x);
+      const b = ENGINE.forwardBase(BASE, ex.x);
+      for (let i = 0; i < a.logits.length; i++) if (!Object.is(a.logits[i], b.logits[i])) return false;
+      for (let i = 0; i < a.pooled.length; i++) if (!Object.is(a.pooled[i], b.pooled[i])) return false;
+    }
+    return true;
+  })(), "Object.is against a forward pass written WITHOUT any prefix code");
+
+  t("CONTROL: with P > 0 the two do NOT agree", (() => {
+    const a = ENGINE.forward(BASE, ENGINE.buildPrefix({}, 3, 12, 0.6), TRAIN[0].x);
+    const b = ENGINE.forwardBase(BASE, TRAIN[0].x);
+    return Math.abs(a.logits[0] - b.logits[0]) > 1e-6;
+  })(), "otherwise the test above would pass for the wrong reason");
+
+  t("P = 0 spends exactly zero attention on the prefix", (() => {
+    return ENGINE.prefixMass(BASE, ENGINE.buildPrefix({}, 0, 1), TRAIN[0].x, 0) === 0;
+  })());
+
+  t("P = 0 has no trainable numbers, so training cannot move the loss", (() => {
+    const r = ENGINE.train(BASE, TRAIN, { P: 0, steps: 50, lr: 5 });
+    return ENGINE.paramCount({}, 0).prefix === 0 && Math.abs(r.final - BASELOSS.loss) < 1e-15;
+  })(), "a 50-step run at lr 5 leaves the loss at " + fmt(BASELOSS.loss, 6));
+
+  // ----------------------------------------------- the gradient is the real one
+  t("the analytic prefix gradient matches a central finite difference (K)", (() => {
+    const g = ENGINE.batchGrad(BASE, P4, TRAIN.slice(0, 6));
+    let worst = 0;
+    for (let l = 0; l < CFG.L; l++) for (const [p, i] of [[0, 0], [1, 3], [3, 7]]) {
+      const num = ENGINE.numericPrefixGrad(BASE, P4, TRAIN.slice(0, 6), "K", l, p, i, 1e-5);
+      const an = g.gK[l][p][i];
+      worst = Math.max(worst, Math.abs(num - an) / Math.max(1e-8, Math.abs(num) + Math.abs(an)));
+    }
+    return worst < 1e-5;
+  })(), "finite differences know nothing about the derivation");
+
+  t("the analytic prefix gradient matches a central finite difference (V)", (() => {
+    const g = ENGINE.batchGrad(BASE, P4, TRAIN.slice(0, 6));
+    let worst = 0;
+    for (let l = 0; l < CFG.L; l++) for (const [p, i] of [[0, 1], [2, 4], [3, 6]]) {
+      const num = ENGINE.numericPrefixGrad(BASE, P4, TRAIN.slice(0, 6), "V", l, p, i, 1e-5);
+      const an = g.gV[l][p][i];
+      worst = Math.max(worst, Math.abs(num - an) / Math.max(1e-8, Math.abs(num) + Math.abs(an)));
+    }
+    return worst < 1e-5;
+  })());
+
+  t("EVERY coordinate of a small prefix passes the gradient check", (() => {
+    const pre = ENGINE.buildPrefix({}, 2, 31, 0.4), data = TRAIN.slice(0, 4);
+    const g = ENGINE.batchGrad(BASE, pre, data);
+    let worst = 0, n = 0;
+    for (const w of ["K", "V"]) for (let l = 0; l < CFG.L; l++) for (let p = 0; p < 2; p++) for (let i = 0; i < CFG.d; i++) {
+      const num = ENGINE.numericPrefixGrad(BASE, pre, data, w, l, p, i, 1e-5);
+      const an = (w === "K" ? g.gK : g.gV)[l][p][i];
+      worst = Math.max(worst, Math.abs(num - an) / Math.max(1e-8, Math.abs(num) + Math.abs(an)));
+      n++;
+    }
+    return n === 2 * CFG.L * 2 * CFG.d && worst < 1e-5;
+  })(), "all " + (2 * CFG.L * 2 * CFG.d) + " of them, both layers");
+
+  t("the deeper layer's prefix gets a gradient too", (() => {
+    const g = ENGINE.batchGrad(BASE, P4, TRAIN);
+    for (let l = 0; l < CFG.L; l++) {
+      let s = 0;
+      for (const row of g.gK[l]) for (const x of row) s += Math.abs(x);
+      for (const row of g.gV[l]) for (const x of row) s += Math.abs(x);
+      if (!(s > 1e-9)) return false;
+    }
+    return true;
+  })(), "layer 0 is only reachable by backpropagating THROUGH layer 1's attention");
+
+  t("the gradient at P = 0 is an empty table, not a zero one", (() => {
+    const g = ENGINE.batchGrad(BASE, ENGINE.buildPrefix({}, 0, 1), TRAIN);
+    return g.gK.length === CFG.L && g.gK[0].length === 0 && g.gV[0].length === 0;
+  })());
+
+  // --------------------------------------------------------------- it trains
+  t("the loss strictly decreases at EVERY step of the seeded run", (() => {
+    return ENGINE.strictlyDecreasing(run.curve) && run.curve.length === 121;
+  })(), "120 steps, no exception - not 'trends downward'");
+
+  t("CONTROL: and the sweep's P = 4 run does the same over " + STEPS + " steps", (() => {
+    const s = PSWEEP.find((x) => x.P === 4);
+    return ENGINE.strictlyDecreasing(s.r.curve) && s.r.curve.length === STEPS + 1;
+  })());
+
+  t("the frozen base is at chance on this task before any training", (() => {
+    return Math.abs(BASELOSS.loss - Math.log(CFG.C)) < 0.02;
+  })(), "ln(" + CFG.C + ") = " + fmt(Math.log(CFG.C)) + ", measured " + fmt(BASELOSS.loss));
+
+  t("training drops the loss by more than 100x", (() => {
+    const s = PSWEEP.find((x) => x.P === 4);
+    return BASELOSS.loss / s.r.final > 100;
+  })(), fmt(BASELOSS.loss) + " to " + fmt(PSWEEP.find((x) => x.P === 4).r.final, 5));
+
+  t("it reaches 100% on the training set and on HELD-OUT data", (() => {
+    const s = PSWEEP.find((x) => x.P === 4);
+    return s.r.acc === 1 && s.te.acc === 1;
+  })(), "a different seed's 24 examples - the prefix generalised, it did not memorise");
+
+  t("INVERSION: the frozen model alone cannot do the task", (() => {
+    return BASELOSS.acc < 0.75;
+  })(), "measured " + (100 * BASELOSS.acc).toFixed(1) + "% - so the prefix is what learned it");
+
+  // ------------------------------------------------------- the parameter count
+  t("the trainable count is exactly 2 x L x P x d", (() => {
+    for (const P of [0, 1, 4, 10]) {
+      if (ENGINE.paramCount({}, P).prefix !== 2 * CFG.L * P * CFG.d) return false;
+    }
+    return true;
+  })());
+
+  t("the prefix count does not depend on the feed-forward width", (() => {
+    const a = ENGINE.modelParams({ d: 768, L: 12, V: 50257, P: 10, ff: 4 });
+    const b = ENGINE.modelParams({ d: 768, L: 12, V: 50257, P: 10, ff: 8 });
+    return a.prefix === b.prefix && b.full > a.full && b.pct < a.pct;
+  })(), "the model got fatter, the prefix did not - so the share FELL");
+
+  t("on a model of this shape the prefix is under 0.2% of full fine-tuning", (() => {
+    const m = ENGINE.modelParams({ d: 768, L: 12, V: 50257, P: 10 });
+    return m.pct < 0.2 && m.prefix === 2 * 12 * 10 * 768;
+  })(), grp(ENGINE.modelParams({ d: 768, L: 12, V: 50257, P: 10 }).prefix) + " of " +
+       grp(ENGINE.modelParams({ d: 768, L: 12, V: 50257, P: 10 }).full));
+
+  t("INVERSION: a longer prefix is NOT automatically better", (() => {
+    const a = PSWEEP.find((x) => x.P === 2), b = PSWEEP.find((x) => x.P === 16);
+    return b.r.final > a.r.final && b.mass > a.mass;
+  })(), "P=16 ends worse than P=2 while taking " + fmt(PSWEEP.find((x) => x.P === 16).mass, 3) +
+       " of the attention");
+
+  t("more prefix slots take more attention mass away from the tokens", (() => {
+    const ms = [2, 4, 8, 16].map((P) => PSWEEP.find((x) => x.P === P).mass);
+    for (let i = 1; i < ms.length; i++) if (!(ms[i] > ms[i - 1])) return false;
+    return true;
+  })(), "monotone over P = 2, 4, 8, 16");
+
+  // ------------------------------------------------- the reparameterisation
+  t("the reparameterised prefix is bounded by cap x sqrt(2 L P d), always", (() => {
+    for (const s of STAB) if (!(s.p.norm <= BOUND + 1e-9)) return false;
+    return true;
+  })(), "bound = " + fmt(BOUND, 3) + ", largest seen = " +
+       fmt(Math.max.apply(null, STAB.map((s) => s.p.norm)), 3));
+
+  t("INVERSION: the DIRECT prefix has no such bound and blows past it", (() => {
+    return STAB[STAB.length - 1].d.norm > 10 * BOUND;
+  })(), "|prefix| reaches " + grp(Math.round(STAB[STAB.length - 1].d.norm)) + " at lr = " +
+       STAB[STAB.length - 1].lr);
+
+  t("at a high learning rate the direct run ends ABOVE chance - it diverged", (() => {
+    return STAB.some((s) => s.d.final > Math.log(CFG.C)) &&
+           STAB[0].d.final < 0.05;
+  })(), "same seed, same data, only the step size changed");
+
+  t("and when it diverges it has taken essentially ALL the attention mass", (() => {
+    const blown = STAB.filter((s) => s.d.final > Math.log(CFG.C));
+    return blown.length > 0 && blown.every((s) => s.dm > 0.99);
+  })(), "one prefix key wins the softmax outright and the input stops being read");
+
+  t("at the working learning rate the reparameterisation ends LOWER", (() => {
+    return STAB[0].p.final < STAB[0].d.final;
+  })(), fmt(STAB[0].p.final, 5) + " vs " + fmt(STAB[0].d.final, 5) + " at lr = " + STAB[0].lr);
+
+  t("the reparameterisation trains more numbers than it ships", (() => {
+    const r = ENGINE.trainReparam(BASE, TRAIN, { P: 4, steps: 3, lr: LR });
+    return r.trainable > r.shipped && r.shipped === ENGINE.paramCount({}, 4).prefix;
+  })(), "the MLP is discarded; what you deploy is the same table either way");
+
+  t("the reparameterised prefix also leaves the base frozen", (() => {
+    const r = ENGINE.trainReparam(BASE, TRAIN, { P: 4, steps: 40, lr: LR });
+    return r.before === r.after;
+  })());
+
+  // ----------------------------------------------------------- numerics, input
+  t("the attention softmax is shift-invariant, so large logits are safe", (() => {
+    const xs = [900, 901, 899.5, 902];
+    const a = ENGINE.softmax(xs), b = ENGINE.softmax(xs.map((x) => x - 900));
+    let ok = true;
+    for (let i = 0; i < xs.length; i++) { if (!isFinite(a[i]) || Math.abs(a[i] - b[i]) > 1e-12) ok = false; }
+    return ok;
+  })(), "a naive exp(900) would be Infinity and the row would be NaN");
+
+  t("a sequence of the wrong length throws", (() => {
+    try { ENGINE.forward(BASE, P4, [1, 2, 3]); return false; } catch { return true; }
+  })());
+
+  t("a token id outside the vocabulary throws", (() => {
+    try { ENGINE.forward(BASE, P4, new Array(CFG.T).fill(CFG.V)); return false; } catch { return true; }
+  })());
+
+  t("a fractional or negative prefix length throws", (() => {
+    let a = false, b = false;
+    try { ENGINE.buildPrefix({}, -1, 1); } catch { a = true; }
+    try { ENGINE.buildPrefix({}, 2.5, 1); } catch { b = true; }
+    return a && b;
+  })());
+});
+</script>
+</body>
+</html>

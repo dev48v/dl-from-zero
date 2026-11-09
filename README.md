@@ -78,6 +78,13 @@ Every lesson is a single, self-contained HTML file with three tabs — 👁 **LO
 - [DeepLearningFromZero · Day 74 — Straight-through estimators](https://dev48.infy.uk/dl/day74-straight-through-estimators.html) — `day74-straight-through-estimators.html`
 - [DeepLearningFromZero · Day 75 — The softmax bottleneck](https://dev48.infy.uk/dl/day75-softmax-bottleneck.html) — `day75-softmax-bottleneck.html`
 - [DeepLearningFromZero · Day 76 — Weight averaging](https://dev48.infy.uk/dl/day76-weight-averaging.html) — `day76-weight-averaging.html`
+- [DeepLearningFromZero · Day 77 — Catastrophic forgetting and EWC](https://dev48.in/dl/day77-catastrophic-forgetting-and-ewc.html) — `day77-catastrophic-forgetting-and-ewc.html`
+- [DeepLearningFromZero · Day 78 — Batch norm at inference](https://dev48.in/dl/day78-batch-norm-at-inference.html) — `day78-batch-norm-at-inference.html`
+- [DeepLearningFromZero · Day 79 — Dropout at inference](https://dev48.in/dl/day79-dropout-at-inference.html) — `day79-dropout-at-inference.html`
+- [DeepLearningFromZero · Day 80 — Sequence packing and the mask](https://dev48.in/dl/day80-sequence-packing.html) — `day80-sequence-packing.html`
+- [DeepLearningFromZero · Day 81 — Rotary position embeddings](https://dev48.in/dl/day81-rotary-embeddings.html) — `day81-rotary-embeddings.html`
+- [DeepLearningFromZero · Day 82 — Contrastive loss](https://dev48.in/dl/day82-contrastive-loss.html) — `day82-contrastive-loss.html`
+- [DeepLearningFromZero · Day 83 — Prefix Tuning (Soft Prompts)](https://dev48.in/dl/day83-prefix-tuning.html) — `day83-prefix-tuning.html`
 
 ---
 Part of **Zero to Hero** — build something real from scratch, every day: https://dev48v.infy.uk

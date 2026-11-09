@@ -1,0 +1,1062 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepLearningFromZero &middot; Day 80 &mdash; Sequence packing and the mask</title>
+<style>
+  :root { --ink:#0f172a; --sub:#475569; --line:#e2e8f0; --bg:#f8fafc; --accent:#0e7490; }
+  * { box-sizing:border-box; }
+  body { font-family:-apple-system,"Inter",system-ui,sans-serif; margin:0; background:var(--bg); color:var(--ink); }
+  .wrap { max-width:1152px; margin:0 auto; padding:16px; }
+  @media (min-width:768px){ .wrap { padding:24px; } }
+  header { background:#fff; border-bottom:1px solid var(--line); position:sticky; top:0; z-index:20; }
+  .kicker { font-size:12px; font-weight:800; letter-spacing:.16em; color:var(--accent); margin:0 0 8px; }
+  h1 { font-size:19px; line-height:1.5; font-weight:900; margin:0 0 12px; }
+  @media (min-width:768px){ h1 { font-size:22px; } }
+  h2 { font-size:24px; font-weight:900; margin:0 0 8px; }
+  h3 { font-size:19px; font-weight:800; margin:20px 0 6px; }
+  p { line-height:1.6; margin:0 0 12px; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .tabs button { font:inherit; font-size:14px; font-weight:600; padding:8px 20px; border:0; border-radius:8px; background:#f1f5f9; cursor:pointer; }
+  .tabs button.tab-active { background:#0f172a; color:#fff; }
+  .hidden { display:none; }
+  .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(15,23,42,.12); padding:20px; min-width:0; }
+  .stack > * + * { margin-top:20px; }
+  .grid2 { display:grid; gap:20px; grid-template-columns:minmax(0,1fr); }
+  .grid3 { display:grid; gap:16px; grid-template-columns:minmax(0,1fr); }
+  .grid4 { display:grid; gap:16px; grid-template-columns:minmax(0,1fr); }
+  @media (min-width:900px){ .grid2 { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } }
+  @media (min-width:768px){ .grid3 { grid-template-columns:repeat(3,minmax(0,1fr)); }
+                            .grid4 { grid-template-columns:repeat(4,minmax(0,1fr)); } }
+  .lbl { font-size:12px; font-weight:800; letter-spacing:.1em; color:#64748b; margin:0 0 8px; }
+  .big { font-size:24px; font-weight:900; font-variant-numeric:tabular-nums; margin:0; }
+  .note { font-size:12.5px; color:#475569; margin:8px 0 0; line-height:1.55; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:11.5px; overflow-x:auto; line-height:1.35; margin:0; white-space:pre; }
+  code { background:#f1f5f9; padding:1px 4px; border-radius:4px; font-size:.92em; }
+  .tblwrap { overflow-x:auto; }
+  table.num { border-collapse:collapse; width:100%; min-width:520px; }
+  table.num td, table.num th { padding:4px 9px; font-variant-numeric:tabular-nums; }
+  table.num th { font-size:11px; letter-spacing:.05em; color:#64748b; text-align:right; font-weight:700; }
+  table.num th:first-child, table.num td:first-child { text-align:left; }
+  table.num td { text-align:right; font-size:12.5px; border-top:1px solid var(--line); }
+  table.num tr.here td { background:#ecfeff; font-weight:700; }
+  table.num tr.dim td { color:#94a3b8; }
+  table.num td.txt { text-align:left; font-size:11.5px; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:99px; font-size:11px; font-weight:800; }
+  .good { background:#dcfce7; color:#166534; }
+  .stop { background:#fef3c7; color:#92400e; }
+  .bad { background:#fee2e2; color:#991b1b; }
+  .ok { color:#166534; font-weight:800; }
+  .warn { color:#991b1b; font-weight:800; }
+  select, input[type=range], input[type=text] { border:1px solid #cbd5e1; border-radius:8px; padding:7px 10px; font:inherit; font-size:13px; width:100%; margin-top:4px; background:#fff; }
+  input[type=range] { padding:0; }
+  label.f { font-size:13px; display:block; }
+  .callout { background:#ecfeff; border-left:4px solid var(--accent); padding:14px; border-radius:0 8px 8px 0; }
+  .callout p { font-size:13.5px; margin:0; }
+  a { color:var(--accent); }
+  .prose { max-width:760px; margin:0 auto; }
+  .sc { font-size:12.5px; line-height:1.6; }
+  .sc div { display:flex; gap:8px; align-items:baseline; }
+  .sc .m { color:#94a3b8; font-variant-numeric:tabular-nums; }
+  .mask { border-collapse:collapse; font-size:0; }
+  .mask td { width:11px; height:11px; border:1px solid #fff; padding:0; }
+  .m1 { background:#0e7490; }
+  .m0 { background:#e2e8f0; }
+  .mx { background:#e11d48; }
+  .legend { font-size:11.5px; color:#64748b; margin:8px 0 0; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; vertical-align:-1px; margin:0 4px 0 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="kicker">DEEPLEARNINGFROMZERO &middot; DAY 80</p>
+    <h1>
+      &#129513; Sequence packing &mdash; and the mask that makes it correct. Short documents padded to
+      the batch maximum burn most of their compute on padding: on the length distribution here,
+      arrival-order batches are <strong>27.98% real tokens</strong>. Packing concatenates documents into
+      one row and lifts that to <strong>99.81%</strong>, <strong>3.57&times;</strong> fewer tokens
+      processed. But attention inside a row is <em>global</em>, so packing is wrong by default in two
+      independent ways, and <strong>this page runs both bugs as separate configurations and measures
+      them against an unpacked ground truth</strong>. &#128994; <strong>The identity first:</strong> with
+      a block-diagonal mask <em>and</em> position ids that reset per document, the packed row reproduces
+      the unpacked run to <strong>2.22&times;10&#8315;&sup1;&#8310;</strong> &mdash; one unit in the last
+      place, across five independently seeded models and every token of every document. &#128308;
+      <strong>Drop the mask</strong> and the fourth document in the row spends
+      <strong>83.8%</strong> of its attention on documents it has never seen (worst single token
+      <strong>94.9%</strong>), moving its output by <strong>0.3607</strong>. &#128308; <strong>Keep the
+      mask but let the position ids run on</strong> and the output moves by <strong>0.7607</strong>
+      &mdash; a different number, from a different cause. Run both and you get
+      <strong>0.7773</strong>, which is neither the sum nor the max. &#128308; &#128308; <strong>Nothing
+      raises an error, because every attention row still sums to 1</strong> to
+      <strong>4.44&times;10&#8315;&sup1;&#8310;</strong> in all five configurations &mdash; a masked
+      softmax renormalises over whatever it is left with, so the shape is right, the loss falls, and the
+      model just learns something slightly wrong.
+    </h1>
+
+    <div class="tabs">
+      <button id="tabLook" class="tab-active" onclick="showTab('look')">&#128065; LOOK</button>
+      <button id="tabUnd" onclick="showTab('und')">&#129504; UNDERSTAND</button>
+      <button id="tabBuild" onclick="showTab('build')">&#128296; BUILD</button>
+      <span id="selftest" class="pill stop">self-check pending</span>
+    </div>
+  </div>
+</header>
+
+<main id="look" class="wrap stack">
+  <div class="callout">
+    <p>
+      <strong>The ground truth is the unpacked run.</strong> Every document is first pushed through the
+      stack on its own, with an ordinary causal mask and positions 0&hellip;L&minus;1. That is what
+      packing is supposed to be a faster way of computing, so every packed configuration is scored
+      against it token by token, coordinate by coordinate &mdash; not against a loss curve, which is
+      exactly the instrument that cannot see either bug.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Four documents, one row, four packed configurations</h2>
+    <div class="grid2" style="margin:12px 0">
+      <label class="f">Model seed
+        <select id="seedSel"></select>
+      </label>
+      <div>
+        <p class="lbl" style="margin-bottom:2px">THE ROW</p>
+        <p class="note" style="margin:0" id="rowNote"></p>
+      </div>
+    </div>
+    <div class="tblwrap"><table class="num" id="tCfg"></table></div>
+    <p class="note">
+      <code>max |&Delta;|</code> is the largest absolute difference, over every token and every one of the
+      16 output coordinates, between the packed row sliced back into documents and the same documents run
+      alone. <code>worst leaked mass</code> is the largest share of a single attention row that lands on
+      a token belonging to a different document.
+    </p>
+  </div>
+
+  <div class="grid4">
+    <div class="card"><p class="lbl">BLOCK MASK + POSITION RESET vs UNPACKED</p><p class="big ok" id="kIdent">&mdash;</p>
+      <p class="note" id="kIdentNote"></p></div>
+    <div class="card"><p class="lbl">NO MASK: ATTENTION ON FOREIGN DOCUMENTS</p><p class="big warn" id="kLeak">&mdash;</p>
+      <p class="note" id="kLeakNote"></p></div>
+    <div class="card"><p class="lbl">NO POSITION RESET: OUTPUT SHIFT</p><p class="big warn" id="kPos">&mdash;</p>
+      <p class="note" id="kPosNote"></p></div>
+    <div class="card"><p class="lbl">PADDED vs PACKED TOKENS PROCESSED</p><p class="big" id="kPad">&mdash;</p>
+      <p class="note" id="kPadNote"></p></div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">The mask, drawn</h3>
+    <div class="grid3">
+      <div>
+        <p class="lbl">CAUSAL ONLY &mdash; WHAT YOU GET FOR FREE</p>
+        <table class="mask" id="mCausal"></table>
+      </div>
+      <div>
+        <p class="lbl">CAUSAL &cap; BLOCK-DIAGONAL &mdash; WHAT YOU NEED</p>
+        <table class="mask" id="mBlock"></table>
+      </div>
+      <div>
+        <p class="lbl">THE DIFFERENCE &mdash; EVERY CROSS-DOCUMENT READ</p>
+        <table class="mask" id="mLeak"></table>
+      </div>
+    </div>
+    <p class="legend">
+      Row = query, column = key.
+      <i class="m1"></i> allowed <i class="m0"></i> forbidden <i class="mx"></i> read across a boundary.
+      <span id="maskNote"></span>
+    </p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">Per document, and the first one is immune</h3>
+    <div class="tblwrap"><table class="num" id="tDocs"></table></div>
+    <p class="note">
+      &#128308; Both bugs leave the <strong>first</strong> document in the row bit-identical &mdash; exactly
+      <code>0</code>, not nearly zero. Causal attention cannot look forward, so nothing precedes document
+      one to leak in, and its positions already start at 0 whether or not anyone resets them. If you spot
+      check a packed batch by looking at the first sequence, both bugs are invisible.
+    </p>
+  </div>
+</main>
+
+<main id="und" class="wrap stack hidden">
+  <div class="card">
+    <h3 style="margin-top:0">1. The identity, and why the tolerance is not zero</h3>
+    <div class="tblwrap"><table class="num" id="tSeeds"></table></div>
+    <p class="note">
+      The claim is not &ldquo;close enough&rdquo;. With the block mask and reset positions, the packed
+      row is computing <em>the same arithmetic</em> as the unpacked run: the same scores over the same
+      keys, the same softmax over the same set, the same value sum. The residual is
+      <strong id="tolWhy">&mdash;</strong>, which is one unit in the last place at this magnitude.
+      <br><br>
+      It is not exactly zero for one stated reason. A batched attention kernel subtracts a row maximum
+      before exponentiating, and it takes that maximum over the <em>whole causal prefix of the row</em>,
+      not over the current document &mdash; a packed row and a lone document therefore subtract different
+      constants. Subtracting a constant from every score leaves a softmax mathematically unchanged, so
+      this is a reassociation, not an error; it moves the last bit and nothing else. The engine
+      deliberately reproduces that kernel behaviour rather than hiding it, and the assertion is
+      <code>max|&Delta;| &le; <span id="tolTxt">1e-12</span></code>, four orders of magnitude of headroom
+      above the measured residual and twelve below the smallest real bug on this page.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">2. Leakage is exactly proportional, and here is the identity that says so</h3>
+    <div class="tblwrap"><table class="num" id="tIdent"></table></div>
+    <p class="note">
+      Drop the block mask and keep the position reset, and layer one&rsquo;s <em>inputs</em> are still
+      identical to the unpacked ones &mdash; so the own-document scores are the same numbers. The masked
+      softmax then divides by a larger normaliser, and it divides every own-document weight by the
+      <em>same</em> larger normaliser. Writing <code>L</code> for the leaked mass:
+      <br><br>
+      <code>a_packed[own] = (1 &minus; L) &middot; a_unpacked[own]</code>, measured to
+      <strong id="idScale">&mdash;</strong>, and therefore
+      <code>ctx_packed = (1 &minus; L)&middot;ctx_unpacked + L&middot;v&#772;_foreign</code>, so the error is
+      <code>L &middot; |v&#772;_foreign &minus; ctx_unpacked|</code> &mdash; measured against that product to
+      <strong id="idPred">&mdash;</strong>.
+      <br><br>
+      That is where the threshold on the divergence comes from. It is not a number picked to be
+      comfortably passed: it is <code>L&times;gap</code>, computed per token from quantities the run
+      already produces, and the measured error matches it to the last bit. The largest is
+      <strong id="idMax">&mdash;</strong>.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">3. The neighbour grows, the leak grows with it</h3>
+    <div class="tblwrap"><table class="num" id="tSweep"></table></div>
+    <p class="note">
+      One fixed 8-token document sits second in the row. The document in front of it is a
+      <em>prefix</em> of one fixed token sequence, so lengthening it only ever appends foreign keys and
+      never disturbs the document&rsquo;s own scores &mdash; which makes the leaked mass strictly
+      increasing by construction, from <strong id="swLo">&mdash;</strong> to
+      <strong id="swHi">&mdash;</strong>. The output error grows with it,
+      <strong id="swGrow">&mdash;</strong> across the sweep, and correlates at
+      <strong id="swR">&mdash;</strong>.
+      <br><br>
+      &#128308; It does <em>not</em> grow monotonically, and that is worth saying plainly: the foreign
+      mass is strictly increasing, but the error is <code>L&times;gap</code> and the second factor moves
+      with the content of the tokens that happen to be appended. There is a dip at
+      <strong id="swDip">&mdash;</strong>. &ldquo;More neighbour, more damage&rdquo; is a trend here, not
+      a law, and the page does not claim it as one.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">4. Two bugs, not one &mdash; and the controls that separate them</h3>
+    <div class="tblwrap"><table class="num" id="tCtl"></table></div>
+    <p class="note">
+      Fixing the mask alone leaves an error of <strong id="ctlD">&mdash;</strong>. Fixing the positions
+      alone leaves <strong id="ctlC">&mdash;</strong>. Only fixing both reaches the identity, and running
+      both broken gives <strong id="ctlE">&mdash;</strong>, which is
+      <strong id="ctlSum">&mdash;</strong> of the sum of the two &mdash; they interact, so you cannot even
+      subtract one to estimate the other.
+      <br><br>
+      Two controls make that falsifiable rather than asserted. <strong>Zero the position table</strong>
+      and the position bug has to vanish exactly, because there is no longer anything for a wrong
+      position id to index: it drops to <strong id="ctlZero">&mdash;</strong> while the mask bug is
+      untouched at <strong id="ctlZeroC">&mdash;</strong>. And in the growing-neighbour sweep the two
+      respond completely differently to the same change: the mask error correlates with leaked mass at
+      <strong id="ctlRm">&mdash;</strong>, the position error at <strong id="ctlRp">&mdash;</strong>,
+      because the position offset is already wrong once the neighbour has a single token and barely
+      cares how many more it has.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">5. The compute, including the part packing does not save</h3>
+    <div class="tblwrap"><table class="num" id="tPad"></table></div>
+    <p class="note">
+      &#128308; Two honest subtractions from the headline. First, <strong>sorting by length before
+      batching already recovers almost all of it</strong>: bucketed batches reach
+      <strong id="padSort">&mdash;</strong> utilisation against packing&rsquo;s
+      <strong id="padPack">&mdash;</strong>, so the 3.57&times; is measured against arrival-order
+      batching, which is the baseline packing is usually sold against but not the only alternative.
+      Sorting is not free either &mdash; it correlates batch content with length &mdash; but on token
+      count alone it is nearly a tie.
+      <br><br>
+      Second, <strong>packing does not make attention cheaper unless the mask does</strong>. Attention
+      cost is quadratic in the row, so a packed row of <span id="padCap">&mdash;</span> computed densely
+      costs <strong id="padQd">&mdash;</strong> of the padded baseline &mdash; slightly
+      <em>more</em>. It is the block-diagonal structure, exploited by a kernel that skips the off-diagonal
+      blocks, that brings it to <strong id="padQb">&mdash;</strong>. The mask is not only the thing that
+      makes packing correct; it is the thing that makes it fast.
+      <br><br>
+      The row count itself is bounded rather than trusted: a greedy first-fit-decreasing packing must use
+      at least <code>ceil(&Sigma;L / C)</code> rows and at most
+      <code>ceil(&Sigma;L / (C &minus; Lmax)) + 1</code>, which is
+      <strong id="padBounds">&mdash;</strong> here, and the measured count is
+      <strong id="padRows">&mdash;</strong>.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">What this covers, and what it does not</h3>
+    <p class="note" style="margin-top:0">
+      The models are <strong>not trained</strong>. Weights come from a stated Park-Miller seed, so nothing
+      here says what either bug does to a fitted model&rsquo;s accuracy &mdash; only what it does to the
+      arithmetic, which is the part that can be settled exactly. Positions are a <strong>learned absolute
+      table</strong>, not RoPE; the reset argument is the same for both (a wrong position id is a false
+      distance either way) but the measured magnitudes would not carry over. There is one attention head
+      and no MLP, and the stack is two layers deep &mdash; enough to show the error compounding, not
+      enough to say how it compounds at depth 32. Which of the two bugs is <em>larger</em> is a property
+      of the ratio between the embedding scale and the position scale in this toy, so the
+      <strong>ordering is not a general claim</strong>; the claim is that both are non-zero, independent,
+      and invisible to the loss. The packing study counts tokens and attention FLOPs, not wall clock:
+      no kernel, no memory traffic, no measurement of an actual block-sparse implementation. And nothing
+      here is about tokenisation or numeric precision &mdash; the whole page runs in float64.
+    </p>
+  </div>
+</main>
+
+<main id="build" class="wrap stack hidden">
+  <div class="card prose">
+    <h2>How it works</h2>
+    <pre>// the only difference between a correct packed row and a broken one
+const allow = cfg.block
+  ? (i, s) =&gt; s &lt;= i &amp;&amp; p.docIds[s] === p.docIds[i]
+  : (i, s) =&gt; s &lt;= i;                  // causal only: the mask bug
+
+const posIds = cfg.reset ? p.local : p.tokens.map((_, i) =&gt; i);
+
+// a masked softmax STILL normalises - which is why neither bug throws
+for (s...) if (allow(i, s)) { ex[s] = Math.exp(sc[s] - m); Z += ex[s]; }
+for (s...) a[s] = ex[s] / Z;
+
+// the leak identity: own weights are scaled by exactly (1 - L),
+// so the error is L * |vbar_foreign - ctx_unpacked|, per token.
+worstScale = Math.max(worstScale, Math.abs(ap - (1 - L) * au));</pre>
+    <h3>Self-check</h3>
+    <p class="note">
+      Runs on load. The load-bearing assertion is the one that must come out <em>zero</em>: a page that
+      only showed two configurations disagreeing would be indistinguishable from a page with a broken
+      slicing index. The identity is checked first, at <code>1e-12</code>, before any claim of divergence
+      is made &mdash; and the divergence thresholds are derived from the run (<code>L&times;gap</code>,
+      and a multiple of the identity residual) rather than typed in.
+    </p>
+    <div class="sc" id="selfcheck"></div>
+    <p style="margin-top:20px"><a href="../deeplearningfromzero.php">&larr; DeepLearningFromZero</a></p>
+  </div>
+</main>
+
+<script>
+// ===== ENGINE:BEGIN =====
+// ---------------------------------------------------------------------------
+// Sequence packing, and the mask that makes it correct.
+//
+// Padding a batch to its longest member spends most of the compute on nothing.
+// Packing concatenates several documents into one row instead - and is wrong by
+// default, because attention inside a row is GLOBAL. Two separate repairs are
+// needed, and neither failure raises anything:
+//   1. the mask must become BLOCK-DIAGONAL (intersected with the causal mask),
+//      or token 0 of document 2 reads every token of document 1;
+//   2. the POSITION IDS must RESET at each boundary, or document 2 is told it
+//      starts at offset len(doc 1) and every position encoding lies about
+//      distance.
+// Five configurations over the same documents:
+//   (a) UNPACKED   each document alone                      <- ground truth
+//   (b) PACKED     block mask + position reset              <- must equal (a)
+//   (c) PACKED     causal-only mask, positions reset        <- mask bug
+//   (d) PACKED     block mask, positions run on             <- position bug
+//   (e) PACKED     neither                                  <- naive packing
+// Weights are deterministic Park-Miller from a fixed seed. No training, no
+// clock, no DOM, no Math.random.
+// ---------------------------------------------------------------------------
+
+// Park-Miller. The draw is taken by DIVISION: `(nextInt() * n) >>> 31` coerces
+// to 32 bits and overflows, so it is written out.
+function Rng(seed) {
+  let s = seed % 2147483647;
+  if (s <= 0) s += 2147483646;
+  this.nextInt = () => (s = (s * 16807) % 2147483647);
+  this.unit = () => (this.nextInt() - 1) / 2147483646;
+  this.below = (n) => Math.floor((this.nextInt() * n) / 2147483648);
+  this.sym = () => this.unit() * 2 - 1;
+}
+
+const D = 16;        // model width
+const NLAYER = 2;    // two blocks, so the error can compound
+const VOCAB = 64;
+const PMAX = 256;    // position table, long enough for an unreset packed row
+const SEEDS = [11, 1009, 60013, 909091, 2147483];
+const DOC_LENS = [6, 9, 5, 7];
+const TOL = 1e-12;
+
+function model(seed) {
+  const r = new Rng(seed), emb = [], pos = [], layers = [];
+  for (let t = 0; t < VOCAB; t++) { const row = []; for (let k = 0; k < D; k++) row.push(r.sym() * 0.6); emb.push(row); }
+  for (let p = 0; p < PMAX; p++) { const row = []; for (let k = 0; k < D; k++) row.push(r.sym() * 0.35); pos.push(row); }
+  const mk = () => { const M = []; for (let a = 0; a < D; a++) { const row = []; for (let b = 0; b < D; b++) row.push(r.sym() / Math.sqrt(D)); M.push(row); } return M; };
+  for (let l = 0; l < NLAYER; l++) layers.push({ Wq: mk(), Wk: mk(), Wv: mk(), Wo: mk() });
+  return { seed, emb, pos, layers };
+}
+
+function matvec(M, v) {
+  const o = new Array(D);
+  for (let a = 0; a < D; a++) { let s = 0; const row = M[a]; for (let b = 0; b < D; b++) s += row[b] * v[b]; o[a] = s; }
+  return o;
+}
+
+// `allow(i,s)` is the mask actually applied. `shiftAllow(i,s)` is the set the
+// softmax takes its maximum over before exponentiating - mathematically a
+// no-op (subtracting any constant leaves a softmax unchanged) but numerically
+// visible, and it is the ONLY reason (b) == (a) is checked to a tolerance
+// rather than to the bit: a batched kernel takes that maximum over the whole
+// causal prefix of the ROW, a lone document takes it over itself.
+function forwardRow(mdl, tokens, posIds, allow, shiftAllow) {
+  const T = tokens.length, scale = 1 / Math.sqrt(D);
+  let x = [];
+  for (let i = 0; i < T; i++) {
+    const v = new Array(D), e = mdl.emb[tokens[i]], p = mdl.pos[posIds[i]];
+    for (let k = 0; k < D; k++) v[k] = e[k] + p[k];
+    x.push(v);
+  }
+  const H = [x.map((v) => v.slice())], A = [], VAL = [], CTX = [];
+  for (let l = 0; l < NLAYER; l++) {
+    const L = mdl.layers[l], q = [], k = [], v = [];
+    for (let i = 0; i < T; i++) { q.push(matvec(L.Wq, x[i])); k.push(matvec(L.Wk, x[i])); v.push(matvec(L.Wv, x[i])); }
+    const Al = [], ctx = [], nx = [];
+    for (let i = 0; i < T; i++) {
+      const sc = new Array(T);
+      for (let s = 0; s < T; s++) { let d = 0; const qi = q[i], ks = k[s]; for (let c = 0; c < D; c++) d += qi[c] * ks[c]; sc[s] = d * scale; }
+      let m = -Infinity;
+      for (let s = 0; s < T; s++) if (shiftAllow(i, s) && sc[s] > m) m = sc[s];
+      const ex = new Array(T).fill(0);
+      let Z = 0;
+      for (let s = 0; s < T; s++) if (allow(i, s)) { const t = Math.exp(sc[s] - m); ex[s] = t; Z += t; }
+      const a = new Array(T);
+      for (let s = 0; s < T; s++) a[s] = ex[s] / Z;      // a masked softmax STILL sums to 1
+      Al.push(a);
+      const o = new Array(D).fill(0);
+      for (let s = 0; s < T; s++) { const w = a[s]; if (w !== 0) { const vs = v[s]; for (let c = 0; c < D; c++) o[c] += w * vs[c]; } }
+      ctx.push(o);
+      const proj = matvec(L.Wo, o), nv = new Array(D);
+      for (let c = 0; c < D; c++) nv[c] = x[i][c] + proj[c];   // residual
+      nx.push(nv);
+    }
+    A.push(Al); VAL.push(v); CTX.push(ctx);
+    x = nx;
+    H.push(x.map((r2) => r2.slice()));
+  }
+  return { T, H, A, VAL, CTX, out: x };
+}
+
+function makeDoc(seed, len) {
+  const r = new Rng(seed), out = [];
+  for (let i = 0; i < len; i++) out.push(r.below(VOCAB));
+  return out;
+}
+function docSet(seed) { return DOC_LENS.map((n, i) => makeDoc(seed * 131 + i * 7717 + 3, n)); }
+
+const CFGS = [
+  { id: "b", block: true, reset: true, label: "block-diagonal mask + position reset" },
+  { id: "c", block: false, reset: true, label: "NO mask (causal only), position reset" },
+  { id: "d", block: true, reset: false, label: "block-diagonal mask, NO position reset" },
+  { id: "e", block: false, reset: false, label: "NO mask, NO position reset (naive packing)" },
+];
+
+function packRow(docs) {
+  const tokens = [], docIds = [], local = [], starts = [];
+  docs.forEach((doc, d) => { starts.push(tokens.length); doc.forEach((t, i) => { tokens.push(t); docIds.push(d); local.push(i); }); });
+  return { tokens, docIds, local, starts, T: tokens.length };
+}
+function runUnpacked(mdl, docs) {
+  return docs.map((doc) => forwardRow(mdl, doc, doc.map((_, i) => i), (i, s) => s <= i, (i, s) => s <= i));
+}
+function runPacked(mdl, docs, cfg) {
+  const p = packRow(docs);
+  const posIds = cfg.reset ? p.local : p.tokens.map((_, i) => i);
+  const allow = cfg.block ? (i, s) => s <= i && p.docIds[s] === p.docIds[i] : (i, s) => s <= i;
+  return { pack: p, posIds, res: forwardRow(mdl, p.tokens, posIds, allow, (i, s) => s <= i) };
+}
+
+// slice the packed row back into documents and compare, coordinate by coordinate
+function diffAgainstUnpacked(uns, packed, docs) {
+  const perDoc = [];
+  let maxAll = 0;
+  docs.forEach((doc, d) => {
+    const st = packed.pack.starts[d];
+    let mx = 0, sum = 0, n = 0;
+    for (let i = 0; i < doc.length; i++) for (let c = 0; c < D; c++) {
+      const e = Math.abs(uns[d].out[i][c] - packed.res.out[st + i][c]);
+      if (e > mx) mx = e;
+      sum += e; n++;
+    }
+    perDoc.push({ doc: d, len: doc.length, maxAbs: mx, meanAbs: sum / n });
+    if (mx > maxAll) maxAll = mx;
+  });
+  return { perDoc, maxAbs: maxAll };
+}
+
+// the share of each attention row landing on a DIFFERENT document
+function leakOf(packed, layer) {
+  const p = packed.pack, A = packed.res.A[layer], rows = [];
+  for (let i = 0; i < p.T; i++) {
+    let leak = 0;
+    for (let s = 0; s < p.T; s++) if (p.docIds[s] !== p.docIds[i]) leak += A[i][s];
+    rows.push({ i, doc: p.docIds[i], leak });
+  }
+  return rows;
+}
+function rowSumError(packed) {
+  let worst = 0;
+  for (let l = 0; l < NLAYER; l++) for (const row of packed.res.A[l]) {
+    let s = 0; for (let j = 0; j < row.length; j++) s += row[j];
+    worst = Math.max(worst, Math.abs(s - 1));
+  }
+  return worst;
+}
+function rowSumErrorUnpacked(uns) {
+  let worst = 0;
+  for (const r of uns) for (let l = 0; l < NLAYER; l++) for (const row of r.A[l]) {
+    let s = 0; for (let j = 0; j < row.length; j++) s += row[j];
+    worst = Math.max(worst, Math.abs(s - 1));
+  }
+  return worst;
+}
+
+// THE LEAK IDENTITY, at layer 1. Under the mask bug with positions reset the
+// layer-1 inputs are identical to the unpacked ones, so the own-document scores
+// are the same numbers and the larger normaliser scales every own weight by the
+// same factor (1 - L), L being the leaked mass:
+//     a_packed[own] = (1 - L) * a_unpacked[own]
+//     ctx_packed    = (1 - L) * ctx_unpacked + L * vbar_foreign
+// so the error is EXACTLY L * |vbar_foreign - ctx_unpacked|. That product is
+// the threshold this page's divergence claims are checked against - derived
+// from the run, not typed in.
+function leakIdentity(mdl, docs) {
+  const uns = runUnpacked(mdl, docs), pk = runPacked(mdl, docs, CFGS[1]), p = pk.pack;
+  let worstScale = 0, worstCtx = 0, worstPred = 0;
+  const rows = [];
+  for (let d = 0; d < docs.length; d++) {
+    const st = p.starts[d];
+    for (let i = 0; i < docs[d].length; i++) {
+      const gi = st + i;
+      let L = 0;
+      for (let s = 0; s < p.T; s++) if (p.docIds[s] !== d) L += pk.res.A[0][gi][s];
+      for (let s = 0; s <= i; s++) {
+        const au = uns[d].A[0][i][s], ap = pk.res.A[0][gi][st + s];
+        worstScale = Math.max(worstScale, Math.abs(ap - (1 - L) * au));
+      }
+      const vbar = new Array(D).fill(0);
+      if (L > 0) for (let s = 0; s < p.T; s++) {
+        if (p.docIds[s] === d) continue;
+        const w = pk.res.A[0][gi][s] / L, vs = pk.res.VAL[0][s];
+        for (let c = 0; c < D; c++) vbar[c] += w * vs[c];
+      }
+      let gap = 0, err = 0;
+      for (let c = 0; c < D; c++) {
+        const cu = uns[d].CTX[0][i][c], cp = pk.res.CTX[0][gi][c];
+        worstCtx = Math.max(worstCtx, Math.abs(cp - ((1 - L) * cu + L * vbar[c])));
+        gap = Math.max(gap, Math.abs(vbar[c] - cu));
+        err = Math.max(err, Math.abs(cp - cu));
+      }
+      worstPred = Math.max(worstPred, Math.abs(err - L * gap));
+      rows.push({ doc: d, i, L, gap, err });
+    }
+  }
+  return { worstScale, worstCtx, worstPred, rows };
+}
+
+// One fixed 8-token document sits SECOND. The document in front of it is a
+// PREFIX of one fixed sequence, so growing it only ever appends foreign keys -
+// the own-document scores never move, which makes the leaked mass strictly
+// increasing by construction rather than by luck.
+const SWEEP_NS = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32];
+const SWEEP_B = 8;
+function prefixSweep(seed) {
+  const mdl = model(seed);
+  const long = makeDoc(seed * 977 + 5, Math.max(...SWEEP_NS));
+  const B = makeDoc(seed * 313 + 11, SWEEP_B);
+  return SWEEP_NS.map((n) => {
+    const docs = [long.slice(0, n), B];
+    const uns = runUnpacked(mdl, docs);
+    const noMask = runPacked(mdl, docs, CFGS[1]), noPos = runPacked(mdl, docs, CFGS[2]);
+    const lk = leakOf(noMask, 0).filter((r) => r.doc === 1);
+    const dm = diffAgainstUnpacked(uns, noMask, docs), dp = diffAgainstUnpacked(uns, noPos, docs);
+    return {
+      n, meanLeak: lk.reduce((s, r) => s + r.leak, 0) / lk.length,
+      maxLeak: Math.max(...lk.map((r) => r.leak)),
+      docAmask: dm.perDoc[0].maxAbs, docBmask: dm.perDoc[1].maxAbs,
+      docApos: dp.perDoc[0].maxAbs, docBpos: dp.perDoc[1].maxAbs,
+    };
+  });
+}
+
+// ------------------------------------------------------ padding vs packing
+// A long-tailed length distribution - the case packing is actually for.
+function lengths(seed, n) {
+  const r = new Rng(seed), out = [];
+  for (let i = 0; i < n; i++) {
+    const u = r.unit();
+    out.push(Math.min(u < 0.70 ? 4 + r.below(28) : u < 0.95 ? 32 + r.below(96) : 128 + r.below(385), 512));
+  }
+  return out;
+}
+// padded batching: tokens processed = batch size * the longest member
+function padCost(lens, B) {
+  let tokens = 0, quad = 0, batches = 0;
+  for (let i = 0; i < lens.length; i += B) {
+    const b = lens.slice(i, i + B), m = Math.max(...b);
+    tokens += b.length * m; quad += b.length * m * m; batches++;
+  }
+  return { tokens, quad, batches };
+}
+// greedy first-fit-decreasing into rows of capacity C
+function packCost(lens, C) {
+  const rows = [];
+  for (const L of lens.slice().sort((a, b) => b - a)) {
+    let placed = false;
+    for (const row of rows) if (row.used + L <= C) { row.used += L; row.items.push(L); placed = true; break; }
+    if (!placed) rows.push({ used: L, items: [L] });
+  }
+  let quadBlock = 0;
+  for (const row of rows) for (const L of row.items) quadBlock += L * L;
+  return { rows: rows.length, tokens: rows.length * C, quadDense: rows.length * C * C, quadBlock,
+           rowUsed: rows.map((r) => r.used), used: rows.reduce((s, r) => s + r.used, 0) };
+}
+function paddingStudy(seed, n, B, C) {
+  const lens = lengths(seed, n);
+  const total = lens.reduce((s, v) => s + v, 0), maxLen = Math.max(...lens);
+  const arrival = padCost(lens, B);
+  const sorted = padCost(lens.slice().sort((a, b) => a - b), B);   // length-bucketed
+  const pk = packCost(lens, C);
+  return {
+    n, B, C, total, maxLen, lens, arrival, sorted, pack: pk,
+    rowsLo: Math.ceil(total / C),                                  // must use at least this many rows
+    rowsHi: C > maxLen ? Math.ceil(total / (C - maxLen)) + 1 : Infinity,
+    savingArrival: arrival.tokens / pk.tokens, savingSorted: sorted.tokens / pk.tokens,
+    utilPack: total / pk.tokens, utilArrival: total / arrival.tokens, utilSorted: total / sorted.tokens,
+    quadRatioDense: pk.quadDense / arrival.quad, quadRatioBlock: pk.quadBlock / arrival.quad,
+  };
+}
+
+function analyse(seed) {
+  const mdl = model(seed), docs = docSet(seed), uns = runUnpacked(mdl, docs);
+  const cfgs = CFGS.map((cfg) => {
+    const pk = runPacked(mdl, docs, cfg), df = diffAgainstUnpacked(uns, pk, docs), lk = leakOf(pk, 0);
+    return {
+      id: cfg.id, block: cfg.block, reset: cfg.reset, label: cfg.label,
+      maxAbs: df.maxAbs, perDoc: df.perDoc, rowSumErr: rowSumError(pk),
+      maxLeak: Math.max(...lk.map((r) => r.leak)),
+      leakByDoc: docs.map((_, d) => {
+        const rs = lk.filter((r) => r.doc === d);
+        return rs.reduce((s, r) => s + r.leak, 0) / rs.length;
+      }),
+      byLayer: [0, 1].map((l) => {
+        let mx = 0;
+        docs.forEach((doc, d) => {
+          const st = pk.pack.starts[d];
+          for (let i = 0; i < doc.length; i++) for (let c = 0; c < D; c++)
+            mx = Math.max(mx, Math.abs(uns[d].H[l + 1][i][c] - pk.res.H[l + 1][st + i][c]));
+        });
+        return mx;
+      }),
+    };
+  });
+  return { seed, docs, lens: docs.map((d) => d.length), T: docs.reduce((s, d) => s + d.length, 0),
+           cfgs, unsRowSumErr: rowSumErrorUnpacked(uns), ident: leakIdentity(mdl, docs) };
+}
+
+// The control that makes the position half falsifiable: zero the position table
+// and the position bug MUST vanish exactly, while the mask bug is untouched.
+function zeroPosModel(seed) {
+  const m = model(seed);
+  return { seed: m.seed, emb: m.emb, layers: m.layers, pos: m.pos.map((row) => row.map(() => 0)) };
+}
+function noPosControl(seed) {
+  const mdl = zeroPosModel(seed), docs = docSet(seed), uns = runUnpacked(mdl, docs), out = {};
+  for (const cfg of CFGS) out[cfg.id] = diffAgainstUnpacked(uns, runPacked(mdl, docs, cfg), docs).maxAbs;
+  return out;
+}
+
+function report() {
+  const nets = SEEDS.map(analyse);
+  return {
+    nets, main: nets[0], TOL, cfgs: CFGS, D, NLAYER, VOCAB, SEEDS, docLens: DOC_LENS,
+    sweep: prefixSweep(SEEDS[0]), sweepNs: SWEEP_NS, sweepB: SWEEP_B,
+    zeroPos: SEEDS.map(noPosControl),
+    pad: paddingStudy(20260917, 4096, 8, 1024),
+  };
+}
+
+const ENGINE = {
+  Rng, D, NLAYER, VOCAB, PMAX, SEEDS, DOC_LENS, CFGS, TOL, SWEEP_NS, SWEEP_B,
+  model, matvec, forwardRow, makeDoc, docSet, packRow, runUnpacked, runPacked,
+  diffAgainstUnpacked, leakOf, rowSumError, rowSumErrorUnpacked, leakIdentity,
+  prefixSweep, lengths, padCost, packCost, paddingStudy, analyse,
+  zeroPosModel, noPosControl, report,
+};
+if (typeof module !== "undefined" && module.exports) module.exports = ENGINE;
+
+// ===== ENGINE:END =====
+</script>
+
+<script>
+function showTab(name) {
+  for (const t of ["look", "und", "build"]) document.getElementById(t).classList.toggle("hidden", t !== name);
+  document.getElementById("tabLook").classList.toggle("tab-active", name === "look");
+  document.getElementById("tabUnd").classList.toggle("tab-active", name === "und");
+  document.getElementById("tabBuild").classList.toggle("tab-active", name === "build");
+}
+const el = (id) => document.getElementById(id);
+function table(id, head, rows) {
+  el(id).innerHTML =
+    "<tr>" + head.map((h) => "<th>" + h + "</th>").join("") + "</tr>" +
+    rows.map((r) => "<tr" + (r.cls ? ' class="' + r.cls + '"' : "") + ">" +
+      r.cells.map((c, i) => "<td" + (i === 0 ? ' class="txt"' : "") + ">" + c + "</td>").join("") + "</tr>").join("");
+}
+function selfCheckPanel(fn) {
+  const out = []; let n = 0, bad = 0;
+  const t = (label, cond, detail = "") => {
+    n += 1; if (!cond) bad += 1;
+    out.push('<div><span class="' + (cond ? "ok" : "warn") + '">' + (cond ? "PASS" : "FAIL") +
+      '</span><span>' + label + '</span><span class="m">' + detail + "</span></div>");
+  };
+  fn(t);
+  el("selfcheck").innerHTML =
+    '<p class="note" style="margin:0 0 8px"><b class="' + (bad ? "warn" : "ok") + '">' +
+    (n - bad) + " of " + n + " checks pass</b>" + (bad ? " &mdash; " + bad + " FAILED" : "") + ".</p>" + out.join("");
+  const badge = el("selftest");
+  badge.className = "pill " + (bad ? "bad" : "good");
+  badge.textContent = bad ? (bad + " of " + n + " checks FAILED") : ("self-check " + n + "/" + n);
+}
+
+const R = ENGINE.report();
+const n4 = (v) => (Number.isFinite(v) ? v.toFixed(4) : "&infin;");
+const n2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : "&infin;");
+const pct = (v) => (v * 100).toFixed(2) + "%";
+const sci = (v) => (v === 0 ? "0" : v.toExponential(2).replace("e", "&times;10<sup>").replace("+", "") + "</sup>");
+const pearson = (a, b) => {
+  const n = a.length;
+  const ma = a.reduce((s, v) => s + v, 0) / n, mb = b.reduce((s, v) => s + v, 0) / n;
+  let sab = 0, saa = 0, sbb = 0;
+  for (let i = 0; i < n; i++) { const u = a[i] - ma, v = b[i] - mb; sab += u * v; saa += u * u; sbb += v * v; }
+  return saa === 0 || sbb === 0 ? 0 : sab / Math.sqrt(saa * sbb);
+};
+
+const main = R.main;
+const P = R.pad;
+const byId = (a, id) => a.cfgs.find((c) => c.id === id);
+
+// --------------------------------------------------------------------- cards
+el("kIdent").innerHTML = sci(Math.max(...R.nets.map((a) => byId(a, "b").maxAbs)));
+el("kIdentNote").innerHTML = "worst over " + R.SEEDS.length + " seeds &middot; tolerance " +
+  R.TOL.toExponential(0).replace("e", "e");
+el("kLeak").textContent = pct(Math.max(...byId(main, "c").leakByDoc));
+el("kLeakNote").innerHTML = "document " + (byId(main, "c").leakByDoc.indexOf(Math.max(...byId(main, "c").leakByDoc)) + 1) +
+  " of the row &middot; worst single token " + pct(byId(main, "c").maxLeak);
+el("kPos").textContent = byId(main, "d").maxAbs.toFixed(4);
+el("kPosNote").innerHTML = "against " + byId(main, "c").maxAbs.toFixed(4) + " for the missing mask";
+el("kPad").textContent = P.savingArrival.toFixed(2) + "×";
+el("kPadNote").innerHTML = pct(P.utilArrival) + " of a padded batch is real tokens, " +
+  pct(P.utilPack) + " of a packed row";
+
+// -------------------------------------------------------------- seed selector
+el("seedSel").innerHTML = R.nets.map((a, i) =>
+  '<option value="' + i + '">seed ' + a.seed + "</option>").join("");
+
+function renderSeed(i) {
+  const a = R.nets[i];
+  el("rowNote").innerHTML =
+    a.lens.length + " documents of lengths " + a.lens.join(", ") + " &rarr; one row of <b>" + a.T +
+    "</b> tokens &middot; " + R.NLAYER + " attention layers, width " + R.D +
+    " &middot; identity residual <b>" + sci(byId(a, "b").maxAbs) + "</b>";
+  table("tCfg",
+    ["configuration", "attention mask", "position ids", "max |&Delta;| vs unpacked",
+     "after layer 1", "worst leaked mass", "|&Sigma;a &minus; 1|", "verdict"],
+    a.cfgs.map((c) => ({
+      cls: c.id === "b" ? "here" : "",
+      cells: [
+        "(" + c.id + ") " + c.label,
+        c.block ? "causal &cap; block" : '<span class="warn">causal only</span>',
+        c.reset ? "reset per doc" : '<span class="warn">run on</span>',
+        "<b class='" + (c.id === "b" ? "ok" : "warn") + "'>" +
+          (c.id === "b" ? sci(c.maxAbs) : c.maxAbs.toFixed(4)) + "</b>",
+        c.id === "b" ? sci(c.byLayer[0]) : c.byLayer[0].toFixed(4),
+        c.maxLeak === 0 ? "0" : pct(c.maxLeak),
+        sci(c.rowSumErr),
+        c.id === "b" ? '<span class="pill good">reproduces unpacked</span>'
+                     : '<span class="pill bad">diverges</span>',
+      ],
+    })));
+
+  const dc = byId(a, "c"), dd = byId(a, "d"), de = byId(a, "e"), db = byId(a, "b");
+  table("tDocs",
+    ["document", "length", "offset in row", "leaked mass (no mask)",
+     "&Delta; no mask", "&Delta; no position reset", "&Delta; both", "&Delta; block + reset"],
+    a.lens.map((L, d) => ({
+      cls: d === 0 ? "here" : "",
+      cells: ["document " + (d + 1), L, a.lens.slice(0, d).reduce((s, v) => s + v, 0),
+        dc.leakByDoc[d] === 0 ? '<span class="ok">0</span>' : pct(dc.leakByDoc[d]),
+        dc.perDoc[d].maxAbs === 0 ? '<span class="ok">0</span>' : dc.perDoc[d].maxAbs.toFixed(4),
+        dd.perDoc[d].maxAbs === 0 ? '<span class="ok">0</span>' : dd.perDoc[d].maxAbs.toFixed(4),
+        de.perDoc[d].maxAbs === 0 ? '<span class="ok">0</span>' : de.perDoc[d].maxAbs.toFixed(4),
+        '<span class="ok">' + sci(db.perDoc[d].maxAbs) + "</span>"],
+    })));
+
+  renderMasks(a);
+}
+
+// ------------------------------------------------------------- the mask grids
+function renderMasks(a) {
+  const docIds = [];
+  a.lens.forEach((L, d) => { for (let i = 0; i < L; i++) docIds.push(d); });
+  const T = docIds.length;
+  const build = (kind) => {
+    let h = "";
+    for (let i = 0; i < T; i++) {
+      h += "<tr>";
+      for (let s = 0; s < T; s++) {
+        const causal = s <= i, same = docIds[s] === docIds[i];
+        let cls = "m0";
+        if (kind === "causal") cls = causal ? "m1" : "m0";
+        else if (kind === "block") cls = causal && same ? "m1" : "m0";
+        else cls = causal && !same ? "mx" : (causal && same ? "m1" : "m0");
+        h += '<td class="' + cls + '"></td>';
+      }
+      h += "</tr>";
+    }
+    return h;
+  };
+  el("mCausal").innerHTML = build("causal");
+  el("mBlock").innerHTML = build("block");
+  el("mLeak").innerHTML = build("leak");
+  let causalN = 0, blockN = 0;
+  for (let i = 0; i < T; i++) for (let s = 0; s <= i; s++) { causalN++; if (docIds[s] === docIds[i]) blockN++; }
+  el("maskNote").innerHTML = "&mdash; " + (causalN - blockN) + " of the " + causalN +
+    " causally legal pairs in this row cross a document boundary (" +
+    pct((causalN - blockN) / causalN) + ").";
+}
+
+renderSeed(0);
+el("seedSel").addEventListener("change", (e) => renderSeed(parseInt(e.target.value, 10)));
+
+// ---------------------------------------------------------- UNDERSTAND tables
+el("tolWhy").innerHTML = sci(Math.max(...R.nets.map((a) => byId(a, "b").maxAbs)));
+el("tolTxt").textContent = R.TOL.toExponential(0);
+
+table("tSeeds",
+  ["model seed", "block + reset", "no mask", "no position reset", "both broken",
+   "ratio, no-reset / no-mask", "both vs the sum"],
+  R.nets.map((a, i) => ({
+    cls: i === 0 ? "here" : "",
+    cells: ["seed " + a.seed,
+      '<span class="ok">' + sci(byId(a, "b").maxAbs) + "</span>",
+      '<b class="warn">' + byId(a, "c").maxAbs.toFixed(4) + "</b>",
+      '<b class="warn">' + byId(a, "d").maxAbs.toFixed(4) + "</b>",
+      byId(a, "e").maxAbs.toFixed(4),
+      (byId(a, "d").maxAbs / byId(a, "c").maxAbs).toFixed(2) + "×",
+      (byId(a, "e").maxAbs / (byId(a, "c").maxAbs + byId(a, "d").maxAbs)).toFixed(2) + "×"],
+  })));
+
+const idRows = main.ident.rows.filter((r) => r.L > 0);
+const idMax = Math.max(...idRows.map((r) => r.L * r.gap));
+el("idScale").innerHTML = sci(Math.max(...R.nets.map((a) => a.ident.worstScale)));
+el("idPred").innerHTML = sci(Math.max(...R.nets.map((a) => a.ident.worstPred)));
+el("idMax").textContent = idMax.toFixed(4);
+
+table("tIdent",
+  ["token", "document", "leaked mass L", "gap |v&#772;_foreign &minus; ctx|",
+   "predicted error L&times;gap", "measured error", "residual"],
+  idRows.filter((_, i) => i % 3 === 0).map((r) => ({
+    cls: Math.abs(r.L * r.gap - idMax) < 1e-12 ? "here" : "",
+    cells: ["position " + r.i, "document " + (r.doc + 1), pct(r.L), r.gap.toFixed(4),
+      "<b>" + (r.L * r.gap).toFixed(6) + "</b>", r.err.toFixed(6),
+      '<span class="ok">' + sci(Math.abs(r.err - r.L * r.gap)) + "</span>"],
+  })));
+
+const SW = R.sweep;
+const swLeak = SW.map((s) => s.meanLeak), swMask = SW.map((s) => s.docBmask), swPos = SW.map((s) => s.docBpos);
+const rMask = pearson(swLeak, swMask), rPos = pearson(swLeak, swPos);
+let dipAt = 0;
+for (let i = 1; i < SW.length; i++) if (SW[i].docBmask < SW[i - 1].docBmask) { dipAt = SW[i].n; break; }
+el("swLo").textContent = pct(swLeak[0]);
+el("swHi").textContent = pct(swLeak[swLeak.length - 1]);
+el("swGrow").textContent = (swMask[swMask.length - 1] / swMask[0]).toFixed(2) + "×";
+el("swR").textContent = "r = " + rMask.toFixed(4);
+el("swDip").textContent = "n = " + dipAt;
+
+table("tSweep",
+  ["neighbour length n", "mean leaked mass", "worst leaked mass",
+   "&Delta; doc 2, no mask", "&Delta; doc 2, no position reset", "&Delta; doc 1 (either bug)"],
+  SW.map((s, i) => ({
+    cls: s.docBmask < (SW[i - 1] ? SW[i - 1].docBmask : -1) ? "here" : "",
+    cells: [s.n, pct(s.meanLeak), pct(s.maxLeak), s.docBmask.toFixed(4), s.docBpos.toFixed(4),
+      '<span class="ok">' + (s.docAmask === 0 && s.docApos === 0 ? "0" : "&ne;0") + "</span>"],
+  })));
+
+const Z = R.zeroPos[0];
+el("ctlD").textContent = byId(main, "d").maxAbs.toFixed(4);
+el("ctlC").textContent = byId(main, "c").maxAbs.toFixed(4);
+el("ctlE").textContent = byId(main, "e").maxAbs.toFixed(4);
+el("ctlSum").textContent = (byId(main, "e").maxAbs / (byId(main, "c").maxAbs + byId(main, "d").maxAbs) * 100).toFixed(0) + "%";
+el("ctlZero").innerHTML = sci(Z.d);
+el("ctlZeroC").textContent = Z.c.toFixed(4);
+el("ctlRm").textContent = rMask.toFixed(4);
+el("ctlRp").textContent = rPos.toFixed(4);
+
+table("tCtl",
+  ["control", "block + reset", "no mask", "no position reset", "both broken", "what it shows"],
+  [
+    { cls: "here", cells: ["the stack as built",
+      '<span class="ok">' + sci(byId(main, "b").maxAbs) + "</span>",
+      byId(main, "c").maxAbs.toFixed(4), byId(main, "d").maxAbs.toFixed(4), byId(main, "e").maxAbs.toFixed(4),
+      "three failures, one identity"] },
+    { cells: ["position table zeroed",
+      '<span class="ok">' + sci(Z.b) + "</span>", Z.c.toFixed(4),
+      '<span class="ok">' + sci(Z.d) + "</span>", Z.e.toFixed(4),
+      "the position bug needs positions; the mask bug does not"] },
+    { cells: ["correlation with leaked mass across the sweep", "&mdash;",
+      rMask.toFixed(4), rPos.toFixed(4), "&mdash;",
+      "they respond to a longer neighbour differently"] },
+  ]);
+
+table("tPad",
+  ["strategy", "rows or batches", "tokens processed", "utilisation",
+   "tokens vs packing", "attention FLOPs vs arrival-order"],
+  [
+    { cells: ["padded, arrival order", P.arrival.batches, P.arrival.tokens.toLocaleString("en-US"),
+      '<b class="warn">' + pct(P.utilArrival) + "</b>", P.savingArrival.toFixed(3) + "× worse", "1.000×"] },
+    { cells: ["padded, sorted by length", P.sorted.batches, P.sorted.tokens.toLocaleString("en-US"),
+      pct(P.utilSorted), P.savingSorted.toFixed(3) + "× worse",
+      (P.sorted.quad / P.arrival.quad).toFixed(3) + "×"] },
+    { cls: "here", cells: ["packed, capacity " + P.C, P.pack.rows, P.pack.tokens.toLocaleString("en-US"),
+      '<b class="ok">' + pct(P.utilPack) + "</b>", "1.000×",
+      '<b class="warn">' + P.quadRatioDense.toFixed(3) + "× dense</b>"] },
+    { cells: ["packed + block-sparse attention", P.pack.rows, P.pack.tokens.toLocaleString("en-US"),
+      pct(P.utilPack), "1.000×", '<b class="ok">' + P.quadRatioBlock.toFixed(4) + "×</b>"] },
+  ]);
+
+el("padSort").textContent = pct(P.utilSorted);
+el("padPack").textContent = pct(P.utilPack);
+el("padCap").textContent = P.C + " tokens";
+el("padQd").textContent = P.quadRatioDense.toFixed(3) + "×";
+el("padQb").textContent = P.quadRatioBlock.toFixed(4) + "×";
+el("padBounds").textContent = P.rowsLo + " to " + P.rowsHi;
+el("padRows").textContent = P.pack.rows + " rows";
+
+// --------------------------------------------------------------- self-check
+selfCheckPanel((t) => {
+  const E = ENGINE;
+  const bAll = Math.max(...R.nets.map((a) => byId(a, "b").maxAbs));
+
+  // --- structure
+  t("two attention layers of width 16, one head", E.NLAYER === 2 && E.D === 16);
+  t("four documents of lengths 6, 9, 5, 7 packed into a row of 27",
+    main.lens.join(",") === "6,9,5,7" && main.T === 27);
+  t("five independently seeded models", new Set(E.SEEDS).size === 5);
+  t("the generator is reproducible from a seed", (() => {
+    const a = new E.Rng(5), b = new E.Rng(5);
+    for (let i = 0; i < 300; i++) if (a.nextInt() !== b.nextInt()) return false;
+    return true;
+  })());
+  t("below(n) stays inside [0, n)", (() => {
+    const r = new E.Rng(3); let lo = 1e9, hi = -1;
+    for (let i = 0; i < 20000; i++) { const v = r.below(64); lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    return lo === 0 && hi === 63;
+  })());
+
+  // --- THE IDENTITY, first and hardest
+  t("IDENTITY: block mask + position reset reproduces the unpacked run, all five seeds",
+    bAll <= E.TOL, "max " + bAll.toExponential(2) + " <= " + E.TOL.toExponential(0));
+  t("...and that is one unit in the last place, not a loose tolerance", bAll < 1e-15,
+    bAll.toExponential(2));
+  t("...for every token of every document, not just the last",
+    R.nets.every((a) => byId(a, "b").perDoc.every((p) => p.maxAbs <= E.TOL)));
+  t("CONTROL: the outputs being compared are not near zero, so the identity is not trivial",
+    R.nets.every((a) => byId(a, "c").maxAbs > 0.2));
+  t("CONTROL: (b) is the ONLY packed configuration inside the tolerance",
+    R.nets.every((a) => a.cfgs.filter((c) => c.maxAbs <= E.TOL).length === 1));
+
+  // --- the mask bug
+  t("dropping the block mask moves the output in every seed",
+    R.nets.every((a) => byId(a, "c").maxAbs > 0.2),
+    R.nets.map((a) => byId(a, "c").maxAbs.toFixed(3)).join(" "));
+  t("DERIVED THRESHOLD: that divergence is above 1e10 times the identity residual",
+    R.nets.every((a) => byId(a, "c").maxAbs > 1e10 * Math.max(byId(a, "b").maxAbs, 1e-300)),
+    (byId(main, "c").maxAbs / byId(main, "b").maxAbs).toExponential(1) + "×");
+  t("the last document in the row sends most of its attention elsewhere",
+    Math.max(...byId(main, "c").leakByDoc) > 0.8, pct(Math.max(...byId(main, "c").leakByDoc)));
+  t("CONTROL: the FIRST document leaks exactly nothing, because causal masking already forbids it",
+    R.nets.every((a) => byId(a, "c").leakByDoc[0] === 0 && byId(a, "c").perDoc[0].maxAbs === 0));
+  t("CONTROL: with the block mask the leaked mass is exactly zero everywhere",
+    R.nets.every((a) => byId(a, "b").maxLeak === 0 && byId(a, "d").maxLeak === 0));
+
+  // --- the leak identity
+  t("IDENTITY: every own-document weight is scaled by exactly (1 - L)",
+    R.nets.every((a) => a.ident.worstScale <= E.TOL),
+    Math.max(...R.nets.map((a) => a.ident.worstScale)).toExponential(2));
+  t("IDENTITY: ctx_packed = (1-L)*ctx_unpacked + L*vbar_foreign",
+    R.nets.every((a) => a.ident.worstCtx <= E.TOL),
+    Math.max(...R.nets.map((a) => a.ident.worstCtx)).toExponential(2));
+  t("so the error is EXACTLY L times the gap, per token",
+    R.nets.every((a) => a.ident.worstPred <= E.TOL),
+    Math.max(...R.nets.map((a) => a.ident.worstPred)).toExponential(2));
+  t("and the derived threshold L x gap is a real number, not a rounding artefact",
+    idMax > 0.1, idMax.toFixed(4));
+
+  // --- the growing neighbour
+  t("leaked mass is STRICTLY increasing as the neighbour grows",
+    SW.every((s, i) => i === 0 || s.meanLeak > SW[i - 1].meanLeak),
+    pct(swLeak[0]) + " -> " + pct(swLeak[swLeak.length - 1]));
+  t("and the output error grows with it, more than doubling",
+    swMask[swMask.length - 1] / swMask[0] > 2,
+    (swMask[swMask.length - 1] / swMask[0]).toFixed(2) + "×");
+  t("HONEST NEGATIVE: that growth is not monotone, so it is reported as a trend",
+    !SW.every((s, i) => i === 0 || s.docBmask > SW[i - 1].docBmask), "dip at n = " + dipAt);
+  t("CONTROL: document 1 of the sweep row is untouched by either bug, exactly",
+    SW.every((s) => s.docAmask === 0 && s.docApos === 0));
+
+  // --- two bugs, independent
+  t("keeping the mask but not resetting positions still diverges",
+    R.nets.every((a) => byId(a, "d").maxAbs > 0.2),
+    R.nets.map((a) => byId(a, "d").maxAbs.toFixed(3)).join(" "));
+  t("and by a DIFFERENT amount than the missing mask, in every seed",
+    R.nets.every((a) => Math.abs(byId(a, "d").maxAbs - byId(a, "c").maxAbs) > 0.1 * byId(a, "c").maxAbs));
+  t("running both is not the sum of the two, so they interact",
+    R.nets.every((a) => byId(a, "e").maxAbs < 0.9 * (byId(a, "c").maxAbs + byId(a, "d").maxAbs)),
+    R.nets.map((a) => (byId(a, "e").maxAbs / (byId(a, "c").maxAbs + byId(a, "d").maxAbs)).toFixed(2)).join(" "));
+  t("CONTROL: zeroing the position table kills the position bug exactly and leaves the mask bug",
+    R.zeroPos.every((z) => z.d <= E.TOL && z.b <= E.TOL && z.c > 0.2),
+    "d " + Z.d.toExponential(2) + " · c " + Z.c.toFixed(4));
+  t("CONTROL: and the two bugs respond to a longer neighbour differently",
+    rMask > 0.9 && rPos < 0.5, "r = " + rMask.toFixed(3) + " vs " + rPos.toFixed(3));
+  t("the error compounds with depth in every broken configuration",
+    ["c", "d", "e"].every((id) => byId(main, id).byLayer[1] > byId(main, id).byLayer[0]));
+
+  // --- why it is silent
+  t("THE SILENCE: every attention row sums to 1 in every configuration",
+    R.nets.every((a) => a.cfgs.every((c) => c.rowSumErr < 1e-12) && a.unsRowSumErr < 1e-12),
+    Math.max(...R.nets.flatMap((a) => a.cfgs.map((c) => c.rowSumErr))).toExponential(2));
+
+  // --- packing arithmetic
+  t("the greedy packing lands inside its derived row bounds",
+    P.pack.rows >= P.rowsLo && P.pack.rows <= P.rowsHi,
+    P.rowsLo + " <= " + P.pack.rows + " <= " + P.rowsHi);
+  t("no tokens are lost or invented by the packing",
+    P.pack.used === P.total && P.total === P.lens.reduce((s, v) => s + v, 0));
+  t("BOUND: the saving cannot exceed padded tokens over real tokens",
+    P.savingArrival <= P.arrival.tokens / P.total + 1e-12,
+    P.savingArrival.toFixed(4) + " <= " + (P.arrival.tokens / P.total).toFixed(4));
+  t("measured: arrival-order padding is under 30% real tokens, packing over 99%",
+    P.utilArrival < 0.30 && P.utilPack > 0.99,
+    pct(P.utilArrival) + " -> " + pct(P.utilPack));
+  t("HONEST NEGATIVE: sorting by length alone recovers almost all of that",
+    P.utilSorted > 0.98 && P.savingSorted < 1.05, pct(P.utilSorted));
+  t("HONEST NEGATIVE: a densely computed packed row costs MORE attention than the padded baseline",
+    P.quadRatioDense > 1, P.quadRatioDense.toFixed(3) + "×");
+  t("...and only the block-diagonal structure makes attention cheaper",
+    P.quadRatioBlock < 0.25, P.quadRatioBlock.toFixed(4) + "×");
+
+  // --- determinism
+  t("a repeated analysis is bit-identical",
+    E.analyse(E.SEEDS[0]).cfgs[1].maxAbs === byId(main, "c").maxAbs);
+});
+
+</script>
+</body>
+</html>
